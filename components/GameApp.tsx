@@ -80,12 +80,12 @@ const colorPalette = [
 ];
 
 const teamOptions = [
-  { id: "", label: "独立阵营" },
-  { id: "red", label: "红队" },
-  { id: "blue", label: "蓝队" },
-  { id: "green", label: "绿队" },
-  { id: "purple", label: "紫队" },
-  { id: "gold", label: "金队" },
+  { id: "", label: "独立阵营", color: "" },
+  { id: "red", label: "红队", color: "#ff5968" },
+  { id: "blue", label: "蓝队", color: "#55a7ff" },
+  { id: "green", label: "绿队", color: "#55d68a" },
+  { id: "purple", label: "紫队", color: "#b58aff" },
+  { id: "gold", label: "金队", color: "#f6d85f" },
 ];
 
 const spawnRatios = [
@@ -125,12 +125,14 @@ export function GameApp() {
   const [selectedBoardId, setSelectedBoardId] = useState("stream-landscape");
   const [pendingAutoStart, setPendingAutoStart] = useState(false);
   const [cleanView, setCleanView] = useState(false);
+  const [fullscreenControlsVisible, setFullscreenControlsVisible] = useState(false);
   const arenaRef = useRef<ArenaHandle>(null);
-  const arenaStageRef = useRef<HTMLDivElement>(null);
+  const arenaStageRef = useRef<HTMLElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const musicImportRef = useRef<HTMLInputElement>(null);
   const pendingPreviewSetupRef = useRef<MatchSetup>();
   const previewSyncFrameRef = useRef<number>();
+  const fullscreenControlsTimerRef = useRef<number>();
 
   useEffect(() => {
     let alive = true;
@@ -186,6 +188,9 @@ export function GameApp() {
       if (previewSyncFrameRef.current !== undefined) {
         window.cancelAnimationFrame(previewSyncFrameRef.current);
       }
+      if (fullscreenControlsTimerRef.current !== undefined) {
+        window.clearTimeout(fullscreenControlsTimerRef.current);
+      }
     },
     [],
   );
@@ -204,9 +209,13 @@ export function GameApp() {
         if (document.fullscreenElement) {
           void document.exitFullscreen();
           setCleanView(false);
+          setFullscreenControlsVisible(false);
         } else {
           setCleanView(true);
-          void arenaStageRef.current?.requestFullscreen().catch(() => undefined);
+          setFullscreenControlsVisible(false);
+          void arenaStageRef.current?.requestFullscreen().catch(() => {
+            setCleanView(false);
+          });
         }
       }
     };
@@ -216,7 +225,10 @@ export function GameApp() {
 
   useEffect(() => {
     const handleFullscreenChange = () => {
-      if (!document.fullscreenElement) setCleanView(false);
+      if (!document.fullscreenElement) {
+        setCleanView(false);
+        setFullscreenControlsVisible(false);
+      }
     };
     document.addEventListener("fullscreenchange", handleFullscreenChange);
     return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
@@ -261,6 +273,15 @@ export function GameApp() {
     setSnapshot(undefined);
     setPendingAutoStart(true);
     setBattleKey((key) => key + 1);
+  };
+
+  const resetBattle = () => {
+    const next = structuredClone(manifest);
+    setBattleManifest(next);
+    setSnapshot(undefined);
+    setPendingAutoStart(false);
+    setBattleKey((key) => key + 1);
+    setNotice("比赛已重置，可以重新调整站位、阵营和角色配置");
   };
 
   const onArenaReady = () => {
@@ -334,12 +355,34 @@ export function GameApp() {
 
   const enterCleanView = () => {
     setCleanView(true);
-    void arenaStageRef.current?.requestFullscreen().catch(() => undefined);
+    setFullscreenControlsVisible(false);
+    void arenaStageRef.current?.requestFullscreen().catch(() => {
+      setCleanView(false);
+    });
   };
 
   const exitCleanView = () => {
     setCleanView(false);
+    setFullscreenControlsVisible(false);
     if (document.fullscreenElement) void document.exitFullscreen();
+  };
+
+  const revealFullscreenControls = () => {
+    if (fullscreenControlsTimerRef.current !== undefined) {
+      window.clearTimeout(fullscreenControlsTimerRef.current);
+      fullscreenControlsTimerRef.current = undefined;
+    }
+    setFullscreenControlsVisible(true);
+  };
+
+  const scheduleFullscreenControlsHide = () => {
+    if (fullscreenControlsTimerRef.current !== undefined) {
+      window.clearTimeout(fullscreenControlsTimerRef.current);
+    }
+    fullscreenControlsTimerRef.current = window.setTimeout(() => {
+      setFullscreenControlsVisible(false);
+      fullscreenControlsTimerRef.current = undefined;
+    }, 900);
   };
 
   const addContestant = (definitionId: string) => {
@@ -365,13 +408,16 @@ export function GameApp() {
     const fallbackName = library.length
       ? `${library[index % library.length]}·${usedNames.size + 1}`
       : `${definition.name}·${index + 1}`;
+    const fighterColor = colorPalette[index % colorPalette.length];
     const contestant: MatchContestant = {
       id: createContestantId(),
       definitionId,
       displayName: availableName ?? fallbackName,
       position: { ...point },
       direction: { x: Math.cos(angle), y: Math.sin(angle) },
-      color: colorPalette[index % colorPalette.length],
+      color: fighterColor,
+      nameColor: fighterColor,
+      namePlacement: "above",
     };
     updateSetup({
       ...manifest.setup,
@@ -383,6 +429,25 @@ export function GameApp() {
     updateSetup({
       ...manifest.setup,
       contestants: manifest.setup.contestants.filter((contestant) => contestant.id !== id),
+    });
+  };
+
+  const updateContestantHud = (
+    id: string,
+    changes: Partial<Pick<MatchContestant, "color" | "nameColor" | "namePlacement">>,
+    syncTeam = false,
+  ) => {
+    const source = manifest.setup.contestants.find((contestant) => contestant.id === id);
+    if (!source) return;
+    updateSetup({
+      ...manifest.setup,
+      contestants: manifest.setup.contestants.map((contestant) => {
+        const sharesTeam =
+          Boolean(syncTeam && source.teamId) && contestant.teamId === source.teamId;
+        return contestant.id === id || sharesTeam
+          ? { ...contestant, ...changes }
+          : contestant;
+      }),
     });
   };
 
@@ -546,7 +611,7 @@ export function GameApp() {
 
       {view === "battle" && (
         <div className="battle-workspace">
-          <section className="arena-panel">
+          <section ref={arenaStageRef} className="arena-panel">
             <div className="arena-panel-header">
               <div>
                 <span className="live-dot" />
@@ -562,7 +627,6 @@ export function GameApp() {
             </div>
 
             <div
-              ref={arenaStageRef}
               className={`arena-stage ${
                 currentBoard && currentBoard.height > currentBoard.width
                   ? "is-portrait-board"
@@ -585,25 +649,16 @@ export function GameApp() {
                 <span />
                 {statusLabel(snapshot?.status)}
               </div>
-              {snapshot?.status === "finished" && (
-                <div className="winner-overlay">
-                  <span className="winner-kicker">{snapshot.draw ? "DOUBLE K.O." : "ARENA CHAMPION"}</span>
-                  <h2>{snapshot.draw ? "本局平局" : snapshot.winnerName}</h2>
-                  <p>
-                    {snapshot.draw
-                      ? "所有主角色同时倒下"
-                      : livingMain > 1
-                        ? "同阵营并肩坚持到最后，获得团队胜利"
-                        : "坚持到最后，成为唯一幸存者"}
-                  </p>
-                  <button type="button" onClick={() => beginFreshBattle(true)}>
-                    <RefreshCcw size={17} /> 换个种子再来一局
-                  </button>
-                </div>
-              )}
             </div>
 
-            <div className="battle-control-bar">
+            <div
+              className={`battle-control-bar ${
+                fullscreenControlsVisible ? "is-fullscreen-visible" : ""
+              }`}
+              onPointerEnter={revealFullscreenControls}
+              onPointerLeave={scheduleFullscreenControlsHide}
+              onFocusCapture={revealFullscreenControls}
+            >
               <button
                 type="button"
                 className="primary-control"
@@ -629,8 +684,11 @@ export function GameApp() {
               <button type="button" className="icon-control" onClick={() => arenaRef.current?.step()} title="单步">
                 <SkipForward size={18} />
               </button>
-              <button type="button" className="icon-control" onClick={() => beginFreshBattle(false)} title="同种子重开">
+              <button type="button" className="icon-control" onClick={resetBattle} title="重置比赛并返回赛前布阵">
                 <RefreshCcw size={17} />
+              </button>
+              <button type="button" className="icon-control" onClick={() => beginFreshBattle(true)} title="换个种子再来一局">
+                <Sparkles size={17} />
               </button>
               <div className="speed-switcher">
                 {[0.5, 1, 2, 4].map((value) => (
@@ -761,6 +819,20 @@ export function GameApp() {
               </div>
               <span className="seed-label">SEED {battleManifest.setup.seed}</span>
             </div>
+            <div
+              className="fullscreen-control-hotzone"
+              aria-hidden="true"
+              onPointerEnter={(event) => {
+                if (event.pointerType === "mouse") revealFullscreenControls();
+              }}
+              onPointerDown={(event) => {
+                if (event.pointerType === "mouse") {
+                  revealFullscreenControls();
+                } else {
+                  setFullscreenControlsVisible((visible) => !visible);
+                }
+              }}
+            />
           </section>
 
           <aside className="battle-sidebar">
@@ -788,51 +860,112 @@ export function GameApp() {
                     (character) => character.id === contestant.definitionId,
                   );
                   return (
-                    <div className="contestant-row" key={contestant.id}>
-                      <span className="contestant-index" style={{ borderColor: contestant.color }}>
-                        {index + 1}
-                      </span>
-                      <span className="contestant-type">
-                        {definition?.id.startsWith("panda") ? "🐼" : definition?.id === "mole" ? "🦫" : "👮"}
-                      </span>
-                      <input
-                        value={contestant.displayName}
-                        onChange={(event) =>
-                          updateSetup({
-                            ...manifest.setup,
-                            contestants: manifest.setup.contestants.map((candidate) =>
-                              candidate.id === contestant.id
-                                ? { ...candidate, displayName: event.target.value }
-                                : candidate,
-                            ),
-                          })
-                        }
-                      />
-                      <select
-                        className="contestant-team"
-                        aria-label={`${contestant.displayName}阵营`}
-                        value={contestant.teamId ?? ""}
-                        onChange={(event) =>
-                          updateSetup({
-                            ...manifest.setup,
-                            contestants: manifest.setup.contestants.map((candidate) =>
-                              candidate.id === contestant.id
-                                ? { ...candidate, teamId: event.target.value || undefined }
-                                : candidate,
-                            ),
-                          })
-                        }
-                      >
-                        {teamOptions.map((team) => (
-                          <option key={team.id || "solo"} value={team.id}>
-                            {team.label}
-                          </option>
-                        ))}
-                      </select>
-                      <small>{definition?.maxHp ?? 0} HP</small>
-                      <button type="button" onClick={() => removeContestant(contestant.id)} title="移除">
-                        <X size={14} />
-                      </button>
+                    <div className="contestant-entry" key={contestant.id}>
+                      <div className="contestant-row">
+                        <span className="contestant-index" style={{ borderColor: contestant.color }}>
+                          {index + 1}
+                        </span>
+                        <span className="contestant-type">
+                          {definition?.id.startsWith("panda") ? "🐼" : definition?.id === "mole" ? "🦫" : "👮"}
+                        </span>
+                        <input
+                          value={contestant.displayName}
+                          onChange={(event) =>
+                            updateSetup({
+                              ...manifest.setup,
+                              contestants: manifest.setup.contestants.map((candidate) =>
+                                candidate.id === contestant.id
+                                  ? { ...candidate, displayName: event.target.value }
+                                  : candidate,
+                              ),
+                            })
+                          }
+                        />
+                        <select
+                          className="contestant-team"
+                          aria-label={`${contestant.displayName}阵营`}
+                          value={contestant.teamId ?? ""}
+                          onChange={(event) => {
+                            const teamId = event.target.value || undefined;
+                            const ally = teamId
+                              ? manifest.setup.contestants.find(
+                                  (candidate) =>
+                                    candidate.id !== contestant.id &&
+                                    candidate.teamId === teamId,
+                                )
+                              : undefined;
+                            const defaultTeamColor =
+                              teamOptions.find((team) => team.id === teamId)?.color;
+                            const color = ally?.color ?? defaultTeamColor ?? contestant.color;
+                            const nameColor = ally?.nameColor ?? color;
+                            updateSetup({
+                              ...manifest.setup,
+                              contestants: manifest.setup.contestants.map((candidate) =>
+                                candidate.id === contestant.id
+                                  ? { ...candidate, teamId, color, nameColor }
+                                  : candidate,
+                              ),
+                            });
+                          }}
+                        >
+                          {teamOptions.map((team) => (
+                            <option key={team.id || "solo"} value={team.id}>
+                              {team.label}
+                            </option>
+                          ))}
+                        </select>
+                        <small>{definition?.maxHp ?? 0} HP</small>
+                        <button type="button" onClick={() => removeContestant(contestant.id)} title="移除">
+                          <X size={14} />
+                        </button>
+                      </div>
+                      <div className="contestant-hud-controls">
+                        <label title={contestant.teamId ? "修改后同步到同阵营角色" : "血条颜色"}>
+                          <span>血条</span>
+                          <input
+                            type="color"
+                            value={contestant.color}
+                            aria-label={`${contestant.displayName}血条颜色`}
+                            onChange={(event) =>
+                              updateContestantHud(
+                                contestant.id,
+                                { color: event.target.value },
+                                true,
+                              )
+                            }
+                          />
+                        </label>
+                        <label title={contestant.teamId ? "修改后同步到同阵营角色" : "名字颜色"}>
+                          <span>名字</span>
+                          <input
+                            type="color"
+                            value={contestant.nameColor ?? contestant.color}
+                            aria-label={`${contestant.displayName}名字颜色`}
+                            onChange={(event) =>
+                              updateContestantHud(
+                                contestant.id,
+                                { nameColor: event.target.value },
+                                true,
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          <span>位置</span>
+                          <select
+                            value={contestant.namePlacement ?? "above"}
+                            aria-label={`${contestant.displayName}名字位置`}
+                            onChange={(event) =>
+                              updateContestantHud(contestant.id, {
+                                namePlacement: event.target.value as "above" | "inside",
+                              })
+                            }
+                          >
+                            <option value="above">血条上方</option>
+                            <option value="inside">血条内</option>
+                          </select>
+                        </label>
+                      </div>
                     </div>
                   );
                 })}

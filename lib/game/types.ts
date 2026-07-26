@@ -209,6 +209,8 @@ export type MatchContestant = {
   position: Vec2;
   direction: Vec2;
   color: string;
+  nameColor?: string;
+  namePlacement?: "above" | "inside";
   teamId?: string;
 };
 

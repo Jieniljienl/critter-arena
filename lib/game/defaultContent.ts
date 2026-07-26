@@ -665,8 +665,21 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
 
   upgraded.nameLibraries ??= [];
   upgraded.backgroundMusic ??= structuredClone(defaults.backgroundMusic);
+  const teamColors: Record<string, string> = {
+    red: "#ff5968",
+    blue: "#55a7ff",
+    green: "#55d68a",
+    purple: "#b58aff",
+    gold: "#f6d85f",
+  };
   for (const contestant of upgraded.setup.contestants) {
     if (contestant.definitionId === "panda") contestant.definitionId = "panda-lazy";
+    const needsHudMigration = !contestant.nameColor && !contestant.namePlacement;
+    if (needsHudMigration && contestant.teamId && teamColors[contestant.teamId]) {
+      contestant.color = teamColors[contestant.teamId];
+    }
+    contestant.nameColor ??= contestant.color;
+    contestant.namePlacement ??= "above";
   }
   upgraded.characters = upgraded.characters.filter((character) => character.id !== "panda");
   upgraded.nameLibraries = upgraded.nameLibraries.filter(

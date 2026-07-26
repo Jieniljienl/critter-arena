@@ -100,7 +100,12 @@ export class ArenaAudio {
     if (now - (this.lastPlayed.get(key) ?? 0) < 36) return;
     this.lastPlayed.set(key, now);
     await this.unlock();
-    if (event.announcement) this.playAnnouncement(event.announcement, event.type === "victory");
+    if (event.announcement) {
+      this.playAnnouncement(
+        event.announcement,
+        event.type === "death" || event.type === "victory",
+      );
+    }
     if (!event.sound) return;
 
     const unit = units.find((candidate) => candidate.id === event.unitId);
@@ -152,12 +157,10 @@ export class ArenaAudio {
     this.lastSpeechAt = performance.now();
     const utterance = new SpeechSynthesisUtterance(message);
     utterance.lang = "zh-CN";
-    utterance.rate = priority ? 0.92 : 1.08;
-    utterance.pitch = priority ? 1.08 : 0.9;
-    utterance.volume = Math.min(0.88, this.volume * (priority ? 0.9 : 0.72));
-    const voice = window.speechSynthesis
-      .getVoices()
-      .find((candidate) => candidate.lang.toLowerCase().startsWith("zh"));
+    utterance.rate = priority ? 0.98 : 1.02;
+    utterance.pitch = 1;
+    utterance.volume = Math.min(0.86, this.volume * (priority ? 0.9 : 0.72));
+    const voice = this.preferredChineseVoice("announcer");
     if (voice) utterance.voice = voice;
     window.speechSynthesis.speak(utterance);
   }
@@ -181,11 +184,42 @@ export class ArenaAudio {
     utterance.rate = cue.speechRate ?? 1;
     utterance.pitch = cue.speechPitch ?? 1;
     utterance.volume = Math.min(1, this.volume * cue.volume);
-    const voice = window.speechSynthesis
-      .getVoices()
-      .find((candidate) => candidate.lang.toLowerCase().startsWith("zh"));
+    const voice = this.preferredChineseVoice(cue.id);
     if (voice) utterance.voice = voice;
     window.speechSynthesis.speak(utterance);
+  }
+
+  private preferredChineseVoice(variant: string): SpeechSynthesisVoice | undefined {
+    if (typeof window === "undefined" || !window.speechSynthesis) return undefined;
+    const voices = window.speechSynthesis
+      .getVoices()
+      .filter((voice) => voice.lang.toLowerCase().startsWith("zh"))
+      .map((voice) => {
+        const identity = `${voice.name} ${voice.voiceURI}`.toLowerCase();
+        let score = voice.lang.toLowerCase() === "zh-cn" ? 12 : 6;
+        if (/natural|neural|online/.test(identity)) score += 24;
+        if (
+          /晓晓|晓伊|晓辰|晓涵|云希|xiaoxiao|xiaoyi|xiaohan|yunxi|hsiaochen/.test(
+            identity,
+          )
+        ) {
+          score += 18;
+        }
+        if (/microsoft|google|apple/.test(identity)) score += 5;
+        if (!voice.localService) score += 4;
+        return { voice, score };
+      })
+      .sort(
+        (left, right) =>
+          right.score - left.score || left.voice.name.localeCompare(right.voice.name),
+      );
+    if (!voices.length) return undefined;
+    if (variant === "announcer" || voices.length === 1) return voices[0].voice;
+    const hash = [...variant].reduce(
+      (total, character) => (total * 31 + character.charCodeAt(0)) >>> 0,
+      0,
+    );
+    return voices[hash % Math.min(3, voices.length)].voice;
   }
 
   playSynth(cue: SoundCue): void {

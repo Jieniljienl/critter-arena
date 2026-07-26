@@ -116,6 +116,7 @@ export class BattleSimulation {
   private readonly props: BoardProp[];
   private readonly scheduledShots: ScheduledShot[] = [];
   private readonly eventLog: CombatEvent[] = [];
+  private readonly killChains = new Map<string, { count: number; lastKillAt: number }>();
   private serial = 0;
   private time = 0;
   private status: BattleStatus = "ready";
@@ -160,6 +161,7 @@ export class BattleSimulation {
     this.holeOccupants.clear();
     this.scheduledShots.length = 0;
     this.eventLog.length = 0;
+    this.killChains.clear();
     this.winnerId = undefined;
     this.winnerName = undefined;
     this.draw = false;
@@ -1150,14 +1152,22 @@ export class BattleSimulation {
       source.actionStartedAt = this.time;
       source.actionUntil = Math.max(source.actionUntil, this.time + 0.58);
     }
+    let announcement: string | undefined;
+    let message = source ? `${target.name} 被 ${source.name} 击败` : `${target.name} 倒下了`;
+    if (source && target.main) {
+      const chain = this.recordMainKill(source);
+      const chainLabel = this.killChainLabel(chain);
+      announcement = `${source.name} 击败了 ${target.name}${chainLabel ? `，完成${chainLabel}` : ""}`;
+      message = announcement;
+    }
     this.emit(
       "death",
-      source ? `${target.name} 被 ${source.name} 击败` : `${target.name} 倒下了`,
+      message,
       target,
       source,
       "death",
       undefined,
-      source ? `击杀播报：${source.name} 击败了 ${target.name}` : `${target.name} 倒下了`,
+      announcement,
     );
     this.runModules(target, "onDeath");
 
@@ -1175,6 +1185,25 @@ export class BattleSimulation {
         if (projectile.ownerId === target.ownerId) this.projectiles.delete(projectile.id);
       }
     }
+  }
+
+  private recordMainKill(source: RuntimeUnit): number {
+    const previous = this.killChains.get(source.id);
+    const count =
+      previous && this.time - previous.lastKillAt <= 8 + EPSILON ? previous.count + 1 : 1;
+    this.killChains.set(source.id, { count, lastKillAt: this.time });
+    return count;
+  }
+
+  private killChainLabel(count: number): string | undefined {
+    const labels: Record<number, string> = {
+      2: "二连击败",
+      3: "三连击败",
+      4: "四连击败",
+      5: "五连击败",
+    };
+    if (count < 2) return undefined;
+    return labels[count] ?? `${count}连击败`;
   }
 
   private cleanupDeadUnits(): void {
@@ -1225,7 +1254,7 @@ export class BattleSimulation {
         undefined,
         "merge",
         undefined,
-        `获胜播报：恭喜 ${this.winnerName} 获得胜利`,
+        `${this.winnerName} 获得胜利`,
       );
     } else {
       this.draw = true;

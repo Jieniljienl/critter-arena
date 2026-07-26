@@ -648,6 +648,80 @@ test("allied projectiles pass through allies and team victory waits only for ene
   assert.ok(snapshot.events.some((event) => event.type === "victory" && event.announcement));
 });
 
+test("main-character kills use concise announcements and report rapid multi-kills", () => {
+  const manifest = createDefaultManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 900;
+  board.height = 500;
+  board.unitScale = 1;
+
+  const attacker = definition(manifest, "police-1");
+  attacker.pluginId = undefined;
+  attacker.speed = 0;
+  attacker.attack = {
+    range: 2_000,
+    damage: 999,
+    cooldown: 0.35,
+    windup: 0,
+    mode: "melee",
+  };
+
+  for (const target of [
+    definition(manifest, "mole"),
+    definition(manifest, "panda-lazy"),
+  ]) {
+    target.pluginId = undefined;
+    target.maxHp = 10;
+    target.speed = 0;
+    target.attack.range = 0;
+    target.attack.damage = 0;
+  }
+
+  manifest.setup.contestants = [
+    {
+      id: "announcer-killer",
+      definitionId: "police-1",
+      displayName: "老王",
+      position: { x: 120, y: 250 },
+      direction: { x: 1, y: 0 },
+      color: "#f6d85f",
+      teamId: "red",
+    },
+    {
+      id: "announcer-target-one",
+      definitionId: "mole",
+      displayName: "鼠老弟",
+      position: { x: 420, y: 180 },
+      direction: { x: 0, y: 1 },
+      color: "#72d4af",
+      teamId: "blue",
+    },
+    {
+      id: "announcer-target-two",
+      definitionId: "panda-lazy",
+      displayName: "熊师傅",
+      position: { x: 650, y: 320 },
+      direction: { x: 0, y: -1 },
+      color: "#8fb8ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 180);
+  const announcements = simulation
+    .getSnapshot()
+    .events.filter((event) => event.type === "death" && event.announcement)
+    .map((event) => event.announcement ?? "");
+
+  assert.equal(announcements.length, 2);
+  assert.match(announcements[0], /^老王 击败了 /);
+  assert.doesNotMatch(announcements.join(" "), /击杀播报/);
+  assert.match(announcements[1], /完成二连击败$/);
+});
+
 test("allied selectable police merge on contact and play a star-up action", () => {
   const manifest = twoFighterManifest();
   const officer = definition(manifest, "police-1");
@@ -762,4 +836,26 @@ test("legacy panda entries migrate to the single lazy panda definition", () => {
   assert.equal(upgraded.nameLibraries.some((library) => library.definitionId === "panda"), false);
   assert.equal(upgraded.setup.contestants[0].definitionId, "panda-lazy");
   assert.equal(definition(upgraded, "panda-lazy").name, "熊猫");
+});
+
+test("legacy team HUD colors gain clear defaults while saved custom styles stay intact", () => {
+  const manifest = createDefaultManifest();
+  manifest.setup.contestants[0].teamId = "red";
+  manifest.setup.contestants[0].color = "#111111";
+  manifest.setup.contestants[1].teamId = "blue";
+  manifest.setup.contestants[1].color = "#222222";
+
+  const upgraded = upgradeManifest(manifest);
+  assert.equal(upgraded.setup.contestants[0].color, "#ff5968");
+  assert.equal(upgraded.setup.contestants[0].nameColor, "#ff5968");
+  assert.equal(upgraded.setup.contestants[0].namePlacement, "above");
+  assert.equal(upgraded.setup.contestants[1].color, "#55a7ff");
+
+  upgraded.setup.contestants[0].color = "#123456";
+  upgraded.setup.contestants[0].nameColor = "#abcdef";
+  upgraded.setup.contestants[0].namePlacement = "inside";
+  const reloaded = upgradeManifest(upgraded);
+  assert.equal(reloaded.setup.contestants[0].color, "#123456");
+  assert.equal(reloaded.setup.contestants[0].nameColor, "#abcdef");
+  assert.equal(reloaded.setup.contestants[0].namePlacement, "inside");
 });

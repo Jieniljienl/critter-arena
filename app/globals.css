@@ -712,6 +712,63 @@ textarea:focus-visible {
   display: none;
 }
 
+.fullscreen-control-hotzone {
+  display: none;
+}
+
+.arena-panel:fullscreen {
+  width: 100vw;
+  height: 100vh;
+  padding: 0;
+  overflow: hidden;
+  background: #000;
+}
+
+.clean-spectator .arena-panel:fullscreen .battle-control-bar {
+  position: fixed;
+  right: 12px;
+  bottom: 12px;
+  left: 12px;
+  z-index: 70;
+  display: flex;
+  max-width: calc(100vw - 24px);
+  max-height: min(132px, calc(100vh - 36px));
+  margin: 0;
+  overflow-x: auto;
+  overflow-y: hidden;
+  flex-wrap: nowrap;
+  opacity: 0;
+  pointer-events: none;
+  scrollbar-width: none;
+  transform: translateY(calc(100% + 28px));
+  transition:
+    opacity 160ms ease,
+    transform 220ms ease;
+  overscroll-behavior: contain;
+  backdrop-filter: blur(18px);
+}
+
+.clean-spectator .arena-panel:fullscreen .battle-control-bar::-webkit-scrollbar {
+  display: none;
+}
+
+.clean-spectator .arena-panel:fullscreen .battle-control-bar.is-fullscreen-visible {
+  opacity: 1;
+  pointer-events: auto;
+  transform: translateY(0);
+}
+
+.clean-spectator .arena-panel:fullscreen .fullscreen-control-hotzone {
+  position: fixed;
+  right: 0;
+  bottom: 0;
+  left: 0;
+  z-index: 69;
+  display: block;
+  height: 24px;
+  cursor: n-resize;
+}
+
 .clean-spectator {
   position: fixed;
   inset: 0;
@@ -763,6 +820,23 @@ textarea:focus-visible {
   min-height: calc(100vh - 76px);
   border-left: 1px solid var(--line);
   background: rgba(19, 18, 24, 0.75);
+}
+
+@media (min-width: 981px) {
+  .battle-workspace {
+    height: calc(100dvh - 76px);
+    min-height: 0;
+    overflow: hidden;
+  }
+
+  .arena-panel,
+  .battle-sidebar {
+    height: 100%;
+    min-height: 0;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+    scrollbar-gutter: stable;
+  }
 }
 
 .sidebar-section {
@@ -872,15 +946,18 @@ textarea:focus-visible {
 
 .contestant-list {
   display: grid;
-  max-height: 200px;
+  max-height: 260px;
   margin-top: 12px;
   overflow: auto;
+}
+
+.contestant-entry {
+  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
 }
 
 .contestant-row {
   gap: 7px;
   min-height: 38px;
-  border-bottom: 1px solid rgba(255, 255, 255, 0.055);
 }
 
 .contestant-index {
@@ -946,6 +1023,46 @@ textarea:focus-visible {
 .contestant-row button:hover {
   background: rgba(255, 95, 110, 0.1);
   color: var(--red);
+}
+
+.contestant-hud-controls {
+  display: grid;
+  grid-template-columns: 55px 55px minmax(88px, 1fr);
+  gap: 5px;
+  padding: 0 4px 7px 55px;
+}
+
+.contestant-hud-controls label {
+  display: flex;
+  min-width: 0;
+  height: 23px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.contestant-hud-controls input[type="color"] {
+  width: 25px;
+  height: 19px;
+  padding: 2px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #121117;
+  cursor: pointer;
+}
+
+.contestant-hud-controls select {
+  min-width: 0;
+  width: 100%;
+  height: 23px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  background: #121117;
+  color: var(--muted);
+  font-size: 8px;
 }
 
 .add-fighter-grid {

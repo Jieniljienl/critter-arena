@@ -16,6 +16,7 @@ import type {
   BackgroundMusicConfig,
   BattleSnapshot,
   BoardProp,
+  CombatEvent,
   ProjectManifest,
   RegionShape,
   RuntimeUnit,
@@ -91,6 +92,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
     const volumeRef = useRef(volume);
     const musicConfigRef = useRef(manifest.backgroundMusic);
     const musicAssetsRef = useRef(manifest.assets);
+    const setupRef = useRef(structuredClone(manifest.setup));
     const onSnapshotRef = useRef(onSnapshot);
     const onReadyRef = useRef(onReady);
 
@@ -144,6 +146,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
         syncReadySetup: (setup: ProjectManifest["setup"]) => {
           const simulation = simulationRef.current;
           if (!simulation?.syncReadySetup(setup)) return false;
+          setupRef.current = structuredClone(setup);
           const nextSnapshot = simulation.getSnapshot();
           snapshotRef.current = nextSnapshot;
           onSnapshotRef.current(nextSnapshot);
@@ -186,6 +189,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private healthLabels = new Map<string, PhaserType.GameObjects.Text>();
           private holeLabels = new Map<string, PhaserType.GameObjects.Text>();
           private eventLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private announcementLabels = new Map<string, PhaserType.GameObjects.Text>();
           private accumulatedMs = 0;
           private finishedVisualTime = 0;
           private failedTextures = new Set<string>();
@@ -269,6 +273,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             this.drawProps(snapshot.props, snapshot.time + finishedVisualTime);
             this.drawHoles(snapshot);
             this.drawProjectiles(snapshot);
+            this.drawAnnouncementBanner(snapshot, finishedVisualTime);
             this.drawEventEffects(snapshot, finishedVisualTime);
 
             const activeIds = new Set(snapshot.units.map((unit) => unit.id));
@@ -602,6 +607,63 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
           }
 
+          private drawAnnouncementBanner(
+            snapshot: BattleSnapshot,
+            finishedVisualTime: number,
+          ) {
+            const now = snapshot.time + finishedVisualTime;
+            const durationFor = (type: CombatEvent["type"]) =>
+              type === "victory" ? 4 : type === "death" ? 2.3 : 1.8;
+            const event = snapshot.events
+              .filter(
+                (candidate) =>
+                  candidate.announcement &&
+                  now >= candidate.time &&
+                  now - candidate.time <= durationFor(candidate.type),
+              )
+              .at(-1);
+            const visibleIds = new Set(event ? [event.id] : []);
+            for (const [id, label] of this.announcementLabels) {
+              if (!visibleIds.has(id)) {
+                label.destroy();
+                this.announcementLabels.delete(id);
+              }
+            }
+            if (!event?.announcement) return;
+
+            const age = now - event.time;
+            const duration = durationFor(event.type);
+            const fadeIn = Math.min(1, age / 0.14);
+            const fadeOut = Math.min(1, Math.max(0, (duration - age) / 0.42));
+            const fontSize = Math.round(
+              Math.max(22, Math.min(38, Math.min(board.width, board.height) * 0.042)),
+            );
+            let label = this.announcementLabels.get(event.id);
+            if (!label) {
+              label = this.add
+                .text(board.width / 2, Math.max(56, board.height * 0.075), "", {
+                  fontSize: `${fontSize}px`,
+                  fontFamily: '"Microsoft YaHei", Arial, sans-serif',
+                  fontStyle: "bold",
+                  color: event.type === "victory" ? "#e8ff72" : "#ffe6a3",
+                  stroke: "#130f16",
+                  strokeThickness: 7,
+                  backgroundColor: "#15131de6",
+                  padding: { x: 20, y: 11 },
+                  align: "center",
+                  wordWrap: { width: board.width * 0.78, useAdvancedWrap: true },
+                })
+                .setOrigin(0.5)
+                .setDepth(60);
+              this.announcementLabels.set(event.id, label);
+            }
+            label
+              .setText(event.announcement)
+              .setPosition(board.width / 2, Math.max(56, board.height * 0.075))
+              .setAlpha(fadeIn * fadeOut)
+              .setScale(0.92 + fadeIn * 0.08);
+          }
+
           private drawUnit(unit: RuntimeUnit, time: number) {
             const definition = manifest.characters.find(
               (candidate) => candidate.id === unit.definitionId,
@@ -739,17 +801,25 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setAlpha(alpha);
             }
 
-            const ownerColor =
-              manifest.setup.contestants.find((contestant) => {
-                const factionId = contestant.teamId
-                  ? `team:${contestant.teamId}`
-                  : contestant.id;
-                return contestant.id === unit.ownerId || factionId === unit.factionId;
-              })?.color ?? definition.accent;
+            const ownerContestant = setupRef.current.contestants.find((contestant) => {
+              const factionId = contestant.teamId
+                ? `team:${contestant.teamId}`
+                : contestant.id;
+              return contestant.id === unit.ownerId || factionId === unit.factionId;
+            });
+            const ownerColor = ownerContestant?.color ?? definition.accent;
+            const nameColor = ownerContestant?.nameColor ?? ownerColor;
+            const namePlacement = ownerContestant?.namePlacement ?? "above";
             const color = Phaser.Display.Color.HexStringToColor(ownerColor).color;
-            const healthWidth = Math.max(76, unit.radius * 2.6);
+            const healthWidth = Math.max(
+              namePlacement === "inside" ? 142 : 76,
+              unit.radius * 2.6,
+            );
             const healthRatio = Math.max(0, unit.hp / unit.maxHp);
-            const healthY = visualY - unit.radius - 31;
+            const healthY = Math.max(
+              namePlacement === "above" ? 24 : 3,
+              visualY - unit.radius - 31,
+            );
             this.overlayGraphics.fillStyle(0x100e13, 0.82);
             this.overlayGraphics.lineStyle(2, color, unit.targetable ? 0.95 : 0.3);
             this.overlayGraphics.fillRoundedRect(
@@ -766,10 +836,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               18,
               7,
             );
-            this.overlayGraphics.fillStyle(
-              healthRatio > 0.55 ? 0x69db83 : healthRatio > 0.25 ? 0xffc857 : 0xff5b68,
-              1,
-            );
+            this.overlayGraphics.fillStyle(color, 1);
             this.overlayGraphics.fillRoundedRect(
               visualX - healthWidth / 2 + 3,
               healthY + 3,
@@ -794,10 +861,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             const status =
               time < unit.burnUntil ? "🔥 " : time < unit.springUntil ? "♨ " : "";
-            healthLabel
-              .setText(`${status}${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`)
-              .setPosition(visualX, healthY + 9)
-              .setAlpha(alpha);
+            healthLabel.setText(
+              `${status}${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`,
+            );
 
             let label = this.unitLabels.get(unit.id);
             if (!label) {
@@ -813,11 +879,27 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setDepth(21);
               this.unitLabels.set(unit.id, label);
             }
-            label
-              .setText(unit.name)
-              .setPosition(visualX, visualY + unit.radius + 21)
-              .setColor(ownerColor)
-              .setAlpha(alpha);
+            if (namePlacement === "inside") {
+              const compactName =
+                unit.name.length > 7 ? `${unit.name.slice(0, 7)}…` : unit.name;
+              label
+                .setText(compactName)
+                .setFontSize(unit.main ? 11 : 10)
+                .setOrigin(0, 0.5)
+                .setPosition(visualX - healthWidth / 2 + 7, healthY + 9);
+              healthLabel
+                .setOrigin(1, 0.5)
+                .setPosition(visualX + healthWidth / 2 - 7, healthY + 9);
+            } else {
+              label
+                .setText(unit.name)
+                .setFontSize(unit.main ? 16 : 12)
+                .setOrigin(0.5)
+                .setPosition(visualX, healthY - 11);
+              healthLabel.setOrigin(0.5).setPosition(visualX, healthY + 9);
+            }
+            label.setColor(nameColor).setAlpha(alpha);
+            healthLabel.setAlpha(alpha);
           }
         }
 

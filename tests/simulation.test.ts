@@ -920,3 +920,86 @@ test("legacy team HUD colors gain clear defaults while saved custom styles stay 
   assert.equal(reloaded.setup.contestants[0].nameColor, "#abcdef");
   assert.equal(reloaded.setup.contestants[0].namePlacement, "inside");
 });
+
+test("extreme sub-frame burst settings stay deterministic and within runtime budgets", () => {
+  const createStressManifest = () => {
+    const manifest = twoFighterManifest();
+    const board = selectedBoard(manifest);
+    const fighterIds = ["panda-lazy", "mole"];
+    for (const fighterId of fighterIds) {
+      const fighter = definition(manifest, fighterId);
+      fighter.pluginId = undefined;
+      fighter.maxHp = 1_000_000;
+      fighter.speed = 0;
+      fighter.abilities = [];
+      fighter.attack = {
+        range: 9_999,
+        damage: 1,
+        cooldown: 0.000_001,
+        windup: 0,
+        mode: "burst",
+        projectileKind: "bullet",
+        projectileSpeed: 1,
+        burstCount: 100_000,
+        burstGap: 0.000_001,
+      };
+    }
+    manifest.setup.contestants = Array.from({ length: 16 }, (_, index) => ({
+      id: `stress-${index}`,
+      definitionId: fighterIds[index % fighterIds.length],
+      displayName: `压力角色${index}`,
+      position: {
+        x: 170 + (index % 4) * ((board.width - 340) / 3),
+        y: 120 + Math.floor(index / 4) * ((board.height - 240) / 3),
+      },
+      direction: { x: index % 2 ? 1 : -1, y: 0 },
+      color: "#ffffff",
+    }));
+    return manifest;
+  };
+
+  const first = new BattleSimulation(createStressManifest());
+  const second = new BattleSimulation(createStressManifest());
+  first.start();
+  second.start();
+  runSteps(first, 120);
+  runSteps(second, 120);
+
+  const diagnostics = first.getDiagnostics();
+  assert.equal(first.getSnapshot().status, "running");
+  assert.ok(diagnostics.activeProjectiles <= 900);
+  assert.ok(diagnostics.queuedShots <= 4_096);
+  assert.ok(diagnostics.events <= 240);
+  assert.ok(diagnostics.droppedShots > 0);
+  assert.ok(diagnostics.droppedProjectiles > 0);
+  assert.deepEqual(first.getSnapshot(), second.getSnapshot());
+  assert.deepEqual(first.getDiagnostics(), second.getDiagnostics());
+});
+
+test("extreme interval spawn skills cannot grow the unit pool without bounds", () => {
+  const manifest = twoFighterManifest();
+  disableCombat(manifest);
+  const summoner = definition(manifest, "panda-lazy");
+  const summon = definition(manifest, "mole");
+  summoner.pluginId = undefined;
+  summon.pluginId = undefined;
+  summon.abilities = [];
+  summoner.abilities = [
+    {
+      id: "stress-spawn",
+      name: "极限召唤",
+      trigger: "interval",
+      interval: 0.000_001,
+      cooldown: 0.000_001,
+      actions: [{ kind: "spawnUnit", definitionId: summon.id, count: 100_000 }],
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 30);
+  const diagnostics = simulation.getDiagnostics();
+  assert.ok(diagnostics.activeUnits <= 512);
+  assert.ok(diagnostics.droppedSpawns > 0);
+  assert.equal(simulation.getSnapshot().status, "running");
+});

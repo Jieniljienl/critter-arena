@@ -17,6 +17,7 @@ import type {
   BattleSnapshot,
   BoardProp,
   CombatEvent,
+  MatchSetup,
   ProjectManifest,
   RegionShape,
   RuntimeUnit,
@@ -46,6 +47,79 @@ type ArenaCanvasProps = {
 };
 
 type PhaserModule = typeof PhaserType;
+type ShapeBounds = { x: number; y: number; width: number; height: number };
+
+const clipDurationCache = new WeakMap<AnimationClip, number>();
+const shapeCenterCache = new WeakMap<object, { x: number; y: number }>();
+const shapeBoundsCache = new WeakMap<object, ShapeBounds>();
+
+const indexContestants = (setup: MatchSetup) => {
+  const index = new Map<string, MatchSetup["contestants"][number]>();
+  for (const contestant of setup.contestants) {
+    index.set(contestant.id, contestant);
+    index.set(contestant.teamId ? `team:${contestant.teamId}` : contestant.id, contestant);
+  }
+  return index;
+};
+
+const collectBattleImageAssets = (
+  manifest: ProjectManifest,
+  setup: MatchSetup,
+): AssetRef[] => {
+  const definitionIds = new Set(setup.contestants.map((contestant) => contestant.definitionId));
+  const definitions = new Map(
+    manifest.characters.map((definition) => [definition.id, definition]),
+  );
+  for (const definitionId of [...definitionIds]) {
+    const definition = definitions.get(definitionId);
+    if (!definition) continue;
+    const linkedDefinitionIds = definition.abilities.flatMap((ability) =>
+      ability.actions.flatMap((action) =>
+        action.kind === "spawnUnit" ? [action.definitionId] : [],
+      ),
+    );
+    if (definition.pluginId === "panda") linkedDefinitionIds.push("police-1");
+    for (const linkedId of linkedDefinitionIds) {
+      definitionIds.add(linkedId);
+    }
+  }
+
+  const assetIds = new Set<string>(["bamboo", "rocket", "explosion"]);
+  const board = manifest.boards.find((candidate) => candidate.id === setup.boardId);
+  if (board?.backgroundAssetId) assetIds.add(board.backgroundAssetId);
+  for (const definitionId of definitionIds) {
+    const definition = definitions.get(definitionId);
+    if (!definition) continue;
+    assetIds.add(definition.portraitAssetId);
+    for (const clip of Object.values(definition.animations)) {
+      for (const frame of clip.frames) assetIds.add(frame.assetId);
+    }
+  }
+  return manifest.assets.filter(
+    (asset) => asset.kind === "image" && assetIds.has(asset.id),
+  );
+};
+
+const collectDefinitionImageAssets = (
+  manifest: ProjectManifest,
+  definitionIds: Iterable<string>,
+): AssetRef[] => {
+  const wantedAssetIds = new Set<string>();
+  const definitions = new Map(
+    manifest.characters.map((definition) => [definition.id, definition]),
+  );
+  for (const definitionId of definitionIds) {
+    const definition = definitions.get(definitionId);
+    if (!definition) continue;
+    wantedAssetIds.add(definition.portraitAssetId);
+    for (const clip of Object.values(definition.animations)) {
+      for (const frame of clip.frames) wantedAssetIds.add(frame.assetId);
+    }
+  }
+  return manifest.assets.filter(
+    (asset) => asset.kind === "image" && wantedAssetIds.has(asset.id),
+  );
+};
 
 const fallbackGlyph = (definitionId: string): string => {
   if (definitionId.startsWith("panda")) return "🐼";
@@ -59,7 +133,11 @@ const frameForClip = (
   elapsedMs: number,
 ): string | undefined => {
   if (!clip?.frames.length) return undefined;
-  const duration = clip.frames.reduce((total, frame) => total + frame.durationMs, 0);
+  let duration = clipDurationCache.get(clip);
+  if (duration === undefined) {
+    duration = clip.frames.reduce((total, frame) => total + frame.durationMs, 0);
+    clipDurationCache.set(clip, duration);
+  }
   const position = clip.loop ? elapsedMs % duration : Math.min(elapsedMs, duration - 1);
   let cursor = 0;
   for (const frame of clip.frames) {
@@ -83,8 +161,8 @@ const actionClipName = (unit: RuntimeUnit): string => {
 export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
   function ArenaCanvas({ manifest, muted, volume, onSnapshot, onReady }, ref) {
     const containerId = `arena-${useId().replace(/:/g, "")}`;
-    const gameRef = useRef<PhaserType.Game | undefined>(undefined);
     const simulationRef = useRef<BattleSimulation | undefined>(undefined);
+    const loadSetupAssetsRef = useRef<((setup: MatchSetup) => void) | undefined>(undefined);
     const speedRef = useRef(1);
     const snapshotRef = useRef<BattleSnapshot | undefined>(undefined);
     const audioRef = useRef(new ArenaAudio());
@@ -92,7 +170,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
     const volumeRef = useRef(volume);
     const musicConfigRef = useRef(manifest.backgroundMusic);
     const musicAssetsRef = useRef(manifest.assets);
-    const setupRef = useRef(structuredClone(manifest.setup));
+    const contestantIndexRef = useRef(indexContestants(manifest.setup));
     const onSnapshotRef = useRef(onSnapshot);
     const onReadyRef = useRef(onReady);
 
@@ -146,7 +224,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
         syncReadySetup: (setup: ProjectManifest["setup"]) => {
           const simulation = simulationRef.current;
           if (!simulation?.syncReadySetup(setup)) return false;
-          setupRef.current = structuredClone(setup);
+          contestantIndexRef.current = indexContestants(setup);
+          loadSetupAssetsRef.current?.(setup);
           const nextSnapshot = simulation.getSnapshot();
           snapshotRef.current = nextSnapshot;
           onSnapshotRef.current(nextSnapshot);
@@ -165,6 +244,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
       const board =
         manifest.boards.find((candidate) => candidate.id === manifest.setup.boardId) ??
         manifest.boards[0];
+      const characterById = new Map(
+        manifest.characters.map((definition) => [definition.id, definition]),
+      );
+      const assetById = new Map(manifest.assets.map((asset) => [asset.id, asset]));
+      const queuedTextureIds = new Set<string>();
       simulationRef.current = simulation;
       audio.setMuted(mutedRef.current);
       audio.setVolume(volumeRef.current);
@@ -181,6 +265,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
         if (disposed) return;
 
         class ArenaScene extends Phaser.Scene {
+          private propGraphics!: PhaserType.GameObjects.Graphics;
           private arenaGraphics!: PhaserType.GameObjects.Graphics;
           private overlayGraphics!: PhaserType.GameObjects.Graphics;
           private unitImages = new Map<string, PhaserType.GameObjects.Image>();
@@ -197,6 +282,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private accumulatedMs = 0;
           private finishedVisualTime = 0;
           private failedTextures = new Set<string>();
+          private seenRuntimeDefinitionIds = new Set<string>();
+          private propSignature = "";
 
           constructor() {
             super("arena");
@@ -207,9 +294,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               "loaderror",
               (file: { key?: string }) => file.key && this.failedTextures.add(file.key),
             );
-            for (const asset of manifest.assets.filter((candidate) => candidate.kind === "image")) {
-              this.load.image(`asset:${asset.id}`, asset.url);
-            }
+            this.queueImageAssets(manifest.setup);
           }
 
           create() {
@@ -224,8 +309,10 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               background.fillRect(0, 0, board?.width ?? 1600, board?.height ?? 900);
               background.setDepth(-20);
             }
-            this.arenaGraphics = this.add.graphics().setDepth(-10);
+            this.propGraphics = this.add.graphics().setDepth(-10);
+            this.arenaGraphics = this.add.graphics().setDepth(-9);
             this.overlayGraphics = this.add.graphics().setDepth(20);
+            loadSetupAssetsRef.current = (setup) => this.loadSetupAssets(setup);
             const initial = simulation.getSnapshot();
             snapshotRef.current = initial;
             lastPushedStatus = initial.status;
@@ -234,10 +321,14 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           }
 
           update(time: number, delta: number) {
-            this.accumulatedMs += delta * speedRef.current;
             const fixedMs = 1000 / 60;
+            const maxCatchUpSteps = 12;
+            this.accumulatedMs = Math.min(
+              this.accumulatedMs + delta * speedRef.current,
+              fixedMs * maxCatchUpSteps,
+            );
             let safety = 0;
-            while (this.accumulatedMs >= fixedMs && safety < 20) {
+            while (this.accumulatedMs >= fixedMs && safety < maxCatchUpSteps) {
               simulation.step(1 / 60);
               this.accumulatedMs -= fixedMs;
               safety += 1;
@@ -253,25 +344,72 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
 
             const statusChanged = snapshot.status !== lastPushedStatus;
             const liveRefreshDue =
-              snapshot.status === "running" && time - lastSnapshotPushMs >= 80;
+              snapshot.status === "running" && time - lastSnapshotPushMs >= 100;
             if (statusChanged || liveRefreshDue) {
               lastSnapshotPushMs = time;
               lastPushedStatus = snapshot.status;
               onSnapshotRef.current(snapshot);
               const freshEvents = snapshot.events.filter((event) => !previousEventIds.has(event.id));
               previousEventIds = new Set(snapshot.events.map((event) => event.id));
-              for (const event of freshEvents) {
-                void audio.playEvent(
-                  event,
-                  snapshot.units,
-                  manifest.characters,
-                  manifest.assets,
-                );
+              if (freshEvents.length) {
+                const unitById = new Map(snapshot.units.map((unit) => [unit.id, unit]));
+                for (const event of freshEvents) {
+                  void audio.playEvent(
+                    event,
+                    unitById,
+                    characterById,
+                    assetById,
+                  );
+                }
               }
             }
           }
 
+          private queueAssets(assets: AssetRef[]): number {
+            let queued = 0;
+            for (const asset of assets) {
+              const textureKey = `asset:${asset.id}`;
+              if (
+                queuedTextureIds.has(asset.id) ||
+                this.textures.exists(textureKey) ||
+                this.failedTextures.has(textureKey)
+              ) {
+                continue;
+              }
+              queuedTextureIds.add(asset.id);
+              this.load.image(textureKey, asset.url);
+              queued += 1;
+            }
+            return queued;
+          }
+
+          private queueImageAssets(setup: MatchSetup): number {
+            return this.queueAssets(collectBattleImageAssets(manifest, setup));
+          }
+
+          private loadSetupAssets(setup: MatchSetup): void {
+            if (this.queueImageAssets(setup) > 0) this.load.start();
+          }
+
+          private loadRuntimeUnitAssets(units: RuntimeUnit[]): void {
+            const newDefinitionIds = new Set<string>();
+            for (const unit of units) {
+              if (this.seenRuntimeDefinitionIds.has(unit.definitionId)) continue;
+              this.seenRuntimeDefinitionIds.add(unit.definitionId);
+              newDefinitionIds.add(unit.definitionId);
+            }
+            if (
+              newDefinitionIds.size > 0 &&
+              this.queueAssets(
+                collectDefinitionImageAssets(manifest, newDefinitionIds),
+              ) > 0
+            ) {
+              this.load.start();
+            }
+          }
+
           private renderArena(snapshot: BattleSnapshot, finishedVisualTime: number) {
+            this.loadRuntimeUnitAssets(snapshot.units);
             this.arenaGraphics.clear();
             this.overlayGraphics.clear();
             this.drawProps(snapshot.props, snapshot.time + finishedVisualTime);
@@ -370,17 +508,31 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           }
 
           private drawProps(props: BoardProp[], time: number) {
+            const nextSignature = props
+              .map((prop) => `${prop.id}:${prop.active ? 1 : 0}`)
+              .join("|");
+            const shouldRedrawShapes = nextSignature !== this.propSignature;
+            if (shouldRedrawShapes) {
+              this.propSignature = nextSignature;
+              this.propGraphics.clear();
+            }
             for (const prop of props) {
               if (!prop.active) continue;
               if (prop.type === "lava") {
-                this.drawShape(prop.shape, 0xff5a35, 0.34, 0xffc04a);
+                if (shouldRedrawShapes) {
+                  this.drawShape(this.propGraphics, prop.shape, 0xff5a35, 0.34, 0xffc04a);
+                }
                 this.drawAreaTexture(prop, time);
               } else if (prop.type === "hotSpring") {
-                this.drawShape(prop.shape, 0x43cbd3, 0.32, 0xa5fbff);
+                if (shouldRedrawShapes) {
+                  this.drawShape(this.propGraphics, prop.shape, 0x43cbd3, 0.32, 0xa5fbff);
+                }
                 this.drawAreaTexture(prop, time);
               } else {
                 const center = this.shapeCenter(prop.shape);
-                this.drawShape(prop.shape, 0x2d6f4a, 0.18, 0x79cf71);
+                if (shouldRedrawShapes) {
+                  this.drawShape(this.propGraphics, prop.shape, 0x2d6f4a, 0.18, 0x79cf71);
+                }
                 const key = "asset:bamboo";
                 if (this.textures.exists(key) && !this.failedTextures.has(key)) {
                   const markerKey = `prop:${prop.id}`;
@@ -434,60 +586,87 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
           }
 
-          private drawShape(shape: RegionShape, fill: number, alpha: number, line: number) {
-            this.arenaGraphics.fillStyle(fill, alpha);
-            this.arenaGraphics.lineStyle(3, line, 0.42);
+          private drawShape(
+            graphics: PhaserType.GameObjects.Graphics,
+            shape: RegionShape,
+            fill: number,
+            alpha: number,
+            line: number,
+          ) {
+            graphics.fillStyle(fill, alpha);
+            graphics.lineStyle(3, line, 0.42);
             if (shape.kind === "circle") {
-              this.arenaGraphics.fillCircle(shape.x, shape.y, shape.radius);
-              this.arenaGraphics.strokeCircle(shape.x, shape.y, shape.radius);
+              graphics.fillCircle(shape.x, shape.y, shape.radius);
+              graphics.strokeCircle(shape.x, shape.y, shape.radius);
             } else if (shape.kind === "rectangle") {
-              this.arenaGraphics.fillRoundedRect(shape.x, shape.y, shape.width, shape.height, 22);
-              this.arenaGraphics.strokeRoundedRect(shape.x, shape.y, shape.width, shape.height, 22);
+              graphics.fillRoundedRect(shape.x, shape.y, shape.width, shape.height, 22);
+              graphics.strokeRoundedRect(shape.x, shape.y, shape.width, shape.height, 22);
             } else {
-              const points = shape.points.map((point) => new Phaser.Geom.Point(point.x, point.y));
-              this.arenaGraphics.fillPoints(points, true);
-              this.arenaGraphics.strokePoints(points, true, true);
+              graphics.fillPoints(shape.points, true);
+              graphics.strokePoints(shape.points, true, true);
             }
           }
 
           private shapeCenter(shape: RegionShape) {
-            if (shape.kind === "circle") return { x: shape.x, y: shape.y };
-            if (shape.kind === "rectangle") {
-              return {
+            const cached = shapeCenterCache.get(shape);
+            if (cached) return cached;
+            let center: { x: number; y: number };
+            if (shape.kind === "circle") {
+              center = { x: shape.x, y: shape.y };
+            } else if (shape.kind === "rectangle") {
+              center = {
                 x: shape.x + shape.width / 2,
                 y: shape.y + shape.height / 2,
               };
+            } else {
+              center = shape.points.reduce(
+                (nextCenter, point) => ({
+                  x: nextCenter.x + point.x / shape.points.length,
+                  y: nextCenter.y + point.y / shape.points.length,
+                }),
+                { x: 0, y: 0 },
+              );
             }
-            return shape.points.reduce(
-              (center, point) => ({
-                x: center.x + point.x / shape.points.length,
-                y: center.y + point.y / shape.points.length,
-              }),
-              { x: 0, y: 0 },
-            );
+            shapeCenterCache.set(shape, center);
+            return center;
           }
 
-          private shapeBounds(shape: RegionShape) {
+          private shapeBounds(shape: RegionShape): ShapeBounds {
+            const cached = shapeBoundsCache.get(shape);
+            if (cached) return cached;
+            let bounds: ShapeBounds;
             if (shape.kind === "circle") {
-              return {
+              bounds = {
                 x: shape.x - shape.radius,
                 y: shape.y - shape.radius,
                 width: shape.radius * 2,
                 height: shape.radius * 2,
               };
+            } else if (shape.kind === "rectangle") {
+              bounds = shape;
+            } else if (!shape.points.length) {
+              bounds = { x: 0, y: 0, width: 1, height: 1 };
+            } else {
+              let minX = shape.points[0].x;
+              let maxX = minX;
+              let minY = shape.points[0].y;
+              let maxY = minY;
+              for (let index = 1; index < shape.points.length; index += 1) {
+                const point = shape.points[index];
+                minX = Math.min(minX, point.x);
+                maxX = Math.max(maxX, point.x);
+                minY = Math.min(minY, point.y);
+                maxY = Math.max(maxY, point.y);
+              }
+              bounds = {
+                x: minX,
+                y: minY,
+                width: Math.max(1, maxX - minX),
+                height: Math.max(1, maxY - minY),
+              };
             }
-            if (shape.kind === "rectangle") return shape;
-            if (!shape.points.length) return { x: 0, y: 0, width: 1, height: 1 };
-            const xs = shape.points.map((point) => point.x);
-            const ys = shape.points.map((point) => point.y);
-            const x = Math.min(...xs);
-            const y = Math.min(...ys);
-            return {
-              x,
-              y,
-              width: Math.max(1, Math.max(...xs) - x),
-              height: Math.max(1, Math.max(...ys) - y),
-            };
+            shapeBoundsCache.set(shape, bounds);
+            return bounds;
           }
 
           private drawHoles(snapshot: BattleSnapshot) {
@@ -513,9 +692,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   .setDepth(19);
                 this.holeLabels.set(hole.id, label);
               }
-              label
-                .setText(`洞口 ${hole.stompsRemaining}/${hole.stompsRequired}`)
-                .setPosition(hole.x, hole.y + hole.radius * 0.55);
+              const holeText = `洞口 ${hole.stompsRemaining}/${hole.stompsRequired}`;
+              if (label.text !== holeText) label.setText(holeText);
+              label.setPosition(hole.x, hole.y + hole.radius * 0.55);
             }
           }
 
@@ -867,9 +1046,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               x: number,
             ) => {
               if (!definitionId) return;
-              const character = manifest.characters.find(
-                (candidate) => candidate.id === definitionId,
-              );
+              const character = characterById.get(definitionId);
               const textureKey = character
                 ? `asset:${character.portraitAssetId}`
                 : undefined;
@@ -912,9 +1089,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           }
 
           private drawUnit(unit: RuntimeUnit, time: number) {
-            const definition = manifest.characters.find(
-              (candidate) => candidate.id === unit.definitionId,
-            );
+            const definition = characterById.get(unit.definitionId);
             if (!definition) return;
             const requestedClip = actionClipName(unit);
             const clip =
@@ -1053,12 +1228,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setAlpha(alpha);
             }
 
-            const ownerContestant = setupRef.current.contestants.find((contestant) => {
-              const factionId = contestant.teamId
-                ? `team:${contestant.teamId}`
-                : contestant.id;
-              return contestant.id === unit.ownerId || factionId === unit.factionId;
-            });
+            const ownerContestant =
+              contestantIndexRef.current.get(unit.ownerId) ??
+              contestantIndexRef.current.get(unit.factionId);
             const ownerColor = ownerContestant?.color ?? definition.accent;
             const nameColor = ownerContestant?.nameColor ?? ownerColor;
             const namePlacement = ownerContestant?.namePlacement ?? "above";
@@ -1113,9 +1285,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             const status =
               time < unit.burnUntil ? "🔥 " : time < unit.springUntil ? "♨ " : "";
-            healthLabel.setText(
-              `${status}${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`,
-            );
+            const healthText = `${status}${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`;
+            if (healthLabel.text !== healthText) healthLabel.setText(healthText);
 
             let label = this.unitLabels.get(unit.id);
             if (!label) {
@@ -1134,8 +1305,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             if (namePlacement === "inside") {
               const compactName =
                 unit.name.length > 7 ? `${unit.name.slice(0, 7)}…` : unit.name;
+              if (label.text !== compactName) label.setText(compactName);
               label
-                .setText(compactName)
                 .setFontSize(unit.main ? 11 : 10)
                 .setOrigin(0, 0.5)
                 .setPosition(visualX - healthWidth / 2 + 7, healthY + 9);
@@ -1143,8 +1314,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setOrigin(1, 0.5)
                 .setPosition(visualX + healthWidth / 2 - 7, healthY + 9);
             } else {
+              if (label.text !== unit.name) label.setText(unit.name);
               label
-                .setText(unit.name)
                 .setFontSize(unit.main ? 16 : 12)
                 .setOrigin(0.5)
                 .setPosition(visualX, healthY - 11);
@@ -1172,14 +1343,13 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           },
           scene: ArenaScene,
         });
-        gameRef.current = game;
       };
       void boot();
 
       return () => {
         disposed = true;
         game?.destroy(true);
-        gameRef.current = undefined;
+        loadSetupAssetsRef.current = undefined;
         simulationRef.current = undefined;
         audio.dispose();
       };

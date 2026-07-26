@@ -525,8 +525,8 @@ export function CharacterEditor({
                 {selected.attack.mode === "gatling" ? "射击周期（秒）" : "攻击间隔（秒）"}
                 <input
                   type="number"
-                  min={0.1}
-                  step={0.05}
+                  min={0}
+                  step={0.001}
                   value={selected.attack.cooldown}
                   onChange={(event) =>
                     updateCharacter(
@@ -624,6 +624,7 @@ export function CharacterEditor({
                 {selected.attack.mode === "gatling"
                   ? "每轮只锁定一次方向；本轮全部子弹沿同一方向飞行。射击周期从本轮开始计到下一轮开始。"
                   : "同一次攻击按固定间隔连续发射多颗弹丸。"}
+                小于一帧的间隔会在固定帧内按顺序批处理，并受性能预算保护。
               </p>
               <div className="form-grid two-columns">
                 <label>
@@ -654,8 +655,8 @@ export function CharacterEditor({
                   连发间隔（秒）
                   <input
                     type="number"
-                    min={0.01}
-                    step={0.01}
+                    min={0}
+                    step={0.001}
                     value={selected.attack.burstGap ?? (selected.attack.mode === "gatling" ? 0.33 : 0.3)}
                     onChange={(event) =>
                       updateCharacter(
@@ -1017,7 +1018,7 @@ export function CharacterEditor({
                         <input
                           type="number"
                           min={0}
-                          step={0.1}
+                          step={0.001}
                           value={ability.cooldown}
                           onChange={(event) =>
                             updateAbility(
@@ -1031,8 +1032,8 @@ export function CharacterEditor({
                         定时间隔（秒）
                         <input
                           type="number"
-                          min={0.1}
-                          step={0.1}
+                          min={0}
+                          step={0.001}
                           value={ability.interval ?? ability.cooldown}
                           onChange={(event) =>
                             updateAbility(

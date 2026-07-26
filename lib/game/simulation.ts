@@ -22,6 +22,7 @@ type DamageSource = "directAttack" | "effect" | "environment" | "existingBuff";
 
 type ScheduledShot = {
   id: string;
+  sequence: number;
   at: number;
   sourceId: string;
   targetId: string;
@@ -32,6 +33,32 @@ type ScheduledShot = {
 };
 
 const EPSILON = 0.0001;
+const SPATIAL_CELL_SIZE = 240;
+const MAX_EVENT_LOG = 240;
+const EVENT_LOG_TRIM_TO = 200;
+const MAX_EVENTS_PER_STEP = 128;
+const MAX_ACTIVE_UNITS = 512;
+const MAX_UNIT_SPAWNS_PER_STEP = 64;
+const MAX_ACTIVE_PROJECTILES = 900;
+const MAX_PROJECTILES_PER_STEP = 320;
+const MAX_QUEUED_SHOTS = 4_096;
+const MAX_SCHEDULED_SHOTS_PER_STEP = 512;
+const MAX_SHOTS_PER_BURST = 240;
+const MAX_GATLING_SHOTS_PER_STEP = 24;
+const MAX_MERGES_PER_STEP = 64;
+const MAX_MODULE_EXECUTIONS_PER_STEP = 128;
+
+export type SimulationDiagnostics = {
+  activeUnits: number;
+  activeProjectiles: number;
+  queuedShots: number;
+  events: number;
+  droppedProjectiles: number;
+  droppedShots: number;
+  droppedSpawns: number;
+  skippedAbilityModules: number;
+  suppressedEvents: number;
+};
 
 const teamName = (factionId: string): string => {
   const names: Record<string, string> = {
@@ -114,9 +141,27 @@ export class BattleSimulation {
   private readonly projectiles = new Map<string, RuntimeProjectile>();
   private readonly holeOccupants = new Map<string, Set<string>>();
   private readonly props: BoardProp[];
+  private readonly bambooProps: BoardProp[];
+  private readonly lavaProps: BoardProp[];
+  private readonly springProps: BoardProp[];
+  private readonly reservedBambooIds = new Set<string>();
   private readonly scheduledShots: ScheduledShot[] = [];
   private readonly eventLog: CombatEvent[] = [];
   private readonly killChains = new Map<string, { count: number; lastKillAt: number }>();
+  private readonly spatialCells = new Map<string, RuntimeUnit[]>();
+  private orderedUnitsCache: RuntimeUnit[] = [];
+  private orderedUnitsDirty = true;
+  private maxUnitRadius = 0;
+  private scheduledSequence = 0;
+  private projectilesCreatedThisStep = 0;
+  private unitsSpawnedThisStep = 0;
+  private eventsCreatedThisStep = 0;
+  private modulesExecutedThisStep = 0;
+  private droppedProjectiles = 0;
+  private droppedShots = 0;
+  private droppedSpawns = 0;
+  private skippedAbilityModules = 0;
+  private suppressedEvents = 0;
   private serial = 0;
   private time = 0;
   private status: BattleStatus = "ready";
@@ -133,6 +178,9 @@ export class BattleSimulation {
     this.board = structuredClone(board);
     this.setup = structuredClone(setup);
     this.props = cloneProps(board);
+    this.bambooProps = this.props.filter((prop) => prop.type === "bamboo");
+    this.lavaProps = this.props.filter((prop) => prop.type === "lava");
+    this.springProps = this.props.filter((prop) => prop.type === "hotSpring");
     this.random = new SeededRandom(setup.seed);
     this.initializeContestants();
   }
@@ -157,12 +205,22 @@ export class BattleSimulation {
     this.setup.seed = setup.seed;
     this.setup.contestants = structuredClone(setup.contestants);
     this.units.clear();
+    this.orderedUnitsCache = [];
+    this.orderedUnitsDirty = true;
     this.holes.clear();
     this.projectiles.clear();
     this.holeOccupants.clear();
+    this.reservedBambooIds.clear();
+    this.spatialCells.clear();
     this.scheduledShots.length = 0;
     this.eventLog.length = 0;
     this.killChains.clear();
+    this.scheduledSequence = 0;
+    this.droppedProjectiles = 0;
+    this.droppedShots = 0;
+    this.droppedSpawns = 0;
+    this.skippedAbilityModules = 0;
+    this.suppressedEvents = 0;
     this.winnerId = undefined;
     this.winnerName = undefined;
     this.draw = false;
@@ -174,11 +232,18 @@ export class BattleSimulation {
 
   step(dt = 1 / 60, force = false): void {
     if ((!force && this.status !== "running") || this.status === "finished") return;
+    this.projectilesCreatedThisStep = 0;
+    this.unitsSpawnedThisStep = 0;
+    this.eventsCreatedThisStep = 0;
+    this.modulesExecutedThisStep = 0;
     this.time += dt;
     this.completeTimedActions();
     this.processScheduledShots();
+    this.rebuildSpatialIndex();
     this.updateUnits(dt);
+    this.rebuildSpatialIndex();
     this.mergeCollidingPolice();
+    this.rebuildSpatialIndex();
     this.updateProjectiles(dt);
     this.flattenHoles();
     this.cleanupDeadUnits();
@@ -192,10 +257,16 @@ export class BattleSimulation {
       winnerId: this.winnerId,
       winnerName: this.winnerName,
       draw: this.draw,
-      units: [...this.units.values()].map((unit) => ({
+      units: this.orderedUnits().map((unit) => ({
         ...unit,
         moduleCooldowns: { ...unit.moduleCooldowns },
-        tunnelData: unit.tunnelData ? structuredClone(unit.tunnelData) : undefined,
+        tunnelData: unit.tunnelData
+          ? {
+              ...unit.tunnelData,
+              origin: { ...unit.tunnelData.origin },
+              destination: { ...unit.tunnelData.destination },
+            }
+          : undefined,
         gatling: unit.gatling
           ? {
               ...unit.gatling,
@@ -207,8 +278,22 @@ export class BattleSimulation {
       })),
       holes: [...this.holes.values()].map((hole) => ({ ...hole })),
       projectiles: [...this.projectiles.values()].map((projectile) => ({ ...projectile })),
-      props: structuredClone(this.props),
-      events: this.eventLog.slice(-80).map((event) => ({ ...event })),
+      props: this.props.map((prop) => ({ ...prop })),
+      events: this.eventLog.slice(-80),
+    };
+  }
+
+  getDiagnostics(): SimulationDiagnostics {
+    return {
+      activeUnits: this.units.size,
+      activeProjectiles: this.projectiles.size,
+      queuedShots: this.scheduledShots.length,
+      events: this.eventLog.length,
+      droppedProjectiles: this.droppedProjectiles,
+      droppedShots: this.droppedShots,
+      droppedSpawns: this.droppedSpawns,
+      skippedAbilityModules: this.skippedAbilityModules,
+      suppressedEvents: this.suppressedEvents,
     };
   }
 
@@ -228,7 +313,7 @@ export class BattleSimulation {
         y: contestant.position.y,
         direction,
       });
-      this.units.set(unit.id, unit);
+      this.addUnit(unit);
     }
   }
 
@@ -300,11 +385,7 @@ export class BattleSimulation {
   }
 
   private updateUnits(dt: number): void {
-    const orderedUnits = [...this.units.values()].sort(
-      (left, right) => left.bornAt - right.bornAt || left.id.localeCompare(right.id),
-    );
-
-    for (const unit of orderedUnits) {
+    for (const unit of this.orderedUnits()) {
       if (unit.hp <= 0) continue;
       const definition = this.definitions.get(unit.definitionId);
       if (!definition) continue;
@@ -334,21 +415,19 @@ export class BattleSimulation {
 
   private updateAreaBuffs(unit: RuntimeUnit): void {
     const canReceiveNewEffects = unit.action !== "tunneling";
-    const touchingLava = canReceiveNewEffects
-      ? this.props.filter(
-          (prop) =>
-            prop.active &&
-            prop.type === "lava" &&
-            circleOverlapsRegion(unit, unit.radius, prop.shape),
-        )
-      : [];
+    let lavaDuration = 0;
+    let lavaDamage = 0;
+    if (canReceiveNewEffects) {
+      for (const prop of this.lavaProps) {
+        if (!prop.active || !circleOverlapsRegion(unit, unit.radius, prop.shape)) continue;
+        lavaDuration = Math.max(lavaDuration, prop.buffDuration ?? 3);
+        lavaDamage = Math.max(lavaDamage, prop.effectPerSecond ?? 5);
+      }
+    }
     const wasBurning = this.time < unit.burnUntil;
-    if (touchingLava.length) {
-      unit.burnUntil =
-        this.time + Math.max(...touchingLava.map((prop) => prop.buffDuration ?? 3));
-      unit.burnDamagePerSecond = Math.max(
-        ...touchingLava.map((prop) => prop.effectPerSecond ?? 5),
-      );
+    if (lavaDuration > 0) {
+      unit.burnUntil = this.time + lavaDuration;
+      unit.burnDamagePerSecond = lavaDamage;
       if (!wasBurning) unit.nextBurnFeedbackAt = this.time + 1;
     }
     if (this.time <= unit.burnUntil + EPSILON && unit.burnDamagePerSecond > 0) {
@@ -373,21 +452,19 @@ export class BattleSimulation {
     }
     if (unit.action === "dead") return;
 
-    const touchingSpring = canReceiveNewEffects
-      ? this.props.filter(
-          (prop) =>
-            prop.active &&
-            prop.type === "hotSpring" &&
-            circleOverlapsRegion(unit, unit.radius, prop.shape),
-        )
-      : [];
+    let springDuration = 0;
+    let springHealing = 0;
+    if (canReceiveNewEffects) {
+      for (const prop of this.springProps) {
+        if (!prop.active || !circleOverlapsRegion(unit, unit.radius, prop.shape)) continue;
+        springDuration = Math.max(springDuration, prop.buffDuration ?? 3);
+        springHealing = Math.max(springHealing, prop.effectPerSecond ?? 5);
+      }
+    }
     const hadSpringBuff = this.time < unit.springUntil;
-    if (touchingSpring.length) {
-      unit.springUntil =
-        this.time + Math.max(...touchingSpring.map((prop) => prop.buffDuration ?? 3));
-      unit.springHealPerSecond = Math.max(
-        ...touchingSpring.map((prop) => prop.effectPerSecond ?? 5),
-      );
+    if (springDuration > 0) {
+      unit.springUntil = this.time + springDuration;
+      unit.springHealPerSecond = springHealing;
       if (!hadSpringBuff) unit.nextSpringFeedbackAt = this.time + 1;
     }
     if (this.time <= unit.springUntil + EPSILON && unit.springHealPerSecond > 0) {
@@ -435,16 +512,10 @@ export class BattleSimulation {
       return;
     }
     if (unit.hp >= unit.maxHp || this.time < unit.nextEatAt) return;
-    const reserved = new Set(
-      [...this.units.values()]
-        .map((candidate) => candidate.reservedBambooId)
-        .filter((id): id is string => Boolean(id)),
-    );
-    const bamboo = this.props.find(
+    const bamboo = this.bambooProps.find(
       (prop) =>
-        prop.type === "bamboo" &&
         prop.active &&
-        !reserved.has(prop.id) &&
+        !this.reservedBambooIds.has(prop.id) &&
         circleOverlapsRegion(unit, unit.radius + (parameters?.bambooExtraRange ?? 0), prop.shape),
     );
     if (!bamboo) return;
@@ -452,6 +523,7 @@ export class BattleSimulation {
     unit.actionStartedAt = this.time;
     unit.actionUntil = this.time + (parameters?.eatDuration ?? 5);
     unit.reservedBambooId = bamboo.id;
+    this.reservedBambooIds.add(bamboo.id);
     this.emit("skill", `${unit.name} 抱住竹子，开始猛吃`, unit, undefined, "chew");
   }
 
@@ -495,10 +567,8 @@ export class BattleSimulation {
             origin: { x: unit.x, y: unit.y },
             destination: { x: selection.hole.x, y: selection.hole.y },
             targetId: selection.target.id,
-            hitAt: this.time + tunnelDuration * 0.5,
-            hitDone: false,
           };
-          this.scheduledShots.push({
+          this.enqueueShot({
             id: this.nextId("ambush"),
             at: this.time + tunnelDuration * 0.5,
             sourceId: unit.id,
@@ -582,8 +652,11 @@ export class BattleSimulation {
     const gatling = unit.gatling;
     if (!gatling || unit.action === "kick" || unit.action === "dead") return;
     const attack = definition.attack;
-    const shotCount = Math.max(1, Math.round(attack.burstCount ?? 15));
-    const shotGap = Math.max(0.01, attack.burstGap ?? 0.33);
+    const shotCount = Math.min(
+      MAX_SHOTS_PER_BURST,
+      Math.max(1, Math.round(attack.burstCount ?? 15)),
+    );
+    const shotGap = Math.max(EPSILON, attack.burstGap ?? 0.33);
 
     gatling.nextRoundIn = Math.max(0, gatling.nextRoundIn - dt);
     if (gatling.shotsRemaining <= 0) {
@@ -611,10 +684,12 @@ export class BattleSimulation {
     }
 
     gatling.nextShotIn -= dt;
+    let shotsThisStep = 0;
     while (
       gatling.nextShotIn <= EPSILON &&
       gatling.shotsRemaining > 0 &&
-      gatling.roundDirection
+      gatling.roundDirection &&
+      shotsThisStep < MAX_GATLING_SHOTS_PER_STEP
     ) {
       const target = gatling.roundTargetId
         ? this.units.get(gatling.roundTargetId)
@@ -630,6 +705,14 @@ export class BattleSimulation {
       unit.actionUntil = Math.max(unit.actionUntil, this.time + 0.16);
       gatling.shotsRemaining -= 1;
       gatling.nextShotIn += shotGap;
+      shotsThisStep += 1;
+    }
+    if (
+      gatling.shotsRemaining > 0 &&
+      gatling.nextShotIn <= EPSILON &&
+      shotsThisStep >= MAX_GATLING_SHOTS_PER_STEP
+    ) {
+      gatling.nextShotIn = 0;
     }
     if (gatling.shotsRemaining <= 0) {
       gatling.roundDirection = undefined;
@@ -661,6 +744,9 @@ export class BattleSimulation {
             amount,
           );
           this.emit("prop", `${bamboo.label ?? "竹子"} 被吃光了`, unit);
+        }
+        if (unit.reservedBambooId) {
+          this.reservedBambooIds.delete(unit.reservedBambooId);
         }
         unit.reservedBambooId = undefined;
         if (ateBamboo) {
@@ -696,10 +782,13 @@ export class BattleSimulation {
           if (tunnel.mode === "travel") {
             unit.x = tunnel.destination.x;
             unit.y = tunnel.destination.y;
-            const destinationHole = [...this.holes.values()].find(
-              (hole) => distance(hole, tunnel.destination) < 1,
-            );
-            unit.lastHoleId = destinationHole?.id;
+            unit.lastHoleId = undefined;
+            for (const hole of this.holes.values()) {
+              if (distance(hole, tunnel.destination) < 1) {
+                unit.lastHoleId = hole.id;
+                break;
+              }
+            }
           } else {
             unit.x = tunnel.origin.x;
             unit.y = tunnel.origin.y;
@@ -771,23 +860,34 @@ export class BattleSimulation {
     unit.actionStartedAt = this.time;
     unit.actionUntil = this.time + Math.max(0.28, attack.windup + 0.18);
     unit.nextAttackAt = this.time + attack.cooldown;
-    const count = attack.mode === "burst" ? attack.burstCount ?? 3 : 1;
-    const gap = attack.burstGap ?? 0;
+    const count =
+      attack.mode === "burst"
+        ? Math.min(MAX_SHOTS_PER_BURST, Math.max(1, Math.round(attack.burstCount ?? 3)))
+        : 1;
+    const gap = Math.max(0, attack.burstGap ?? 0);
     for (let index = 0; index < count; index += 1) {
-      this.scheduledShots.push({
+      if (
+        !this.enqueueShot({
         id: this.nextId("shot"),
         at: this.time + attack.windup + gap * index,
         sourceId: unit.id,
         targetId: target.id,
-      });
+        })
+      ) {
+        break;
+      }
     }
   }
 
   private processScheduledShots(): void {
-    this.scheduledShots.sort((left, right) => left.at - right.at);
-    while (this.scheduledShots[0]?.at <= this.time + EPSILON) {
-      const shot = this.scheduledShots.shift();
+    let processed = 0;
+    while (
+      this.scheduledShots[0]?.at <= this.time + EPSILON &&
+      processed < MAX_SCHEDULED_SHOTS_PER_STEP
+    ) {
+      const shot = this.popScheduledShot();
       if (!shot) break;
+      processed += 1;
       const source = this.units.get(shot.sourceId);
       const target = this.units.get(shot.targetId);
       if (!source || source.action === "dead" || !target || !target.targetable) continue;
@@ -828,6 +928,67 @@ export class BattleSimulation {
     }
   }
 
+  private enqueueShot(shot: Omit<ScheduledShot, "sequence">): boolean {
+    if (this.scheduledShots.length >= MAX_QUEUED_SHOTS) {
+      this.droppedShots += 1;
+      return false;
+    }
+    const queued: ScheduledShot = {
+      ...shot,
+      sequence: this.scheduledSequence,
+    };
+    this.scheduledSequence += 1;
+    this.scheduledShots.push(queued);
+    let index = this.scheduledShots.length - 1;
+    while (index > 0) {
+      const parent = Math.floor((index - 1) / 2);
+      if (!this.shotComesBefore(queued, this.scheduledShots[parent])) break;
+      this.scheduledShots[index] = this.scheduledShots[parent];
+      index = parent;
+    }
+    this.scheduledShots[index] = queued;
+    return true;
+  }
+
+  private popScheduledShot(): ScheduledShot | undefined {
+    const first = this.scheduledShots[0];
+    const last = this.scheduledShots.pop();
+    if (!first || !last || this.scheduledShots.length === 0) return first;
+    let index = 0;
+    while (true) {
+      const left = index * 2 + 1;
+      const right = left + 1;
+      if (left >= this.scheduledShots.length) break;
+      let child = left;
+      if (
+        right < this.scheduledShots.length &&
+        this.shotComesBefore(this.scheduledShots[right], this.scheduledShots[left])
+      ) {
+        child = right;
+      }
+      if (!this.shotComesBefore(this.scheduledShots[child], last)) break;
+      this.scheduledShots[index] = this.scheduledShots[child];
+      index = child;
+    }
+    this.scheduledShots[index] = last;
+    return first;
+  }
+
+  private shotComesBefore(left: ScheduledShot, right: ScheduledShot): boolean {
+    return left.at < right.at || (left.at === right.at && left.sequence < right.sequence);
+  }
+
+  private purgeScheduledShots(unitIds: Set<string>): void {
+    if (!unitIds.size || !this.scheduledShots.length) return;
+    const remaining = this.scheduledShots.filter(
+      (shot) => !unitIds.has(shot.sourceId) && !unitIds.has(shot.targetId),
+    );
+    if (remaining.length === this.scheduledShots.length) return;
+    remaining.sort((left, right) => left.at - right.at || left.sequence - right.sequence);
+    this.scheduledShots.length = 0;
+    this.scheduledShots.push(...remaining);
+  }
+
   private launchProjectile(
     source: RuntimeUnit,
     target: RuntimeUnit,
@@ -843,6 +1004,13 @@ export class BattleSimulation {
     definition: CharacterDefinition,
     target?: RuntimeUnit,
   ): void {
+    if (
+      this.projectiles.size >= MAX_ACTIVE_PROJECTILES ||
+      this.projectilesCreatedThisStep >= MAX_PROJECTILES_PER_STEP
+    ) {
+      this.droppedProjectiles += 1;
+      return;
+    }
     const attack = definition.attack;
     const speed = attack.projectileSpeed ?? 650;
     const kind = attack.projectileKind ?? "bullet";
@@ -862,6 +1030,7 @@ export class BattleSimulation {
       splashRadius: attack.splashRadius,
     };
     this.projectiles.set(projectile.id, projectile);
+    this.projectilesCreatedThisStep += 1;
     const sound =
       definition.policeStar === 2
         ? "pistol"
@@ -903,7 +1072,10 @@ export class BattleSimulation {
         continue;
       }
 
-      const hit = [...this.units.values()].find(
+      const hit = this.queryUnitCandidates(
+        projectile,
+        projectile.radius + this.maxUnitRadius,
+      ).find(
         (unit) =>
           unit.targetable &&
           unit.factionId !== projectile.factionId &&
@@ -924,7 +1096,7 @@ export class BattleSimulation {
   private explodeRocket(projectile: RuntimeProjectile, directTargetId?: string): void {
     const radius = projectile.splashRadius ?? 150;
     const splash = projectile.splashDamage ?? 50;
-    for (const unit of this.units.values()) {
+    for (const unit of this.queryUnitCandidates(projectile, radius + this.maxUnitRadius)) {
       if (
         !unit.targetable ||
         unit.factionId === projectile.factionId ||
@@ -1034,6 +1206,13 @@ export class BattleSimulation {
   private spawnPolice(owner: RuntimeUnit, star: 1 | 2 | 3 | 4 | 5): RuntimeUnit | undefined {
     const definition = this.definitions.get(`police-${star}`);
     if (!definition) return undefined;
+    if (
+      this.unitsSpawnedThisStep >= MAX_UNIT_SPAWNS_PER_STEP ||
+      this.units.size >= MAX_ACTIVE_UNITS
+    ) {
+      this.droppedSpawns += 1;
+      return undefined;
+    }
     const angle = this.random.angle();
     const spawnDistance =
       owner.radius + definition.radius * (this.board.unitScale ?? 1) + 16;
@@ -1046,7 +1225,11 @@ export class BattleSimulation {
       x: owner.x + Math.cos(angle) * spawnDistance,
       y: owner.y + Math.sin(angle) * spawnDistance,
     });
-    this.units.set(unit.id, unit);
+    if (!this.addUnit(unit)) {
+      this.droppedSpawns += 1;
+      return undefined;
+    }
+    this.unitsSpawnedThisStep += 1;
     this.emit(
       "spawn",
       `${owner.name} 是保护动物：遭到攻击后，一名人类警察赶来保护`,
@@ -1058,16 +1241,16 @@ export class BattleSimulation {
   }
 
   private mergeCollidingPolice(): void {
-    while (true) {
-      const police = [...this.units.values()]
-        .filter(
-          (unit) =>
-            unit.policeStar !== undefined &&
-            unit.policeStar < 5 &&
-            unit.action !== "dead" &&
-            unit.action !== "merge",
-        )
-        .sort((left, right) => left.bornAt - right.bornAt || left.id.localeCompare(right.id));
+    let merges = 0;
+    while (merges < MAX_MERGES_PER_STEP) {
+      const police = this.orderedUnits().filter(
+        (unit) =>
+          unit.policeStar !== undefined &&
+          unit.policeStar < 5 &&
+          unit.action !== "dead" &&
+          unit.action !== "merge",
+      );
+      const policeOrder = new Map(police.map((unit, index) => [unit.id, index]));
       let pair: [RuntimeUnit, RuntimeUnit] | undefined;
 
       for (let leftIndex = 0; leftIndex < police.length && !pair; leftIndex += 1) {
@@ -1078,9 +1261,19 @@ export class BattleSimulation {
           : undefined;
         const mergePadding =
           ownerDefinition?.skillParameters?.panda?.policeMergePadding ?? 0;
-        for (let rightIndex = leftIndex + 1; rightIndex < police.length; rightIndex += 1) {
-          const right = police[rightIndex];
+        const candidates = [
+          ...this.queryUnitCandidates(
+            left,
+            left.radius + this.maxUnitRadius + mergePadding,
+          ),
+        ].sort(
+          (first, second) =>
+            (policeOrder.get(first.id) ?? Number.MAX_SAFE_INTEGER) -
+            (policeOrder.get(second.id) ?? Number.MAX_SAFE_INTEGER),
+        );
+        for (const right of candidates) {
           if (
+            (policeOrder.get(right.id) ?? -1) <= leftIndex ||
             right.factionId !== left.factionId ||
             right.policeStar !== left.policeStar
           ) {
@@ -1109,8 +1302,9 @@ export class BattleSimulation {
           : left.ownerId === right.ownerId
             ? left.ownerId
             : left.factionId;
-      this.units.delete(left.id);
-      this.units.delete(right.id);
+      this.deleteUnit(left.id);
+      this.deleteUnit(right.id);
+      this.purgeScheduledShots(new Set([left.id, right.id]));
       const merged = this.createUnit({
         id: mergedId,
         definition,
@@ -1124,7 +1318,7 @@ export class BattleSimulation {
       merged.action = "merge";
       merged.actionStartedAt = this.time;
       merged.actionUntil = this.time + 0.62;
-      this.units.set(merged.id, merged);
+      this.addUnit(merged);
       if (main) {
         const formerOwnerIds = new Set([left.id, right.id, left.ownerId, right.ownerId]);
         for (const unit of this.units.values()) {
@@ -1146,12 +1340,17 @@ export class BattleSimulation {
         undefined,
         `升星成功！${nextStar}星警察登场`,
       );
+      merges += 1;
+      this.rebuildSpatialIndex();
     }
   }
 
   private flattenHoles(): void {
     for (const hole of [...this.holes.values()]) {
-      const occupants = [...this.units.values()].filter(
+      const occupants = this.queryUnitCandidates(
+        hole,
+        hole.radius + this.maxUnitRadius,
+      ).filter(
         (unit) => {
           const definition = this.definitions.get(unit.definitionId);
           return (
@@ -1199,6 +1398,11 @@ export class BattleSimulation {
     target.action = "dead";
     target.actionStartedAt = this.time;
     target.actionUntil = this.time + 0.45;
+    if (target.reservedBambooId) {
+      this.reservedBambooIds.delete(target.reservedBambooId);
+      target.reservedBambooId = undefined;
+    }
+    const removedUnitIds = new Set([target.id]);
     const source = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
     if (source && source.action !== "dead") {
       source.action = "kill";
@@ -1227,7 +1431,10 @@ export class BattleSimulation {
 
     if (target.main) {
       for (const unit of [...this.units.values()]) {
-        if (!unit.main && unit.ownerId === target.ownerId) this.units.delete(unit.id);
+        if (!unit.main && unit.ownerId === target.ownerId) {
+          removedUnitIds.add(unit.id);
+          this.deleteUnit(unit.id);
+        }
       }
       for (const hole of [...this.holes.values()]) {
         if (hole.ownerId === target.ownerId) {
@@ -1239,6 +1446,7 @@ export class BattleSimulation {
         if (projectile.ownerId === target.ownerId) this.projectiles.delete(projectile.id);
       }
     }
+    this.purgeScheduledShots(removedUnitIds);
   }
 
   private recordMainKill(source: RuntimeUnit): number {
@@ -1262,7 +1470,7 @@ export class BattleSimulation {
 
   private cleanupDeadUnits(): void {
     for (const unit of [...this.units.values()]) {
-      if (unit.action === "dead" && this.time >= unit.actionUntil) this.units.delete(unit.id);
+      if (unit.action === "dead" && this.time >= unit.actionUntil) this.deleteUnit(unit.id);
     }
   }
 
@@ -1318,8 +1526,70 @@ export class BattleSimulation {
     }
   }
 
+  private addUnit(unit: RuntimeUnit): boolean {
+    if (this.units.size >= MAX_ACTIVE_UNITS) return false;
+    this.units.set(unit.id, unit);
+    this.orderedUnitsDirty = true;
+    return true;
+  }
+
+  private deleteUnit(id: string): boolean {
+    const deleted = this.units.delete(id);
+    if (deleted) this.orderedUnitsDirty = true;
+    return deleted;
+  }
+
+  private orderedUnits(): RuntimeUnit[] {
+    if (!this.orderedUnitsDirty) return this.orderedUnitsCache;
+    this.orderedUnitsCache = [...this.units.values()].sort(
+      (left, right) => left.bornAt - right.bornAt || left.id.localeCompare(right.id),
+    );
+    this.orderedUnitsDirty = false;
+    return this.orderedUnitsCache;
+  }
+
+  private rebuildSpatialIndex(): void {
+    this.spatialCells.clear();
+    this.maxUnitRadius = 0;
+    for (const unit of this.orderedUnits()) {
+      if (!unit.targetable || unit.action === "dead") continue;
+      this.maxUnitRadius = Math.max(this.maxUnitRadius, unit.radius);
+      const key = this.spatialKey(unit.x, unit.y);
+      const bucket = this.spatialCells.get(key);
+      if (bucket) bucket.push(unit);
+      else this.spatialCells.set(key, [unit]);
+    }
+  }
+
+  private queryUnitCandidates(origin: Vec2, radius: number): RuntimeUnit[] {
+    if (
+      this.spatialCells.size === 0 ||
+      !Number.isFinite(radius) ||
+      radius >= Math.hypot(this.board.width, this.board.height)
+    ) {
+      return this.orderedUnits();
+    }
+    const searchRadius = Math.max(0, radius);
+    const minCellX = Math.floor((origin.x - searchRadius) / SPATIAL_CELL_SIZE);
+    const maxCellX = Math.floor((origin.x + searchRadius) / SPATIAL_CELL_SIZE);
+    const minCellY = Math.floor((origin.y - searchRadius) / SPATIAL_CELL_SIZE);
+    const maxCellY = Math.floor((origin.y + searchRadius) / SPATIAL_CELL_SIZE);
+    const candidates: RuntimeUnit[] = [];
+    for (let cellY = minCellY; cellY <= maxCellY; cellY += 1) {
+      for (let cellX = minCellX; cellX <= maxCellX; cellX += 1) {
+        const bucket = this.spatialCells.get(`${cellX}:${cellY}`);
+        if (bucket) candidates.push(...bucket);
+      }
+    }
+    return candidates;
+  }
+
+  private spatialKey(x: number, y: number): string {
+    return `${Math.floor(x / SPATIAL_CELL_SIZE)}:${Math.floor(y / SPATIAL_CELL_SIZE)}`;
+  }
+
   private validTargets(unit: RuntimeUnit, range: number, origin: Vec2 = unit): RuntimeUnit[] {
-    return [...this.units.values()].filter(
+    return this.queryUnitCandidates(origin, range + this.maxUnitRadius).filter(
       (candidate) =>
         candidate.id !== unit.id &&
         candidate.targetable &&
@@ -1354,6 +1624,12 @@ export class BattleSimulation {
 
   private executeModule(unit: RuntimeUnit, ability: AbilityModule): void {
     if (ability.hpBelowRatio !== undefined && unit.hp / unit.maxHp > ability.hpBelowRatio) return;
+    if (this.modulesExecutedThisStep >= MAX_MODULE_EXECUTIONS_PER_STEP) {
+      this.skippedAbilityModules += 1;
+      unit.moduleCooldowns[ability.id] = this.time + 1 / 60;
+      return;
+    }
+    this.modulesExecutedThisStep += 1;
     for (const action of ability.actions) this.executeModuleAction(unit, action);
     unit.moduleCooldowns[ability.id] =
       this.time +
@@ -1380,7 +1656,18 @@ export class BattleSimulation {
     } else if (action.kind === "spawnUnit") {
       const definition = this.definitions.get(action.definitionId);
       if (!definition) return;
-      for (let index = 0; index < action.count; index += 1) {
+      const requestedCount = Number.isFinite(action.count)
+        ? Math.min(100_000, Math.max(0, Math.round(action.count)))
+        : MAX_UNIT_SPAWNS_PER_STEP;
+      const count = Math.min(
+        requestedCount,
+        MAX_UNIT_SPAWNS_PER_STEP - this.unitsSpawnedThisStep,
+        MAX_ACTIVE_UNITS - this.units.size,
+      );
+      if (count < requestedCount) {
+        this.droppedSpawns += requestedCount - count;
+      }
+      for (let index = 0; index < count; index += 1) {
         const angle = this.random.angle();
         const spawned = this.createUnit({
           definition,
@@ -1396,7 +1683,8 @@ export class BattleSimulation {
             Math.sin(angle) *
               (unit.radius + definition.radius * (this.board.unitScale ?? 1) + 10),
         });
-        this.units.set(spawned.id, spawned);
+        if (!this.addUnit(spawned)) break;
+        this.unitsSpawnedThisStep += 1;
       }
     } else if (action.kind === "knockbackNearby") {
       for (const target of this.validTargets(unit, action.radius)) {
@@ -1418,6 +1706,13 @@ export class BattleSimulation {
     amount?: number,
     announcement?: string,
   ): void {
+    const essential =
+      type === "death" || type === "victory" || type === "merge" || Boolean(announcement);
+    if (!essential && this.eventsCreatedThisStep >= MAX_EVENTS_PER_STEP) {
+      this.suppressedEvents += 1;
+      return;
+    }
+    this.eventsCreatedThisStep += 1;
     this.eventLog.push({
       id: this.nextId("event"),
       time: this.time,
@@ -1435,7 +1730,7 @@ export class BattleSimulation {
       amount,
       announcement,
     });
-    if (this.eventLog.length > 200) this.eventLog.splice(0, this.eventLog.length - 200);
+    this.trimEventLog();
   }
 
   private emitAt(
@@ -1445,6 +1740,12 @@ export class BattleSimulation {
     y: number,
     sound?: SynthPreset,
   ): void {
+    const essential = type === "death" || type === "victory" || type === "merge";
+    if (!essential && this.eventsCreatedThisStep >= MAX_EVENTS_PER_STEP) {
+      this.suppressedEvents += 1;
+      return;
+    }
+    this.eventsCreatedThisStep += 1;
     this.eventLog.push({
       id: this.nextId("event"),
       time: this.time,
@@ -1454,7 +1755,12 @@ export class BattleSimulation {
       y,
       sound,
     });
-    if (this.eventLog.length > 200) this.eventLog.splice(0, this.eventLog.length - 200);
+    this.trimEventLog();
+  }
+
+  private trimEventLog(): void {
+    if (this.eventLog.length <= MAX_EVENT_LOG) return;
+    this.eventLog.splice(0, this.eventLog.length - EVENT_LOG_TRIM_TO);
   }
 
   private nextId(prefix: string): string {

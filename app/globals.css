@@ -1481,6 +1481,14 @@ textarea:focus-visible {
 }
 
 /* Shared editor surfaces */
+.editor-loading {
+  display: grid;
+  min-height: calc(100vh - 76px);
+  place-items: center;
+  color: var(--muted);
+  letter-spacing: 0.06em;
+}
+
 .editor-layout {
   display: grid;
   grid-template-columns: 270px minmax(0, 1fr);

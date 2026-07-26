@@ -294,8 +294,6 @@ export type RuntimeUnit = {
     origin: Vec2;
     destination: Vec2;
     targetId?: string;
-    hitAt?: number;
-    hitDone?: boolean;
   };
   digPosition?: Vec2;
   gatling?: {

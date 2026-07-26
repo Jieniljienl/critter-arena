@@ -1,6 +1,14 @@
 "use client";
 
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import {
+  lazy,
+  Suspense,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   AudioLines,
   Boxes,
@@ -32,9 +40,7 @@ import {
   X,
 } from "lucide-react";
 import { ArenaCanvas, type ArenaHandle } from "./ArenaCanvas";
-import { BoardEditor } from "./BoardEditor";
 import { BoardPropsPanel } from "./BoardPropsPanel";
-import { CharacterEditor } from "./CharacterEditor";
 import { FormationEditor } from "./FormationEditor";
 import { NameLibraryEditor } from "./NameLibraryEditor";
 import { createDefaultManifest } from "@/lib/game/defaultContent";
@@ -54,6 +60,13 @@ import type {
 } from "@/lib/game/types";
 
 type WorkspaceView = "battle" | "characters" | "boards";
+
+const CharacterEditor = lazy(() =>
+  import("./CharacterEditor").then((module) => ({ default: module.CharacterEditor })),
+);
+const BoardEditor = lazy(() =>
+  import("./BoardEditor").then((module) => ({ default: module.BoardEditor })),
+);
 
 const statusLabel = (status: BattleSnapshot["status"] | undefined) => {
   if (status === "running") return "战斗中";
@@ -111,7 +124,9 @@ const createContestantId = () => {
 
 export function GameApp() {
   const [manifest, setManifest] = useState<ProjectManifest>(() => createDefaultManifest());
-  const [battleManifest, setBattleManifest] = useState<ProjectManifest>(() => createDefaultManifest());
+  const [battleManifest, setBattleManifest] = useState<ProjectManifest>(() =>
+    structuredClone(manifest),
+  );
   const [view, setView] = useState<WorkspaceView>("battle");
   const [battleKey, setBattleKey] = useState(0);
   const [snapshot, setSnapshot] = useState<BattleSnapshot>();
@@ -129,9 +144,9 @@ export function GameApp() {
   const arenaRef = useRef<ArenaHandle>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const musicImportRef = useRef<HTMLInputElement>(null);
-  const pendingPreviewSetupRef = useRef<MatchSetup>();
-  const previewSyncFrameRef = useRef<number>();
-  const fullscreenControlsTimerRef = useRef<number>();
+  const pendingPreviewSetupRef = useRef<MatchSetup | undefined>(undefined);
+  const previewSyncFrameRef = useRef<number | undefined>(undefined);
+  const fullscreenControlsTimerRef = useRef<number | undefined>(undefined);
 
   useEffect(() => {
     let alive = true;
@@ -1026,29 +1041,33 @@ export function GameApp() {
       )}
 
       {view === "characters" && (
-        <CharacterEditor
-          manifest={manifest}
-          selectedId={selectedCharacterId}
-          onSelect={setSelectedCharacterId}
-          onChange={setManifest}
-          onNotice={showNotice}
-        />
+        <Suspense fallback={<div className="editor-loading">正在加载角色工作台…</div>}>
+          <CharacterEditor
+            manifest={manifest}
+            selectedId={selectedCharacterId}
+            onSelect={setSelectedCharacterId}
+            onChange={setManifest}
+            onNotice={showNotice}
+          />
+        </Suspense>
       )}
 
       {view === "boards" && (
-        <BoardEditor
-          manifest={manifest}
-          selectedId={selectedBoardId}
-          onSelect={(id) => {
-            if (manifest.boards.some((board) => board.id === id)) {
-              switchBoard(id);
-            } else {
-              setSelectedBoardId(id);
-            }
-          }}
-          onChange={setManifest}
-          onNotice={showNotice}
-        />
+        <Suspense fallback={<div className="editor-loading">正在加载棋盘工作台…</div>}>
+          <BoardEditor
+            manifest={manifest}
+            selectedId={selectedBoardId}
+            onSelect={(id) => {
+              if (manifest.boards.some((board) => board.id === id)) {
+                switchBoard(id);
+              } else {
+                setSelectedBoardId(id);
+              }
+            }}
+            onChange={setManifest}
+            onNotice={showNotice}
+          />
+        </Suspense>
       )}
 
       {notice && <div className="toast"><Settings2 size={16} /> {notice}</div>}

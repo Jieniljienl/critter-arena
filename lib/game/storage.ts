@@ -1,5 +1,4 @@
 import Dexie, { type EntityTable } from "dexie";
-import JSZip from "jszip";
 import { z } from "zod";
 import { upgradeManifest } from "./defaultContent";
 import type { ProjectManifest } from "./types";
@@ -54,7 +53,7 @@ const manifestSchema = z
           attack: z.object({
             range: z.number().positive(),
             damage: z.number().nonnegative(),
-            cooldown: z.number().positive(),
+            cooldown: z.number().nonnegative(),
             windup: z.number().nonnegative(),
             mode: z.enum(["melee", "projectile", "burst", "gatling"]),
           }).passthrough(),
@@ -196,6 +195,7 @@ const extensionForMime = (mime: string | undefined, kind: "image" | "audio"): st
 };
 
 export const exportBundle = async (manifest: ProjectManifest): Promise<void> => {
+  const { default: JSZip } = await import("jszip");
   const zip = new JSZip();
   const bundled = structuredClone(manifest);
   for (const asset of bundled.assets) {
@@ -227,6 +227,7 @@ const blobToDataUrl = (blob: Blob): Promise<string> =>
 
 export const importProjectFile = async (file: File): Promise<ProjectManifest> => {
   if (file.name.toLowerCase().endsWith(".zip")) {
+    const { default: JSZip } = await import("jszip");
     const zip = await JSZip.loadAsync(file);
     const entry = zip.file("manifest.json");
     if (!entry) throw new Error("压缩包内缺少 manifest.json");

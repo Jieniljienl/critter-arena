@@ -15,6 +15,11 @@ export class ArenaAudio {
   private muted = false;
   private volume = 0.72;
   private lastPlayed = new Map<string, number>();
+  private soundWindowStartedAt = 0;
+  private soundsInWindow = 0;
+  private cueVoiceEnds = new Map<string, number[]>();
+  private assetVoicePools = new Map<string, HTMLAudioElement[]>();
+  private noiseBuffer?: AudioBuffer;
   private lastSpeechAt = 0;
   private musicGain?: GainNode;
   private musicSource?: AudioBufferSourceNode;
@@ -82,23 +87,29 @@ export class ArenaAudio {
   dispose(): void {
     this.stopMusic();
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    for (const pool of this.assetVoicePools.values()) {
+      for (const audio of pool) {
+        audio.pause();
+        audio.currentTime = 0;
+      }
+    }
     void this.context?.close();
     this.context = undefined;
     this.master = undefined;
     this.musicGain = undefined;
+    this.noiseBuffer = undefined;
+    this.assetVoicePools.clear();
+    this.cueVoiceEnds.clear();
+    this.lastPlayed.clear();
   }
 
   async playEvent(
     event: CombatEvent,
-    units: RuntimeUnit[],
-    definitions: CharacterDefinition[],
-    assets: AssetRef[],
+    units: ReadonlyMap<string, RuntimeUnit>,
+    definitions: ReadonlyMap<string, CharacterDefinition>,
+    assets: ReadonlyMap<string, AssetRef>,
   ): Promise<void> {
     if ((!event.sound && !event.announcement) || this.muted) return;
-    const now = performance.now();
-    const key = `${event.sound}-${event.unitId ?? "world"}`;
-    if (now - (this.lastPlayed.get(key) ?? 0) < 36) return;
-    this.lastPlayed.set(key, now);
     await this.unlock();
     if (event.announcement) {
       this.playAnnouncement(
@@ -108,10 +119,26 @@ export class ArenaAudio {
     }
     if (!event.sound) return;
 
-    const unit = units.find((candidate) => candidate.id === event.unitId);
-    const definition = unit
-      ? definitions.find((candidate) => candidate.id === unit.definitionId)
-      : undefined;
+    const now = performance.now();
+    const ambient = event.sound === "lava" || event.sound === "spring";
+    const key = `${event.sound}-${ambient ? "world" : event.unitId ?? "world"}`;
+    const minimumGap = ambient ? 240 : event.sound === "gatling" ? 48 : 36;
+    if (now - (this.lastPlayed.get(key) ?? 0) < minimumGap) return;
+    if (!this.takeGlobalSoundSlot(now, ambient ? 4 : 14)) return;
+    this.lastPlayed.set(key, now);
+    if (this.lastPlayed.size > 512) {
+      for (const [playedKey, playedAt] of this.lastPlayed) {
+        if (now - playedAt > 5_000) this.lastPlayed.delete(playedKey);
+      }
+      while (this.lastPlayed.size > 768) {
+        const oldestKey = this.lastPlayed.keys().next().value;
+        if (oldestKey === undefined) break;
+        this.lastPlayed.delete(oldestKey);
+      }
+    }
+
+    const unit = event.unitId ? units.get(event.unitId) : undefined;
+    const definition = unit ? definitions.get(unit.definitionId) : undefined;
     const slot =
       event.sound === "lava" || event.sound === "spring"
         ? undefined
@@ -125,12 +152,18 @@ export class ArenaAudio {
               ? "skill"
               : undefined;
     const cue = slot ? definition?.sounds[slot] : undefined;
+    const resolvedCue =
+      cue ?? {
+        id: event.sound,
+        source: "synth" as const,
+        preset: event.sound,
+        volume: ambient ? 0.24 : 0.7,
+      };
+    if (!this.takeCueVoiceSlot(resolvedCue, now)) return;
     if (cue?.source === "asset" && cue.assetId) {
-      const asset = assets.find((candidate) => candidate.id === cue.assetId);
+      const asset = assets.get(cue.assetId);
       if (asset) {
-        const audio = new Audio(asset.url);
-        audio.volume = Math.min(1, this.volume * cue.volume);
-        void audio.play().catch(() => undefined);
+        this.playAssetCue(asset, cue);
         return;
       }
     }
@@ -138,16 +171,45 @@ export class ArenaAudio {
       if (!event.announcement) this.playSpeech(cue);
       return;
     }
-    const fallbackVolume =
-      event.sound === "lava" || event.sound === "spring" ? 0.24 : 0.7;
-    this.playSynth(
-      cue ?? {
-        id: event.sound,
-        source: "synth",
-        preset: event.sound,
-        volume: fallbackVolume,
-      },
-    );
+    this.playSynth(resolvedCue);
+  }
+
+  private takeGlobalSoundSlot(now: number, limit: number): boolean {
+    if (now - this.soundWindowStartedAt >= 100) {
+      this.soundWindowStartedAt = now;
+      this.soundsInWindow = 0;
+    }
+    if (this.soundsInWindow >= limit) return false;
+    this.soundsInWindow += 1;
+    return true;
+  }
+
+  private takeCueVoiceSlot(cue: SoundCue, now: number): boolean {
+    const maxVoices = Math.max(1, Math.min(16, cue.maxVoices ?? 8));
+    const ends = (this.cueVoiceEnds.get(cue.id) ?? []).filter((end) => end > now);
+    if (ends.length >= maxVoices) {
+      this.cueVoiceEnds.set(cue.id, ends);
+      return false;
+    }
+    ends.push(now + 650);
+    this.cueVoiceEnds.set(cue.id, ends);
+    return true;
+  }
+
+  private playAssetCue(asset: AssetRef, cue: SoundCue): void {
+    const maxVoices = Math.max(1, Math.min(8, cue.maxVoices ?? 4));
+    const pool = this.assetVoicePools.get(asset.id) ?? [];
+    let audio = pool.find((candidate) => candidate.paused || candidate.ended);
+    if (!audio && pool.length < maxVoices) {
+      audio = new Audio(asset.url);
+      audio.preload = "auto";
+      pool.push(audio);
+      this.assetVoicePools.set(asset.id, pool);
+    }
+    if (!audio) return;
+    audio.currentTime = 0;
+    audio.volume = Math.min(1, this.volume * cue.volume);
+    void audio.play().catch(() => undefined);
   }
 
   private playAnnouncement(message: string, priority: boolean): void {
@@ -319,16 +381,19 @@ export class ArenaAudio {
     const context = this.context;
     const master = this.master;
     if (!context || !master) return;
-    const length = Math.ceil(context.sampleRate * duration);
-    const buffer = context.createBuffer(1, length, context.sampleRate);
-    const data = buffer.getChannelData(0);
-    for (let index = 0; index < length; index += 1) {
-      data[index] = (Math.random() * 2 - 1) * (1 - index / length);
+    if (!this.noiseBuffer || this.noiseBuffer.sampleRate !== context.sampleRate) {
+      const length = context.sampleRate;
+      const buffer = context.createBuffer(1, length, context.sampleRate);
+      const data = buffer.getChannelData(0);
+      for (let index = 0; index < length; index += 1) {
+        data[index] = Math.random() * 2 - 1;
+      }
+      this.noiseBuffer = buffer;
     }
     const source = context.createBufferSource();
     const filter = context.createBiquadFilter();
     const gain = context.createGain();
-    source.buffer = buffer;
+    source.buffer = this.noiseBuffer;
     filter.type = "bandpass";
     filter.frequency.setValueAtTime(highFrequency, start);
     filter.frequency.exponentialRampToValueAtTime(Math.max(25, lowFrequency), start + duration);
@@ -338,7 +403,7 @@ export class ArenaAudio {
     source.connect(filter);
     filter.connect(gain);
     gain.connect(master);
-    source.start(start);
+    source.start(start, Math.random() * Math.max(0, 1 - duration), duration);
   }
 
   private applyMasterVolume(): void {

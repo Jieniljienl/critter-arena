@@ -95,14 +95,14 @@ def process_units() -> None:
         save_sprite(cell, f"mole-tunnel-{index}.png")
 
     police = split_grid("police-sheet-alpha.png", 4, 5)
-    for row in range(5):
+    # Five-star police uses separately curated heavy-soldier artwork already
+    # tracked in public/assets. Do not overwrite it with the legacy sheet.
+    for row in range(4):
         star = row + 1
         base = row * 4
         save_sprite(police[base], f"police-{star}-idle.png")
         for frame in range(3):
             save_sprite(police[base + frame + 1], f"police-{star}-attack-{frame + 1}.png")
-    for frame, cell_index in enumerate((16, 19, 16), start=1):
-        save_sprite(police[cell_index], f"police-5-skill-{frame}.png")
 
 
 def process_props() -> None:
@@ -137,6 +137,23 @@ def process_large_art() -> None:
         quality=90,
         method=6,
     )
+    for source_name, output_name in (
+        ("board-moon-observatory-source.png", "board-portrait-moon-observatory.webp"),
+        ("board-desert-oasis-source.png", "board-portrait-desert-oasis.webp"),
+        ("board-aurora-platform-source.png", "board-portrait-aurora-platform.webp"),
+    ):
+        portrait_board = Image.open(SOURCE / source_name).convert("RGB")
+        ImageOps.fit(
+            portrait_board,
+            (900, 1600),
+            method=Image.Resampling.LANCZOS,
+            centering=(0.5, 0.5),
+        ).save(
+            OUTPUT / output_name,
+            "WEBP",
+            quality=90,
+            method=6,
+        )
     social = Image.open(SOURCE / "og-source.png").convert("RGB")
     ImageOps.fit(social, (1200, 630), method=Image.Resampling.LANCZOS).save(
         ROOT / "public" / "og.png",

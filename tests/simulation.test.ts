@@ -1091,6 +1091,26 @@ test("legacy team HUD colors gain clear defaults and obsolete name positions are
   );
 });
 
+test("the default board library includes three restrained new portrait arenas", () => {
+  const manifest = createDefaultManifest();
+  const expectedBoards = [
+    "portrait-moon-observatory",
+    "portrait-desert-oasis",
+    "portrait-aurora-platform",
+  ];
+
+  for (const boardId of expectedBoards) {
+    const board = manifest.boards.find((candidate) => candidate.id === boardId);
+    assert.ok(board, `missing portrait board ${boardId}`);
+    assert.equal(board.width, 900);
+    assert.equal(board.height, 1600);
+    assert.ok(board.props.length >= 4);
+    assert.ok(board.props.length <= 6);
+    assert.ok(board.props.some((prop) => prop.type === "hotSpring"));
+    assert.ok(board.props.some((prop) => prop.type === "lava"));
+  }
+});
+
 test("extreme sub-frame burst settings stay deterministic and within runtime budgets", () => {
   const createStressManifest = () => {
     const manifest = twoFighterManifest();

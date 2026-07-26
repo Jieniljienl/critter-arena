@@ -58,6 +58,21 @@ export const defaultAssets: AssetRef[] = [
   asset("board-bamboo-lava", "/assets/board-bamboo-lava.webp", "竹林熔岩竞技场"),
   asset("board-stream-landscape", "/assets/board-stream-landscape.webp", "横屏直播竞技场"),
   asset("board-stream-portrait", "/assets/board-stream-portrait.webp", "竖屏直播竞技场"),
+  asset(
+    "board-portrait-moon-observatory",
+    "/assets/board-portrait-moon-observatory.webp",
+    "月夜观星台",
+  ),
+  asset(
+    "board-portrait-desert-oasis",
+    "/assets/board-portrait-desert-oasis.webp",
+    "赤砂绿洲",
+  ),
+  asset(
+    "board-portrait-aurora-platform",
+    "/assets/board-portrait-aurora-platform.webp",
+    "极光冰湖",
+  ),
   asset("panda-idle", "/assets/panda-idle.png", "熊猫待机"),
   asset("panda-attack-1", "/assets/panda-attack-1.png", "熊猫攻击蓄力"),
   asset("panda-attack-2", "/assets/panda-attack-2.png", "熊猫攻击命中"),
@@ -619,6 +634,148 @@ export const streamPortraitBoard: BoardDefinition = {
   ],
 };
 
+export const moonObservatoryBoard: BoardDefinition = {
+  schemaVersion: SCHEMA_VERSION,
+  id: "portrait-moon-observatory",
+  name: "月夜观星台",
+  description: "冷色山巅石台，四角灯火压住边界，中央保持大面积安静的交战空间。",
+  width: 900,
+  height: 1600,
+  unitScale: 1.82,
+  backgroundAssetId: "board-portrait-moon-observatory",
+  props: [
+    ...[
+      [135, 320],
+      [765, 320],
+      [135, 1280],
+      [765, 1280],
+    ].map(([x, y], index) => ({
+      id: `moon-bamboo-${index + 1}`,
+      type: "bamboo" as const,
+      active: true,
+      shape: { kind: "circle" as const, x, y, radius: 72 },
+      label: `月台竹子 ${index + 1}`,
+    })),
+    {
+      id: "moon-lava",
+      type: "lava",
+      active: true,
+      shape: {
+        kind: "polygon",
+        points: [
+          { x: 320, y: 560 },
+          { x: 575, y: 535 },
+          { x: 620, y: 650 },
+          { x: 350, y: 680 },
+        ],
+      },
+      label: "星火裂隙",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "moon-spring",
+      type: "hotSpring",
+      active: true,
+      shape: { kind: "circle", x: 450, y: 1050, radius: 92 },
+      label: "月华泉",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+  ],
+};
+
+export const desertOasisBoard: BoardDefinition = {
+  schemaVersion: SCHEMA_VERSION,
+  id: "portrait-desert-oasis",
+  name: "赤砂绿洲",
+  description: "明亮沙岩峡谷，补给稀少、路线开阔，顶部绿洲提供稳定回血机会。",
+  width: 900,
+  height: 1600,
+  unitScale: 1.84,
+  backgroundAssetId: "board-portrait-desert-oasis",
+  props: [
+    ...[
+      [145, 520],
+      [755, 1080],
+    ].map(([x, y], index) => ({
+      id: `desert-bamboo-${index + 1}`,
+      type: "bamboo" as const,
+      active: true,
+      shape: { kind: "circle" as const, x, y, radius: 70 },
+      label: `商队竹筐 ${index + 1}`,
+    })),
+    {
+      id: "desert-spring",
+      type: "hotSpring",
+      active: true,
+      shape: { kind: "circle", x: 450, y: 145, radius: 96 },
+      label: "峡谷绿洲",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "desert-lava",
+      type: "lava",
+      active: true,
+      shape: {
+        kind: "polygon",
+        points: [
+          { x: 310, y: 1110 },
+          { x: 520, y: 1060 },
+          { x: 635, y: 1170 },
+          { x: 570, y: 1290 },
+          { x: 345, y: 1270 },
+        ],
+      },
+      label: "灼热流沙",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+  ],
+};
+
+export const auroraPlatformBoard: BoardDefinition = {
+  schemaVersion: SCHEMA_VERSION,
+  id: "portrait-aurora-platform",
+  name: "极光冰湖",
+  description: "冷亮冰面与克制的钢铁边框，地形最简洁，适合突出弹道和角色动作。",
+  width: 900,
+  height: 1600,
+  unitScale: 1.82,
+  backgroundAssetId: "board-portrait-aurora-platform",
+  props: [
+    ...[
+      [140, 500],
+      [760, 1100],
+    ].map(([x, y], index) => ({
+      id: `aurora-bamboo-${index + 1}`,
+      type: "bamboo" as const,
+      active: true,
+      shape: { kind: "circle" as const, x, y, radius: 70 },
+      label: `极地补给竹 ${index + 1}`,
+    })),
+    {
+      id: "aurora-spring",
+      type: "hotSpring",
+      active: true,
+      shape: { kind: "circle", x: 450, y: 390, radius: 92 },
+      label: "极光暖流",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "aurora-lava",
+      type: "lava",
+      active: true,
+      shape: { kind: "rectangle", x: 305, y: 1080, width: 290, height: 125 },
+      label: "热能泄露带",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+  ],
+};
+
 export const defaultSetup: MatchSetup = {
   schemaVersion: SCHEMA_VERSION,
   boardId: streamLandscapeBoard.id,
@@ -669,6 +826,9 @@ export const createDefaultManifest = (): ProjectManifest => ({
     structuredClone(defaultBoard),
     structuredClone(streamLandscapeBoard),
     structuredClone(streamPortraitBoard),
+    structuredClone(moonObservatoryBoard),
+    structuredClone(desertOasisBoard),
+    structuredClone(auroraPlatformBoard),
   ],
   setup: structuredClone(defaultSetup),
   backgroundMusic: {

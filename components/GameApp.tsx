@@ -1027,19 +1027,28 @@ export function GameApp() {
                         <span className="contestant-type">
                           {definition?.id.startsWith("panda") ? "🐼" : definition?.id === "mole" ? "🦫" : "👮"}
                         </span>
-                        <input
-                          value={contestant.displayName}
-                          onChange={(event) =>
-                            updateSetup({
-                              ...manifest.setup,
-                              contestants: manifest.setup.contestants.map((candidate) =>
-                                candidate.id === contestant.id
-                                  ? { ...candidate, displayName: event.target.value }
-                                  : candidate,
-                              ),
-                            })
-                          }
-                        />
+                        <div className="contestant-identity">
+                          <input
+                            aria-label={`${contestant.displayName}实例名称`}
+                            value={contestant.displayName}
+                            onChange={(event) =>
+                              updateSetup({
+                                ...manifest.setup,
+                                contestants: manifest.setup.contestants.map((candidate) =>
+                                  candidate.id === contestant.id
+                                    ? { ...candidate, displayName: event.target.value }
+                                    : candidate,
+                                ),
+                              })
+                            }
+                          />
+                          <span
+                            className="contestant-definition-name"
+                            title={definition?.name ?? "未知角色类型"}
+                          >
+                            类型 · {definition?.name ?? "未知角色"}
+                          </span>
+                        </div>
                         <select
                           className="contestant-team"
                           aria-label={`${contestant.displayName}阵营`}

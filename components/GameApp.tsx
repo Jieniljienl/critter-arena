@@ -32,6 +32,7 @@ import {
 } from "lucide-react";
 import { ArenaCanvas, type ArenaHandle } from "./ArenaCanvas";
 import { BoardEditor } from "./BoardEditor";
+import { BoardPropsPanel } from "./BoardPropsPanel";
 import { CharacterEditor } from "./CharacterEditor";
 import { FormationEditor } from "./FormationEditor";
 import { createDefaultManifest } from "@/lib/game/defaultContent";
@@ -209,6 +210,15 @@ export function GameApp() {
       manifest.boards[0],
     [manifest.boards, manifest.setup.boardId],
   );
+  const hasRuntimeBoard = Boolean(snapshot && snapshot.status !== "ready");
+  const runtimeBoard = hasRuntimeBoard
+    ? battleManifest.boards.find((board) => board.id === battleManifest.setup.boardId)
+    : undefined;
+  const currentBoard = runtimeBoard ?? activeBoard;
+  const currentBoardProps = hasRuntimeBoard
+    ? snapshot?.props ?? currentBoard?.props ?? []
+    : currentBoard?.props ?? [];
+  const currentBoardHoles = hasRuntimeBoard ? snapshot?.holes ?? [] : [];
 
   const beginFreshBattle = (newSeed = false) => {
     if (manifest.setup.contestants.length < 2) {
@@ -635,6 +645,12 @@ export function GameApp() {
                   ))}
               </div>
             </section>
+
+            <BoardPropsPanel
+              boardName={currentBoard?.name ?? "未选择棋盘"}
+              props={currentBoardProps}
+              holes={currentBoardHoles}
+            />
 
             <section className="sidebar-section event-section">
               <div className="sidebar-heading">

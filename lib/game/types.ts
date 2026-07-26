@@ -1,0 +1,313 @@
+export const BOARD_WIDTH = 1600;
+export const BOARD_HEIGHT = 900;
+export const SCHEMA_VERSION = 1 as const;
+
+export type Vec2 = { x: number; y: number };
+
+export type CircleRegion = {
+  kind: "circle";
+  x: number;
+  y: number;
+  radius: number;
+};
+
+export type RectangleRegion = {
+  kind: "rectangle";
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+};
+
+export type PolygonRegion = {
+  kind: "polygon";
+  points: Vec2[];
+};
+
+export type RegionShape = CircleRegion | RectangleRegion | PolygonRegion;
+
+export type AssetRef = {
+  id: string;
+  kind: "image" | "audio";
+  url: string;
+  name?: string;
+  mime?: string;
+};
+
+export type AnimationFrame = {
+  assetId: string;
+  durationMs: number;
+  marker?: "attack" | "skill" | "sound";
+};
+
+export type AnimationClip = {
+  id: string;
+  loop: boolean;
+  frames: AnimationFrame[];
+};
+
+export type SoundCue = {
+  id: string;
+  source: "synth" | "asset";
+  preset?: SynthPreset;
+  assetId?: string;
+  volume: number;
+  pitchVariance?: number;
+  maxVoices?: number;
+};
+
+export type SynthPreset =
+  | "swipe"
+  | "baton"
+  | "pistol"
+  | "rifle"
+  | "rocket"
+  | "explosion"
+  | "gatling"
+  | "kick"
+  | "chew"
+  | "dig"
+  | "tunnel"
+  | "hurt"
+  | "heal"
+  | "merge"
+  | "death"
+  | "lava";
+
+export type AttackDefinition = {
+  range: number;
+  damage: number;
+  cooldown: number;
+  windup: number;
+  mode: "melee" | "projectile" | "burst" | "gatling";
+  projectileSpeed?: number;
+  projectileKind?: "bullet" | "rocket";
+  burstCount?: number;
+  burstGap?: number;
+  splashDamage?: number;
+  splashRadius?: number;
+};
+
+export type AbilityTrigger =
+  | "interval"
+  | "onDamageTaken"
+  | "onAttack"
+  | "onDeath";
+
+export type AbilityAction =
+  | { kind: "heal"; amount: number }
+  | { kind: "damageNearby"; amount: number; radius: number }
+  | { kind: "spawnUnit"; definitionId: string; count: number }
+  | { kind: "knockbackNearby"; distance: number; radius: number }
+  | { kind: "playSound"; cue: SynthPreset };
+
+export type AbilityModule = {
+  id: string;
+  name: string;
+  trigger: AbilityTrigger;
+  cooldown: number;
+  interval?: number;
+  hpBelowRatio?: number;
+  actions: AbilityAction[];
+};
+
+export type CharacterDefinition = {
+  schemaVersion: typeof SCHEMA_VERSION;
+  id: string;
+  name: string;
+  subtitle: string;
+  role: "contestant" | "summon";
+  pluginId?: "panda" | "mole" | "police";
+  policeStar?: 1 | 2 | 3 | 4 | 5;
+  maxHp: number;
+  speed: number;
+  radius: number;
+  accent: string;
+  portraitAssetId: string;
+  attack: AttackDefinition;
+  animations: Record<string, AnimationClip>;
+  sounds: Partial<Record<"attack" | "hit" | "hurt" | "skill" | "death", SoundCue>>;
+  abilities: AbilityModule[];
+};
+
+export type BoardProp = {
+  id: string;
+  type: "bamboo" | "lava";
+  shape: RegionShape;
+  active: boolean;
+  label?: string;
+};
+
+export type BoardDefinition = {
+  schemaVersion: typeof SCHEMA_VERSION;
+  id: string;
+  name: string;
+  description: string;
+  width: number;
+  height: number;
+  backgroundAssetId: string;
+  props: BoardProp[];
+};
+
+export type MatchContestant = {
+  id: string;
+  definitionId: string;
+  displayName: string;
+  position: Vec2;
+  direction: Vec2;
+  color: string;
+};
+
+export type MatchSetup = {
+  schemaVersion: typeof SCHEMA_VERSION;
+  boardId: string;
+  seed: number;
+  contestants: MatchContestant[];
+};
+
+export type ProjectManifest = {
+  schemaVersion: typeof SCHEMA_VERSION;
+  name: string;
+  assets: AssetRef[];
+  characters: CharacterDefinition[];
+  boards: BoardDefinition[];
+  setup: MatchSetup;
+  updatedAt: string;
+};
+
+export type UnitAction =
+  | "move"
+  | "attack"
+  | "skill"
+  | "hurt"
+  | "eating"
+  | "digging"
+  | "tunneling"
+  | "kick"
+  | "dead";
+
+export type RuntimeUnit = {
+  id: string;
+  definitionId: string;
+  name: string;
+  ownerId: string;
+  factionId: string;
+  main: boolean;
+  policeStar?: 1 | 2 | 3 | 4 | 5;
+  hp: number;
+  maxHp: number;
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  bornAt: number;
+  nextAttackAt: number;
+  targetable: boolean;
+  action: UnitAction;
+  actionStartedAt: number;
+  actionUntil: number;
+  nextPandaSummonAt: number;
+  nextEatAt: number;
+  reservedBambooId?: string;
+  nextDigAt: number;
+  nextAmbushAt: number;
+  lastHoleId?: string;
+  tunnelData?: {
+    mode: "ambush" | "travel";
+    origin: Vec2;
+    destination: Vec2;
+    targetId?: string;
+    hitAt?: number;
+    hitDone?: boolean;
+  };
+  digPosition?: Vec2;
+  gatling?: {
+    phase: "fire" | "rest";
+    phaseRemaining: number;
+    shotsRemaining: number;
+    nextShotIn: number;
+    nextKickAt: number;
+  };
+  moduleCooldowns: Record<string, number>;
+};
+
+export type RuntimeHole = {
+  id: string;
+  ownerId: string;
+  x: number;
+  y: number;
+  radius: number;
+  bornAt: number;
+};
+
+export type RuntimeProjectile = {
+  id: string;
+  ownerId: string;
+  factionId: string;
+  sourceUnitId: string;
+  kind: "bullet" | "rocket";
+  x: number;
+  y: number;
+  vx: number;
+  vy: number;
+  radius: number;
+  damage: number;
+  splashDamage?: number;
+  splashRadius?: number;
+};
+
+export type CombatEvent = {
+  id: string;
+  time: number;
+  type:
+    | "attack"
+    | "damage"
+    | "heal"
+    | "spawn"
+    | "merge"
+    | "skill"
+    | "death"
+    | "prop"
+    | "victory"
+    | "sound";
+  message: string;
+  x?: number;
+  y?: number;
+  unitId?: string;
+  targetId?: string;
+  sound?: SynthPreset;
+};
+
+export type BattleStatus = "ready" | "running" | "paused" | "finished";
+
+export type BattleSnapshot = {
+  time: number;
+  status: BattleStatus;
+  winnerId?: string;
+  winnerName?: string;
+  draw: boolean;
+  units: RuntimeUnit[];
+  holes: RuntimeHole[];
+  projectiles: RuntimeProjectile[];
+  props: BoardProp[];
+  events: CombatEvent[];
+};
+
+export type AbilityPluginContext = {
+  now: number;
+  dt: number;
+  unit: RuntimeUnit;
+};
+
+export interface AbilityPlugin {
+  id: string;
+  onSpawn?: (context: AbilityPluginContext) => void;
+  onTick?: (context: AbilityPluginContext) => void;
+  onDamageTaken?: (
+    context: AbilityPluginContext,
+    sourceUnitId: string | undefined,
+    amount: number,
+  ) => void;
+  onDispose?: (context: AbilityPluginContext) => void;
+}

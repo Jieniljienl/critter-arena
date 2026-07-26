@@ -7,6 +7,7 @@ import {
 } from "../lib/game/defaultContent";
 import { BattleSimulation, circleOverlapsRegion } from "../lib/game/simulation";
 import { actionClipName } from "../lib/game/unitAnimation";
+import { isSkillVoiceEvent } from "../lib/game/audio";
 import type {
   BoardDefinition,
   CharacterDefinition,
@@ -122,6 +123,7 @@ test("cardinal starting directions are nudged and movement resumes with seeded a
     cooldown: 100,
     windup: 0,
     mode: "melee",
+    frontArcDegrees: 360,
   };
   mole.pluginId = undefined;
   mole.speed = 0;
@@ -173,10 +175,12 @@ test("mole tunneling uses travel art underground and attack art only after a suc
   assert.equal(actionClipName(unit, 0.95), "tunnelEmerge");
   assert.equal(actionClipName(unit, 1.02), "tunnelEmerge");
 
-  unit.tunnelData.hitSucceeded = true;
+  const tunnel = unit.tunnelData;
+  assert.ok(tunnel);
+  tunnel.hitSucceeded = true;
   assert.equal(actionClipName(unit, 1.02), "tunnelAttack");
-  unit.tunnelData.returnStartedAt = 1.12;
-  unit.tunnelData.returnArrivalAt = 1.8;
+  tunnel.returnStartedAt = 1.12;
+  tunnel.returnArrivalAt = 1.8;
   assert.equal(actionClipName(unit, 1.3), "tunnelMove");
   assert.equal(actionClipName(unit, 1.81), "tunnelEmerge");
 });
@@ -268,6 +272,7 @@ test("hot spring healing persists for three seconds after leaving the region", (
     cooldown: 100,
     windup: 0,
     mode: "melee",
+    frontArcDegrees: 360,
   };
   panda.attack.range = 0;
   panda.attack.damage = 0;
@@ -399,7 +404,7 @@ test("a mole can use another mole's hole for a cross-owner ambush", () => {
   );
 });
 
-test("a hole loses durability only on three distinct entries before collapsing", () => {
+test("holes remain open after repeated enemy crossings", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.width = 500;
@@ -411,7 +416,6 @@ test("a hole loses durability only on three distinct entries before collapsing",
   panda.speed = 100;
   mole.speed = 0;
   mole.skillParameters!.mole!.holeRadius = 80;
-  mole.skillParameters!.mole!.stompsToFlatten = 3;
   mole.skillParameters!.mole!.digCooldown = 100;
   manifest.setup.contestants[0].position = { x: 80, y: 150 };
   manifest.setup.contestants[0].direction = { x: 1, y: 0 };
@@ -420,22 +424,15 @@ test("a hole loses durability only on three distinct entries before collapsing",
 
   const simulation = new BattleSimulation(manifest);
   simulation.start();
-  runSteps(simulation, 60);
-  let snapshot = simulation.getSnapshot();
+  runSteps(simulation, 720);
+  const snapshot = simulation.getSnapshot();
   assert.equal(snapshot.holes.length, 1);
-  assert.equal(snapshot.holes[0].stompsRemaining, 2);
-
-  runSteps(simulation, 360);
-  snapshot = simulation.getSnapshot();
-  assert.equal(snapshot.holes.length, 1);
-  assert.equal(snapshot.holes[0].stompsRemaining, 1);
-
-  runSteps(simulation, 180);
-  snapshot = simulation.getSnapshot();
-  assert.equal(snapshot.holes.length, 0);
-  assert.equal(
-    snapshot.events.filter((event) => event.message.includes("踩中洞口")).length,
-    3,
+  assert.ok(
+    snapshot.events.every(
+      (event) =>
+        !event.message.includes("踩中洞口") &&
+        !event.message.includes("踩平"),
+    ),
   );
 });
 
@@ -517,6 +514,7 @@ test("five-star police keeps one round direction while applying configurable spr
   const target = definition(manifest, "mole");
   officer.speed = 0;
   officer.attack.damage = 0;
+  officer.attack.range = 2_000;
   officer.attack.cooldown = 3;
   officer.attack.windup = 0;
   officer.attack.projectileSpeed = 20;
@@ -747,6 +745,7 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
     cooldown: 0.25,
     windup: 0,
     mode: "melee",
+    frontArcDegrees: 360,
   };
   manifest.setup.contestants[0].position = { x: 250, y: 250 };
   manifest.setup.contestants[1].position = { x: 1200, y: 700 };
@@ -817,9 +816,9 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
   assert.deepEqual(
     pandaDefinition.animations.callPolice.frames.map((frame) => frame.assetId),
     [
-      "panda-lazy-attack-3",
-      "panda-lazy-attack-1",
-      "panda-lazy-attack-3",
+      "panda-lazy-sos",
+      "panda-lazy-sos-2",
+      "panda-lazy-idle",
     ],
   );
 });
@@ -1198,6 +1197,7 @@ test("a panda's summoned police keeps its faction alive after the panda dies", (
     cooldown: 0.05,
     windup: 0,
     mode: "melee",
+    frontArcDegrees: 360,
   };
   for (const police of manifest.characters.filter((character) => character.policeStar)) {
     police.maxHp = 1_000;
@@ -1427,7 +1427,7 @@ test("allied selectable police merge on contact and play a star-up action", () =
   assert.ok(snapshot.events.some((event) => event.type === "merge" && event.announcement));
 });
 
-test("a police officer promotes after every two personal kills and stops at five stars", () => {
+test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars", () => {
   const manifest = createDefaultManifest();
   const board = selectedBoard(manifest);
   board.props = [];
@@ -1442,8 +1442,12 @@ test("a police officer promotes after every two personal kills and stops at five
       cooldown: 0.05,
       windup: 0,
       mode: "melee",
+      frontArcDegrees: 360,
     };
-    police.skillParameters!.police!.killsPerPromotion = 2;
+    police.skillParameters!.police!.killsToStar2 = 1;
+    police.skillParameters!.police!.killsToStar3 = 2;
+    police.skillParameters!.police!.killsToStar4 = 2;
+    police.skillParameters!.police!.killsToStar5 = 3;
   }
   const target = definition(manifest, "mole");
   target.pluginId = undefined;
@@ -1463,7 +1467,7 @@ test("a police officer promotes after every two personal kills and stops at five
       color: "#ffd55e",
       teamId: "red",
     },
-    ...Array.from({ length: 10 }, (_, index) => ({
+    ...Array.from({ length: 8 }, (_, index) => ({
       id: `promotion-target-${index}`,
       definitionId: "mole",
       displayName: `训练目标${index + 1}`,
@@ -1503,6 +1507,10 @@ test("a police officer promotes after every two personal kills and stops at five
   assert.deepEqual(
     promotions.map((event) => event.unitDefinitionId),
     ["police-2", "police-3", "police-4", "police-5"],
+  );
+  assert.deepEqual(
+    promotions.map((event) => Number(event.message.match(/累计击杀(\d+)名/)?.[1])),
+    [1, 2, 2, 3],
   );
 });
 
@@ -1799,4 +1807,359 @@ test("extreme interval spawn skills cannot grow the unit pool without bounds", (
   assert.ok(diagnostics.activeUnits <= 512);
   assert.ok(diagnostics.droppedSpawns > 0);
   assert.equal(simulation.getSnapshot().status, "running");
+});
+
+test("spoken voice is restricted to skill events and every default role has skill lines", () => {
+  assert.equal(isSkillVoiceEvent({ type: "skill" }), true);
+  assert.equal(isSkillVoiceEvent({ type: "spawn" }), true);
+  for (const type of ["attack", "damage", "death", "merge", "victory"] as const) {
+    assert.equal(isSkillVoiceEvent({ type }), false);
+  }
+
+  const manifest = createDefaultManifest();
+  for (const character of manifest.characters) {
+    assert.equal(
+      character.sounds.skill?.source,
+      "speech",
+      `${character.name} should have spoken skill lines`,
+    );
+    for (const slot of ["attack", "hit", "hurt", "death"] as const) {
+      assert.notEqual(
+        character.sounds[slot]?.source,
+        "speech",
+        `${character.name} ${slot} should not use spoken announcements`,
+      );
+    }
+  }
+});
+
+test("default settlement and rescue/reload actions use distinct animation frames", () => {
+  const manifest = createDefaultManifest();
+  for (const character of manifest.characters) {
+    const frames = character.animations.victory?.frames.map(
+      (frame) => frame.assetId,
+    );
+    assert.ok(frames);
+    assert.ok(frames.length >= 2);
+    assert.ok(new Set(frames).size >= 2);
+  }
+  const panda = definition(manifest, "panda-lazy");
+  assert.deepEqual(
+    panda.animations.callPolice.frames.map((frame) => frame.assetId),
+    ["panda-lazy-sos", "panda-lazy-sos-2", "panda-lazy-idle"],
+  );
+  const heavy = definition(manifest, "police-5");
+  assert.ok(
+    heavy.animations.reload.frames.some(
+      (frame) => frame.assetId === "police-5-reload",
+    ),
+  );
+  assert.ok(
+    heavy.animations.reload.frames.some(
+      (frame) => frame.assetId === "police-5-reload-2",
+    ),
+  );
+});
+
+test("a five-star officer spends its magazine, performs a voiced reload skill, and refills", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 1_200;
+  board.height = 700;
+  const officer = definition(manifest, "police-5");
+  officer.speed = 0;
+  officer.attack.range = 1_200;
+  officer.attack.cooldown = 100;
+  officer.attack.windup = 0;
+  officer.attack.burstCount = 8;
+  officer.attack.burstGap = 0.01;
+  officer.attack.projectileSpeed = 20;
+  officer.skillParameters!.police!.gatlingMagazineSize = 3;
+  officer.skillParameters!.police!.gatlingReloadDuration = 0.2;
+  const target = definition(manifest, "mole");
+  target.pluginId = undefined;
+  target.speed = 0;
+  target.maxHp = 10_000;
+  target.attack.range = 0;
+  target.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "reload-officer",
+      definitionId: "police-5",
+      displayName: "换弹测试员",
+      position: { x: 180, y: 350 },
+      direction: { x: 1, y: 0 },
+      color: "#f6d85f",
+    },
+    {
+      id: "reload-target",
+      definitionId: "mole",
+      displayName: "远处靶子",
+      position: { x: 1_000, y: 350 },
+      direction: { x: -1, y: 0 },
+      color: "#ff8b62",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 15);
+  let snapshot = simulation.getSnapshot();
+  const reloading = snapshot.units.find((unit) => unit.id === "reload-officer");
+  assert.ok(reloading);
+  assert.equal(reloading.action, "reloading");
+  assert.equal(reloading.gatling?.ammoRemaining, 0);
+  assert.equal(reloading.gatling?.magazineSize, 3);
+  assert.equal(actionClipName(reloading, snapshot.time), "reload");
+  assert.ok(
+    snapshot.events.some(
+      (event) =>
+        event.type === "skill" &&
+        event.unitId === reloading.id &&
+        event.sound === "reload",
+    ),
+  );
+
+  runSteps(simulation, 20);
+  snapshot = simulation.getSnapshot();
+  const refilled = snapshot.units.find((unit) => unit.id === "reload-officer");
+  assert.ok(refilled);
+  assert.notEqual(refilled.action, "reloading");
+  assert.equal(refilled.gatling?.ammoRemaining, 3);
+});
+
+test("a living panda globally refreshes one bamboo at a time up to the configured cap", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  disableCombat(manifest);
+  const panda = definition(manifest, "panda-lazy");
+  panda.speed = 0;
+  panda.skillParameters!.panda!.bambooRespawnInterval = 0.2;
+  panda.skillParameters!.panda!.bambooRespawnLimit = 3;
+  const mole = definition(manifest, "mole");
+  mole.pluginId = undefined;
+  mole.speed = 0;
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 60);
+  let snapshot = simulation.getSnapshot();
+  assert.equal(
+    snapshot.props.filter((prop) => prop.type === "bamboo" && prop.active).length,
+    3,
+  );
+  assert.ok(
+    snapshot.events.some(
+      (event) =>
+        event.type === "skill" &&
+        event.message.includes("补充了一份竹子"),
+    ),
+  );
+  runSteps(simulation, 120);
+  snapshot = simulation.getSnapshot();
+  assert.equal(
+    snapshot.props.filter((prop) => prop.type === "bamboo" && prop.active).length,
+    3,
+  );
+});
+
+test("melee attacks only begin against close targets in the front arc", () => {
+  const createMeleeManifest = (targetX: number) => {
+    const manifest = twoFighterManifest();
+    const board = selectedBoard(manifest);
+    board.props = [];
+    board.width = 600;
+    board.height = 400;
+    board.unitScale = 1;
+    const panda = definition(manifest, "panda-lazy");
+    panda.pluginId = undefined;
+    panda.speed = 0;
+    panda.attack = {
+      range: 90,
+      damage: 20,
+      cooldown: 0.1,
+      windup: 0,
+      mode: "melee",
+      frontArcDegrees: 90,
+    };
+    const mole = definition(manifest, "mole");
+    mole.pluginId = undefined;
+    mole.speed = 0;
+    mole.attack.range = 0;
+    mole.attack.damage = 0;
+    manifest.setup.contestants[0].position = { x: 300, y: 200 };
+    manifest.setup.contestants[0].direction = { x: 1, y: 0 };
+    manifest.setup.contestants[1].position = { x: targetX, y: 200 };
+    return manifest;
+  };
+
+  const behind = new BattleSimulation(createMeleeManifest(240));
+  behind.start();
+  runSteps(behind, 60);
+  const behindTarget = behind
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "mole");
+  assert.ok(behindTarget);
+  assert.equal(behindTarget.hp, behindTarget.maxHp);
+
+  const ahead = new BattleSimulation(createMeleeManifest(360));
+  ahead.start();
+  runSteps(ahead, 60);
+  const aheadTarget = ahead
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "mole");
+  assert.ok(aheadTarget);
+  assert.ok(aheadTarget.hp < aheadTarget.maxHp);
+});
+
+test("rockets accelerate once to 1.5x speed after their first 1.5 seconds", () => {
+  const manifest = createDefaultManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 5_000;
+  board.height = 1_000;
+  board.unitScale = 1;
+  const officer = definition(manifest, "police-4");
+  officer.speed = 0;
+  officer.attack.range = 5_000;
+  officer.attack.cooldown = 100;
+  officer.attack.windup = 0;
+  officer.attack.projectileSpeed = 100;
+  officer.attack.projectileBoostAfter = 1.5;
+  officer.attack.projectileBoostMultiplier = 1.5;
+  officer.attack.spreadDegrees = 0;
+  const target = definition(manifest, "mole");
+  target.pluginId = undefined;
+  target.speed = 0;
+  target.maxHp = 10_000;
+  target.attack.range = 0;
+  target.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "boost-rpg",
+      definitionId: "police-4",
+      displayName: "两段火箭",
+      position: { x: 150, y: 500 },
+      direction: { x: 1, y: 0 },
+      color: "#ff9f58",
+    },
+    {
+      id: "boost-target",
+      definitionId: "mole",
+      displayName: "远距离靶",
+      position: { x: 4_800, y: 500 },
+      direction: { x: -1, y: 0 },
+      color: "#72d4af",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 60);
+  let rocket = simulation
+    .getSnapshot()
+    .projectiles.find((projectile) => projectile.kind === "rocket");
+  assert.ok(rocket);
+  assert.ok(Math.abs(Math.hypot(rocket.vx, rocket.vy) - 100) < 0.001);
+  assert.equal(rocket.boosted, false);
+
+  runSteps(simulation, 120);
+  rocket = simulation
+    .getSnapshot()
+    .projectiles.find((projectile) => projectile.kind === "rocket");
+  assert.ok(rocket);
+  assert.ok(Math.abs(Math.hypot(rocket.vx, rocket.vy) - 150) < 0.001);
+  assert.equal(rocket.boosted, true);
+});
+
+test("already-fired projectiles survive their shooter's death with attribution intact", () => {
+  const manifest = createDefaultManifest();
+  const board = selectedBoard(manifest);
+  board.width = 2_000;
+  board.height = 800;
+  board.unitScale = 1;
+  board.props = [
+    {
+      id: "shooter-lava",
+      type: "lava",
+      active: true,
+      shape: { kind: "circle", x: 200, y: 400, radius: 80 },
+      buffDuration: 3,
+      effectPerSecond: 10,
+    },
+  ];
+  const shooter = definition(manifest, "police-2");
+  shooter.maxHp = 5;
+  shooter.speed = 0;
+  shooter.attack.range = 2_000;
+  shooter.attack.cooldown = 100;
+  shooter.attack.windup = 0;
+  shooter.attack.projectileSpeed = 20;
+  shooter.attack.spreadDegrees = 0;
+  const ally = definition(manifest, "panda-lazy");
+  ally.pluginId = undefined;
+  ally.speed = 0;
+  ally.attack.range = 0;
+  ally.attack.damage = 0;
+  const target = definition(manifest, "mole");
+  target.pluginId = undefined;
+  target.speed = 0;
+  target.attack.range = 0;
+  target.attack.damage = 0;
+  target.maxHp = 10_000;
+  manifest.setup.contestants = [
+    {
+      id: "doomed-shooter",
+      definitionId: "police-2",
+      displayName: "阵亡射手",
+      position: { x: 200, y: 400 },
+      direction: { x: 1, y: 0 },
+      color: "#ff5968",
+      teamId: "red",
+    },
+    {
+      id: "red-anchor",
+      definitionId: "panda-lazy",
+      displayName: "红队留场",
+      position: { x: 200, y: 700 },
+      direction: { x: 1, y: 0 },
+      color: "#ff5968",
+      teamId: "red",
+    },
+    {
+      id: "distant-target",
+      definitionId: "mole",
+      displayName: "远处目标",
+      position: { x: 1_800, y: 400 },
+      direction: { x: -1, y: 0 },
+      color: "#55a7ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 55);
+  const fired = simulation
+    .getSnapshot()
+    .projectiles.find(
+      (projectile) => projectile.sourceUnitId === "doomed-shooter",
+    );
+  assert.ok(fired);
+
+  runSteps(simulation, 40);
+  const snapshot = simulation.getSnapshot();
+  const deadShooter = snapshot.units.find(
+    (unit) => unit.id === "doomed-shooter",
+  );
+  assert.ok(deadShooter);
+  assert.equal(deadShooter.action, "dead");
+  const survivingProjectile = snapshot.projectiles.find(
+    (projectile) => projectile.id === fired.id,
+  );
+  assert.ok(survivingProjectile);
+  assert.equal(survivingProjectile.sourceUnitId, deadShooter.id);
+  assert.equal(survivingProjectile.factionId, deadShooter.factionId);
 });

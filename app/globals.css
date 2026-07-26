@@ -1028,8 +1028,7 @@ textarea:focus-visible {
 }
 
 .formation-board.is-live .formation-token {
-  cursor: default;
-  pointer-events: none;
+  cursor: pointer;
   transition:
     left 80ms linear,
     top 80ms linear,
@@ -1073,6 +1072,15 @@ textarea:focus-visible {
 
 .contestant-entry {
   border-bottom: 1px solid rgba(255, 255, 255, 0.055);
+  transition:
+    background 160ms ease,
+    box-shadow 160ms ease;
+}
+
+.contestant-entry.is-selected {
+  border-radius: 10px;
+  background: rgba(223, 246, 106, 0.075);
+  box-shadow: inset 3px 0 0 var(--lime);
 }
 
 .contestant-row {

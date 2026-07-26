@@ -221,9 +221,7 @@ export function BoardPropsPanel({
             <div className="current-prop-copy">
               <div className="current-prop-name">
                 <strong>通用洞口 {index + 1}</strong>
-                <span>
-                  耐久 {hole.stompsRemaining}/{hole.stompsRequired}
-                </span>
+                <span>持续开放</span>
               </div>
               <p>双方地鼠均可借道偷袭</p>
               <small>圆形范围 · 半径 {Math.round(hole.radius)}</small>

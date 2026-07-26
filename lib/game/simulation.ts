@@ -146,7 +146,6 @@ export class BattleSimulation {
   private readonly units = new Map<string, RuntimeUnit>();
   private readonly holes = new Map<string, RuntimeHole>();
   private readonly projectiles = new Map<string, RuntimeProjectile>();
-  private readonly holeOccupants = new Map<string, Set<string>>();
   private readonly props: BoardProp[];
   private readonly bambooProps: BoardProp[];
   private readonly lavaProps: BoardProp[];
@@ -177,6 +176,7 @@ export class BattleSimulation {
   private draw = false;
   private finishAt: number | undefined;
   private lastMainKillerId: string | undefined;
+  private nextBambooRespawnAt: number | undefined;
 
   constructor(manifest: ProjectManifest, setup: MatchSetup = manifest.setup) {
     manifest.characters.forEach((definition) => this.definitions.set(definition.id, definition));
@@ -216,7 +216,6 @@ export class BattleSimulation {
     this.orderedUnitsDirty = true;
     this.holes.clear();
     this.projectiles.clear();
-    this.holeOccupants.clear();
     this.reservedBambooIds.clear();
     this.spatialCells.clear();
     this.scheduledShots.length = 0;
@@ -233,6 +232,7 @@ export class BattleSimulation {
     this.draw = false;
     this.finishAt = undefined;
     this.lastMainKillerId = undefined;
+    this.nextBambooRespawnAt = undefined;
     this.initializeContestants();
     return true;
   }
@@ -248,11 +248,11 @@ export class BattleSimulation {
     this.processScheduledShots();
     this.rebuildSpatialIndex();
     this.updateUnits(dt);
+    this.updatePandaBambooRespawn();
     this.rebuildSpatialIndex();
     this.mergeCollidingPolice();
     this.rebuildSpatialIndex();
     this.updateProjectiles(dt);
-    this.flattenHoles();
     this.cleanupDeadUnits();
     this.checkVictory();
   }
@@ -407,6 +407,18 @@ export class BattleSimulation {
               shotsRemaining: 0,
               nextShotIn: 0,
               nextKickAt: 0,
+              magazineSize: Math.max(
+                1,
+                Math.round(
+                  definition.skillParameters?.police?.gatlingMagazineSize ?? 150,
+                ),
+              ),
+              ammoRemaining: Math.max(
+                1,
+                Math.round(
+                  definition.skillParameters?.police?.gatlingMagazineSize ?? 150,
+                ),
+              ),
             },
           }
         : {}),
@@ -433,6 +445,7 @@ export class BattleSimulation {
         "satisfied",
         "digging",
         "tunneling",
+        "reloading",
         "kick",
         "knockback",
         "stunned",
@@ -562,6 +575,96 @@ export class BattleSimulation {
     unit.reservedBambooId = bamboo.id;
     this.reservedBambooIds.add(bamboo.id);
     this.emit("skill", `${unit.name} 抱住竹子，开始猛吃`, unit, undefined, "chew");
+  }
+
+  private updatePandaBambooRespawn(): void {
+    const pandas = this.orderedUnits().filter((unit) => {
+      if (unit.hp <= 0 || unit.action === "dead") return false;
+      return this.definitions.get(unit.definitionId)?.pluginId === "panda";
+    });
+    if (!pandas.length) {
+      this.nextBambooRespawnAt = undefined;
+      return;
+    }
+
+    const configurations = pandas.map((panda) => {
+      const parameters = this.definitions.get(panda.definitionId)?.skillParameters?.panda;
+      return {
+        interval: Math.max(0.1, parameters?.bambooRespawnInterval ?? 15),
+        limit: Math.max(0, Math.round(parameters?.bambooRespawnLimit ?? 3)),
+      };
+    });
+    const interval = Math.min(...configurations.map((item) => item.interval));
+    const limit = Math.max(...configurations.map((item) => item.limit));
+    const activeBamboo = this.bambooProps.filter((prop) => prop.active);
+    if (activeBamboo.length > limit) {
+      const keepIds = new Set(
+        Array.from({ length: limit }, (_, index) => {
+          const evenlySpacedIndex = Math.min(
+            activeBamboo.length - 1,
+            Math.floor((index * activeBamboo.length) / Math.max(1, limit)),
+          );
+          return activeBamboo[evenlySpacedIndex]?.id;
+        }).filter((id): id is string => Boolean(id)),
+      );
+      for (const bamboo of activeBamboo) {
+        if (!keepIds.has(bamboo.id)) bamboo.active = false;
+      }
+    }
+    this.nextBambooRespawnAt ??= this.time + interval;
+    if (this.time + EPSILON < this.nextBambooRespawnAt) return;
+    this.nextBambooRespawnAt = this.time + interval;
+    if (limit <= 0) return;
+    const activeBambooCount = this.bambooProps.filter((prop) => prop.active).length;
+    if (activeBambooCount >= limit) return;
+
+    let bamboo = this.bambooProps.find(
+      (prop) => !prop.active && !this.reservedBambooIds.has(prop.id),
+    );
+    if (bamboo) {
+      bamboo.active = true;
+    } else {
+      const radius = 78;
+      let position = {
+        x: radius + this.random.next() * Math.max(1, this.board.width - radius * 2),
+        y: radius + this.random.next() * Math.max(1, this.board.height - radius * 2),
+      };
+      for (let attempt = 0; attempt < 20; attempt += 1) {
+        const candidate = {
+          x: radius + this.random.next() * Math.max(1, this.board.width - radius * 2),
+          y: radius + this.random.next() * Math.max(1, this.board.height - radius * 2),
+        };
+        const overlapsHazard = [...this.lavaProps, ...this.springProps].some((prop) =>
+          circleOverlapsRegion(candidate, radius, prop.shape),
+        );
+        const overlapsBamboo = this.bambooProps.some(
+          (prop) =>
+            prop.active &&
+            prop.shape.kind === "circle" &&
+            distance(candidate, prop.shape) < radius + prop.shape.radius + 40,
+        );
+        if (!overlapsHazard && !overlapsBamboo) {
+          position = candidate;
+          break;
+        }
+      }
+      bamboo = {
+        id: this.nextId("bamboo-refresh"),
+        type: "bamboo",
+        active: true,
+        shape: { kind: "circle", ...position, radius },
+        label: "熊猫补给竹子",
+      };
+      this.props.push(bamboo);
+      this.bambooProps.push(bamboo);
+    }
+    this.emit(
+      "skill",
+      `${pandas[0].name} 在场，地图补充了一份竹子`,
+      pandas[0],
+      undefined,
+      "heal",
+    );
   }
 
   private updateMole(unit: RuntimeUnit): void {
@@ -750,7 +853,14 @@ export class BattleSimulation {
     dt: number,
   ): void {
     const gatling = unit.gatling;
-    if (!gatling || unit.action === "kick" || unit.action === "dead") return;
+    if (
+      !gatling ||
+      unit.action === "kick" ||
+      unit.action === "reloading" ||
+      unit.action === "dead"
+    ) {
+      return;
+    }
     const attack = definition.attack;
     const shotCount = Math.min(
       MAX_SHOTS_PER_BURST,
@@ -759,6 +869,10 @@ export class BattleSimulation {
     const shotGap = Math.max(EPSILON, attack.burstGap ?? 0.2);
 
     gatling.nextRoundIn = Math.max(0, gatling.nextRoundIn - dt);
+    if (gatling.ammoRemaining <= 0) {
+      this.startGatlingReload(unit, definition);
+      return;
+    }
     if (gatling.shotsRemaining <= 0) {
       if (gatling.nextRoundIn > EPSILON) return;
       const target = this.random.pick(this.validTargets(unit, attack.range));
@@ -771,12 +885,12 @@ export class BattleSimulation {
         y: target.y - unit.y,
       });
       gatling.roundTargetId = target.id;
-      gatling.shotsRemaining = shotCount;
+      gatling.shotsRemaining = Math.min(shotCount, gatling.ammoRemaining);
       gatling.nextShotIn = Math.max(0, attack.windup);
       gatling.nextRoundIn = Math.max(0.1, attack.cooldown);
       this.emit(
         "skill",
-        `${unit.name} 锁定 ${target.name} 的方向，开始一轮 ${shotCount} 发连射`,
+        `${unit.name} 锁定 ${target.name} 的方向，开始一轮 ${gatling.shotsRemaining} 发连射`,
         unit,
         target,
         "gatling",
@@ -804,6 +918,7 @@ export class BattleSimulation {
       unit.actionStartedAt = this.time;
       unit.actionUntil = Math.max(unit.actionUntil, this.time + 0.16);
       gatling.shotsRemaining -= 1;
+      gatling.ammoRemaining = Math.max(0, gatling.ammoRemaining - 1);
       gatling.nextShotIn += shotGap;
       shotsThisStep += 1;
     }
@@ -818,7 +933,39 @@ export class BattleSimulation {
       gatling.roundDirection = undefined;
       gatling.roundTargetId = undefined;
       gatling.nextShotIn = 0;
+      if (gatling.ammoRemaining <= 0) {
+        this.startGatlingReload(unit, definition);
+      }
     }
+  }
+
+  private startGatlingReload(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+  ): void {
+    const gatling = unit.gatling;
+    if (!gatling || unit.action === "reloading" || gatling.ammoRemaining > 0) {
+      return;
+    }
+    gatling.shotsRemaining = 0;
+    gatling.nextShotIn = 0;
+    gatling.roundDirection = undefined;
+    gatling.roundTargetId = undefined;
+    unit.action = "reloading";
+    unit.actionStartedAt = this.time;
+    unit.actionUntil =
+      this.time +
+      Math.max(
+        0.05,
+        definition.skillParameters?.police?.gatlingReloadDuration ?? 3,
+      );
+    this.emit(
+      "skill",
+      `${unit.name} 弹仓打空，开始更换加特林弹链`,
+      unit,
+      undefined,
+      "reload",
+    );
   }
 
   private completeTimedActions(): void {
@@ -860,15 +1007,12 @@ export class BattleSimulation {
         const definition = this.definitions.get(unit.definitionId);
         const parameters = definition?.skillParameters?.mole;
         const position = unit.digPosition ?? { x: unit.x, y: unit.y };
-        const stompsRequired = Math.max(1, Math.round(parameters?.stompsToFlatten ?? 3));
         const hole: RuntimeHole = {
           id: this.nextId("hole"),
           ownerId: unit.ownerId,
           x: position.x,
           y: position.y,
           radius: parameters?.holeRadius ?? 80,
-          stompsRequired,
-          stompsRemaining: stompsRequired,
           bornAt: this.time,
         };
         this.holes.set(hole.id, hole);
@@ -896,6 +1040,29 @@ export class BattleSimulation {
         unit.targetable = true;
         unit.tunnelData = undefined;
         this.emit("sound", `${unit.name} 钻出地面`, unit, undefined, "tunnel");
+        this.resetAction(unit);
+      } else if (unit.action === "reloading") {
+        const definition = this.definitions.get(unit.definitionId);
+        const gatling = unit.gatling;
+        if (gatling) {
+          gatling.magazineSize = Math.max(
+            1,
+            Math.round(
+              definition?.skillParameters?.police?.gatlingMagazineSize ??
+                gatling.magazineSize ??
+                150,
+            ),
+          );
+          gatling.ammoRemaining = gatling.magazineSize;
+          gatling.nextRoundIn = Math.max(0.08, gatling.nextRoundIn);
+        }
+        this.emit(
+          "sound",
+          `${unit.name} 完成换弹`,
+          unit,
+          undefined,
+          "reload",
+        );
         this.resetAction(unit);
       } else if (unit.action === "knockback") {
         const knockback = unit.knockbackData;
@@ -1030,6 +1197,7 @@ export class BattleSimulation {
       unit.action !== "satisfied" &&
       unit.action !== "digging" &&
       unit.action !== "tunneling" &&
+      unit.action !== "reloading" &&
       unit.action !== "kick" &&
       unit.action !== "knockback" &&
       unit.action !== "stunned" &&
@@ -1038,7 +1206,7 @@ export class BattleSimulation {
   }
 
   private beginAttack(unit: RuntimeUnit, definition: CharacterDefinition): void {
-    const target = this.random.pick(this.validTargets(unit, definition.attack.range));
+    const target = this.random.pick(this.validAttackTargets(unit, definition));
     if (!target) return;
     const attack = definition.attack;
     unit.action = "attack";
@@ -1137,7 +1305,7 @@ export class BattleSimulation {
 
       if (!target || !target.targetable) continue;
       if (definition.attack.mode === "melee") {
-        if (distance(source, target) <= definition.attack.range + target.radius) {
+        if (this.isValidMeleeTarget(source, target, definition)) {
           this.damageUnit(target.id, definition.attack.damage, source.id, "directAttack");
           this.emit(
             "attack",
@@ -1256,6 +1424,18 @@ export class BattleSimulation {
       factionId: source.factionId,
       sourceUnitId: source.id,
       kind,
+      bornAt: this.time,
+      ...(kind === "rocket"
+        ? {
+            boostAt:
+              this.time + Math.max(0, attack.projectileBoostAfter ?? 1.5),
+            boostMultiplier: Math.max(
+              0.1,
+              attack.projectileBoostMultiplier ?? 1.5,
+            ),
+            boosted: false,
+          }
+        : {}),
       x: source.x + shotDirection.x * (source.radius + 8),
       y: source.y + shotDirection.y * (source.radius + 8),
       vx: shotDirection.x * speed,
@@ -1290,6 +1470,17 @@ export class BattleSimulation {
 
   private updateProjectiles(dt: number): void {
     for (const projectile of [...this.projectiles.values()]) {
+      if (
+        projectile.kind === "rocket" &&
+        !projectile.boosted &&
+        projectile.boostAt !== undefined &&
+        this.time + EPSILON >= projectile.boostAt
+      ) {
+        const multiplier = Math.max(0.1, projectile.boostMultiplier ?? 1.5);
+        projectile.vx *= multiplier;
+        projectile.vy *= multiplier;
+        projectile.boosted = true;
+      }
       projectile.x += projectile.vx * dt;
       projectile.y += projectile.vy * dt;
 
@@ -1624,54 +1815,15 @@ export class BattleSimulation {
         undefined,
         `升星成功！${nextStar}星警察登场`,
       );
+      this.emit(
+        "skill",
+        `${merged.name} 触发碰撞升星`,
+        merged,
+        undefined,
+        "merge",
+      );
       merges += 1;
       this.rebuildSpatialIndex();
-    }
-  }
-
-  private flattenHoles(): void {
-    for (const hole of [...this.holes.values()]) {
-      const occupants = this.queryUnitCandidates(
-        hole,
-        hole.radius + this.maxUnitRadius,
-      ).filter(
-        (unit) => {
-          const definition = this.definitions.get(unit.definitionId);
-          return (
-            unit.targetable &&
-            definition?.pluginId !== "mole" &&
-            distance(unit, hole) <= unit.radius + hole.radius
-          );
-        },
-      );
-      const previous = this.holeOccupants.get(hole.id) ?? new Set<string>();
-      const current = new Set(occupants.map((unit) => unit.id));
-      const entrants = occupants.filter((unit) => !previous.has(unit.id));
-      let collapsed = false;
-      for (const entrant of entrants) {
-        hole.stompsRemaining = Math.max(0, hole.stompsRemaining - 1);
-        if (hole.stompsRemaining <= 0) {
-          this.holes.delete(hole.id);
-          this.holeOccupants.delete(hole.id);
-          this.emitAt(
-            "prop",
-            `${entrant.name} 第 ${hole.stompsRequired} 次踩中洞口，洞被踩平了`,
-            hole.x,
-            hole.y,
-            "dig",
-          );
-          collapsed = true;
-          break;
-        }
-        this.emitAt(
-          "prop",
-          `${entrant.name} 踩中洞口，剩余 ${hole.stompsRemaining}/${hole.stompsRequired} 次耐久`,
-          hole.x,
-          hole.y,
-          "dig",
-        );
-      }
-      if (!collapsed) this.holeOccupants.set(hole.id, current);
     }
   }
 
@@ -1736,20 +1888,7 @@ export class BattleSimulation {
       for (const hole of [...this.holes.values()]) {
         if (hole.ownerId === target.ownerId) {
           this.holes.delete(hole.id);
-          this.holeOccupants.delete(hole.id);
         }
-      }
-      for (const projectile of [...this.projectiles.values()]) {
-        if (projectile.ownerId !== target.ownerId) continue;
-        const projectileSource = this.units.get(projectile.sourceUnitId);
-        if (
-          projectileSource?.sustainsFaction &&
-          projectileSource.hp > 0 &&
-          projectileSource.action !== "dead"
-        ) {
-          continue;
-        }
-        this.projectiles.delete(projectile.id);
       }
     }
     this.purgeScheduledShots(removedUnitIds);
@@ -1774,13 +1913,29 @@ export class BattleSimulation {
       return;
     }
     const definition = this.definitions.get(source.definitionId);
-    const killsRequired = Math.max(
-      1,
-      Math.round(definition?.skillParameters?.police?.killsPerPromotion ?? 2),
+    const killsRequired = this.policePromotionRequirement(
+      definition,
+      currentStar as 1 | 2 | 3 | 4,
     );
     source.policeKillProgress += 1;
     if (source.policeKillProgress < killsRequired) return;
     this.promotePoliceAfterKills(source, killsRequired);
+  }
+
+  private policePromotionRequirement(
+    definition: CharacterDefinition | undefined,
+    currentStar: 1 | 2 | 3 | 4,
+  ): number {
+    const parameters = definition?.skillParameters?.police;
+    const configured =
+      currentStar === 1
+        ? parameters?.killsToStar2 ?? 1
+        : currentStar === 2
+          ? parameters?.killsToStar3 ?? 2
+          : currentStar === 3
+            ? parameters?.killsToStar4 ?? 2
+            : parameters?.killsToStar5 ?? 3;
+    return Math.max(1, Math.round(configured));
   }
 
   private promotePoliceAfterKills(source: RuntimeUnit, killsRequired: number): void {
@@ -1827,6 +1982,18 @@ export class BattleSimulation {
             shotsRemaining: 0,
             nextShotIn: 0,
             nextKickAt: 0,
+            magazineSize: Math.max(
+              1,
+              Math.round(
+                definition.skillParameters?.police?.gatlingMagazineSize ?? 150,
+              ),
+            ),
+            ammoRemaining: Math.max(
+              1,
+              Math.round(
+                definition.skillParameters?.police?.gatlingMagazineSize ?? 150,
+              ),
+            ),
           }
         : undefined;
     if (!source.main) {
@@ -1842,6 +2009,13 @@ export class BattleSimulation {
       undefined,
       `${source.name}完成战功升星，晋升为${nextStar}星警察`,
     );
+    this.emit(
+      "skill",
+      `${source.name} 触发战功升星`,
+      source,
+      undefined,
+      "merge",
+    );
   }
 
   private killChainLabel(count: number): string | undefined {
@@ -1856,8 +2030,17 @@ export class BattleSimulation {
   }
 
   private cleanupDeadUnits(): void {
+    const projectileSourceIds = new Set(
+      [...this.projectiles.values()].map((projectile) => projectile.sourceUnitId),
+    );
     for (const unit of [...this.units.values()]) {
-      if (unit.action === "dead" && this.time >= unit.actionUntil) this.deleteUnit(unit.id);
+      if (
+        unit.action === "dead" &&
+        this.time >= unit.actionUntil &&
+        !projectileSourceIds.has(unit.id)
+      ) {
+        this.deleteUnit(unit.id);
+      }
     }
   }
 
@@ -1873,6 +2056,18 @@ export class BattleSimulation {
       livingFactionAnchors.map((unit) => unit.factionId),
     );
     if (livingFactions.size > 1) {
+      this.finishAt = undefined;
+      return;
+    }
+    const soleLivingFaction = livingFactions.values().next().value as
+      | string
+      | undefined;
+    if (
+      soleLivingFaction &&
+      [...this.projectiles.values()].some(
+        (projectile) => projectile.factionId !== soleLivingFaction,
+      )
+    ) {
       this.finishAt = undefined;
       return;
     }
@@ -2008,6 +2203,36 @@ export class BattleSimulation {
         candidate.factionId !== unit.factionId &&
         distance(origin, candidate) <= range + candidate.radius,
     );
+  }
+
+  private validAttackTargets(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+  ): RuntimeUnit[] {
+    const targets = this.validTargets(unit, definition.attack.range);
+    if (definition.attack.mode !== "melee") return targets;
+    return targets.filter((target) =>
+      this.isValidMeleeTarget(unit, target, definition),
+    );
+  }
+
+  private isValidMeleeTarget(
+    source: RuntimeUnit,
+    target: RuntimeUnit,
+    definition: CharacterDefinition,
+  ): boolean {
+    if (distance(source, target) > definition.attack.range + target.radius) {
+      return false;
+    }
+    const arcDegrees = Math.max(
+      10,
+      Math.min(360, definition.attack.frontArcDegrees ?? 120),
+    );
+    if (arcDegrees >= 360 - EPSILON) return true;
+    const facing = normalize({ x: source.vx, y: source.vy });
+    const toTarget = normalize({ x: target.x - source.x, y: target.y - source.y });
+    const minimumDot = Math.cos((arcDegrees * Math.PI) / 360);
+    return facing.x * toTarget.x + facing.y * toTarget.y >= minimumDot - EPSILON;
   }
 
   private runIntervalModules(unit: RuntimeUnit): void {

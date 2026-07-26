@@ -9,13 +9,17 @@ import type {
 
 type OscillatorShape = OscillatorType;
 
+export const isSkillVoiceEvent = (
+  event: Pick<CombatEvent, "type">,
+): boolean => event.type === "skill" || event.type === "spawn";
+
 export class ArenaAudio {
   private context?: AudioContext;
   private master?: GainNode;
   private muted = false;
   private volume = 0.72;
-  private announcementsEnabled = true;
-  private announcementVolume = 0.78;
+  private skillVoicesEnabled = true;
+  private skillVoiceVolume = 0.78;
   private lastPlayed = new Map<string, number>();
   private soundWindowStartedAt = 0;
   private soundsInWindow = 0;
@@ -54,13 +58,13 @@ export class ArenaAudio {
     this.applyMasterVolume();
   }
 
-  setAnnouncementsEnabled(enabled: boolean): void {
-    this.announcementsEnabled = enabled;
+  setSkillVoicesEnabled(enabled: boolean): void {
+    this.skillVoicesEnabled = enabled;
     if (!enabled && typeof window !== "undefined") window.speechSynthesis?.cancel();
   }
 
-  setAnnouncementVolume(volume: number): void {
-    this.announcementVolume = Math.max(0, Math.min(1, volume));
+  setSkillVoiceVolume(volume: number): void {
+    this.skillVoiceVolume = Math.max(0, Math.min(1, volume));
   }
 
   async setMusic(config: BackgroundMusicConfig, assets: AssetRef[]): Promise<void> {
@@ -120,14 +124,15 @@ export class ArenaAudio {
     definitions: ReadonlyMap<string, CharacterDefinition>,
     assets: ReadonlyMap<string, AssetRef>,
   ): Promise<void> {
-    if ((!event.sound && !event.announcement) || this.muted) return;
+    const unit = event.unitId ? units.get(event.unitId) : undefined;
+    const definition = unit ? definitions.get(unit.definitionId) : undefined;
+    const skillSpeechCue =
+      isSkillVoiceEvent(event) && definition?.sounds.skill?.source === "speech"
+        ? definition.sounds.skill
+        : undefined;
+    if ((!event.sound && !skillSpeechCue) || this.muted) return;
     await this.unlock();
-    if (event.announcement) {
-      this.playAnnouncement(
-        event.announcement,
-        event.type === "death" || event.type === "victory",
-      );
-    }
+    if (skillSpeechCue) this.playSpeech(skillSpeechCue, event.sound);
     if (!event.sound) return;
 
     const now = performance.now();
@@ -148,8 +153,6 @@ export class ArenaAudio {
       }
     }
 
-    const unit = event.unitId ? units.get(event.unitId) : undefined;
-    const definition = unit ? definitions.get(unit.definitionId) : undefined;
     const slot =
       event.sound === "lava" || event.sound === "spring"
         ? undefined
@@ -163,24 +166,21 @@ export class ArenaAudio {
               ? "skill"
               : undefined;
     const cue = slot ? definition?.sounds[slot] : undefined;
+    const audibleCue = cue?.source === "speech" ? undefined : cue;
     const resolvedCue =
-      cue ?? {
+      audibleCue ?? {
         id: event.sound,
         source: "synth" as const,
         preset: event.sound,
         volume: ambient ? 0.24 : 0.7,
       };
     if (!this.takeCueVoiceSlot(resolvedCue, now)) return;
-    if (cue?.source === "asset" && cue.assetId) {
-      const asset = assets.get(cue.assetId);
+    if (audibleCue?.source === "asset" && audibleCue.assetId) {
+      const asset = assets.get(audibleCue.assetId);
       if (asset) {
-        this.playAssetCue(asset, cue);
+        this.playAssetCue(asset, audibleCue);
         return;
       }
-    }
-    if (cue?.source === "speech") {
-      if (!event.announcement) this.playSpeech(cue);
-      return;
     }
     this.playSynth(resolvedCue);
   }
@@ -223,41 +223,21 @@ export class ArenaAudio {
     void audio.play().catch(() => undefined);
   }
 
-  private playAnnouncement(message: string, priority: boolean): void {
+  private playSpeech(cue: SoundCue, sound?: SoundCue["preset"]): void {
     if (
       this.muted ||
-      !this.announcementsEnabled ||
-      typeof window === "undefined" ||
-      !window.speechSynthesis
-    ) {
-      return;
-    }
-    if (!priority && performance.now() - this.lastSpeechAt < 650) return;
-    if (priority) window.speechSynthesis.cancel();
-    this.lastSpeechAt = performance.now();
-    const utterance = new SpeechSynthesisUtterance(message);
-    utterance.lang = "zh-CN";
-    utterance.rate = priority ? 0.98 : 1.02;
-    utterance.pitch = 1;
-    utterance.volume = Math.min(
-      0.9,
-      this.volume * this.announcementVolume * (priority ? 1 : 0.82),
-    );
-    const voice = this.preferredChineseVoice("announcer");
-    if (voice) utterance.voice = voice;
-    window.speechSynthesis.speak(utterance);
-  }
-
-  private playSpeech(cue: SoundCue): void {
-    if (
-      this.muted ||
+      !this.skillVoicesEnabled ||
       typeof window === "undefined" ||
       !window.speechSynthesis ||
       performance.now() - this.lastSpeechAt < 850
     ) {
       return;
     }
-    const phrases = cue.phrases?.filter(Boolean) ?? [];
+    const phrases = (
+      (sound ? cue.phrasesBySound?.[sound] : undefined) ??
+      cue.phrases ??
+      []
+    ).filter(Boolean);
     if (!phrases.length) return;
     this.lastSpeechAt = performance.now();
     const utterance = new SpeechSynthesisUtterance(
@@ -266,7 +246,10 @@ export class ArenaAudio {
     utterance.lang = "zh-CN";
     utterance.rate = cue.speechRate ?? 1;
     utterance.pitch = cue.speechPitch ?? 1;
-    utterance.volume = Math.min(1, this.volume * cue.volume);
+    utterance.volume = Math.min(
+      1,
+      this.volume * this.skillVoiceVolume * cue.volume,
+    );
     const voice = this.preferredChineseVoice(cue.id);
     if (voice) utterance.voice = voice;
     window.speechSynthesis.speak(utterance);
@@ -297,7 +280,7 @@ export class ArenaAudio {
           right.score - left.score || left.voice.name.localeCompare(right.voice.name),
       );
     if (!voices.length) return undefined;
-    if (variant === "announcer" || voices.length === 1) return voices[0].voice;
+    if (voices.length === 1) return voices[0].voice;
     const hash = [...variant].reduce(
       (total, character) => (total * 31 + character.charCodeAt(0)) >>> 0,
       0,
@@ -334,6 +317,11 @@ export class ArenaAudio {
     } else if (preset === "gatling") {
       this.noiseBurst(now, 0.045, volume * 0.28, 3000, 260);
       this.tone(now, 145 * randomPitch, 0.045, volume * 0.14, "square", 80);
+    } else if (preset === "reload") {
+      this.tone(now, 170, 0.055, volume * 0.16, "square", 105);
+      this.noiseBurst(now + 0.07, 0.075, volume * 0.16, 1350, 280);
+      this.tone(now + 0.16, 115, 0.085, volume * 0.2, "triangle", 82);
+      this.noiseBurst(now + 0.25, 0.06, volume * 0.12, 1900, 420);
     } else if (preset === "chew") {
       this.noiseBurst(now, 0.07, volume * 0.17, 1200, 260);
       this.tone(now + 0.015, 310 * randomPitch, 0.06, volume * 0.08, "sine", 210);

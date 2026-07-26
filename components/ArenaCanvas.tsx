@@ -33,8 +33,8 @@ export type ArenaHandle = {
   setSpeed: (speed: number) => void;
   setMuted: (muted: boolean) => void;
   setVolume: (volume: number) => void;
-  setAnnouncementsEnabled: (enabled: boolean) => void;
-  setAnnouncementVolume: (volume: number) => void;
+  setSkillVoicesEnabled: (enabled: boolean) => void;
+  setSkillVoiceVolume: (volume: number) => void;
   setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => void;
   setMusicVolume: (volume: number) => void;
   syncReadySetup: (setup: ProjectManifest["setup"]) => boolean;
@@ -215,11 +215,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           volumeRef.current = nextVolume;
           audioRef.current.setVolume(nextVolume);
         },
-        setAnnouncementsEnabled: (enabled: boolean) => {
-          audioRef.current.setAnnouncementsEnabled(enabled);
+        setSkillVoicesEnabled: (enabled: boolean) => {
+          audioRef.current.setSkillVoicesEnabled(enabled);
         },
-        setAnnouncementVolume: (nextVolume: number) => {
-          audioRef.current.setAnnouncementVolume(nextVolume);
+        setSkillVoiceVolume: (nextVolume: number) => {
+          audioRef.current.setSkillVoiceVolume(nextVolume);
         },
         setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => {
           void audioRef.current.setMusic(config, assets);
@@ -281,10 +281,10 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private unitFallbacks = new Map<string, PhaserType.GameObjects.Text>();
           private unitLabels = new Map<string, PhaserType.GameObjects.Text>();
           private healthLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private resourceLabels = new Map<string, PhaserType.GameObjects.Text>();
           private buffLabels = new Map<string, PhaserType.GameObjects.Text>();
           private promotionLabels = new Map<string, PhaserType.GameObjects.Text>();
           private callLabels = new Map<string, PhaserType.GameObjects.Text>();
-          private holeLabels = new Map<string, PhaserType.GameObjects.Text>();
           private eventLabels = new Map<string, PhaserType.GameObjects.Text>();
           private announcementLabels = new Map<string, PhaserType.GameObjects.Text>();
           private announcementDetailLabels = new Map<string, PhaserType.GameObjects.Text>();
@@ -486,6 +486,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.healthLabels.delete(id);
               }
             }
+            for (const [id, label] of this.resourceLabels) {
+              if (!activeIds.has(id)) {
+                label.destroy();
+                this.resourceLabels.delete(id);
+              }
+            }
             for (const [id, label] of this.buffLabels) {
               if (!activeIds.has(id)) {
                 label.destroy();
@@ -502,12 +508,6 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!activeIds.has(id)) {
                 label.destroy();
                 this.callLabels.delete(id);
-              }
-            }
-            for (const [id, label] of this.holeLabels) {
-              if (!activeHoleIds.has(id)) {
-                label.destroy();
-                this.holeLabels.delete(id);
               }
             }
             const visibleEventIds = new Set(
@@ -727,24 +727,6 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   hole.radius * 0.66,
                 );
               }
-              let label = this.holeLabels.get(hole.id);
-              if (!label) {
-                label = this.add
-                  .text(hole.x, hole.y, "", {
-                    fontSize: "16px",
-                    fontFamily: "Arial",
-                    fontStyle: "bold",
-                    color: "#fff0c4",
-                    stroke: "#1a1412",
-                    strokeThickness: 4,
-                  })
-                  .setOrigin(0.5)
-                  .setDepth(19);
-                this.holeLabels.set(hole.id, label);
-              }
-              const holeText = `${hole.stompsRemaining}/${hole.stompsRequired}`;
-              if (label.text !== holeText) label.setText(holeText);
-              label.setPosition(hole.x, hole.y + hole.radius * 0.42);
             }
           }
 
@@ -1481,6 +1463,94 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             const healthText = `${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`;
             if (healthLabel.text !== healthText) healthLabel.setText(healthText);
+
+            let resourceLabel = this.resourceLabels.get(unit.id);
+            if (unit.policeStar) {
+              const policeParameters =
+                combatDefinition.skillParameters?.police;
+              const resourceY = healthY + 21;
+              const resourceHeight = 9;
+              let resourceText = "";
+              this.overlayGraphics.fillStyle(0x100e13, 0.9);
+              this.overlayGraphics.fillRoundedRect(
+                visualX - healthWidth / 2,
+                resourceY,
+                healthWidth,
+                resourceHeight,
+                4,
+              );
+              if (unit.policeStar === 5 && unit.gatling) {
+                const magazineSize = Math.max(1, unit.gatling.magazineSize);
+                const ammoRatio = Math.max(
+                  0,
+                  Math.min(1, unit.gatling.ammoRemaining / magazineSize),
+                );
+                this.overlayGraphics.fillStyle(0xf0b84a, 1);
+                this.overlayGraphics.fillRoundedRect(
+                  visualX - healthWidth / 2 + 2,
+                  resourceY + 2,
+                  Math.max(0, (healthWidth - 4) * ammoRatio),
+                  resourceHeight - 4,
+                  3,
+                );
+                resourceText =
+                  unit.action === "reloading"
+                    ? `换弹 ${unit.gatling.ammoRemaining}/${magazineSize}`
+                    : `弹 ${unit.gatling.ammoRemaining}/${magazineSize}`;
+              } else {
+                const required =
+                  unit.policeStar === 1
+                    ? policeParameters?.killsToStar2 ?? 1
+                    : unit.policeStar === 2
+                      ? policeParameters?.killsToStar3 ?? 2
+                      : unit.policeStar === 3
+                        ? policeParameters?.killsToStar4 ?? 2
+                        : policeParameters?.killsToStar5 ?? 3;
+                const segmentCount = Math.max(1, Math.round(required));
+                const segmentGap = 2;
+                const innerWidth = healthWidth - 4;
+                const segmentWidth =
+                  (innerWidth - segmentGap * (segmentCount - 1)) /
+                  segmentCount;
+                for (let index = 0; index < segmentCount; index += 1) {
+                  this.overlayGraphics.fillStyle(
+                    index < unit.policeKillProgress ? 0x72b8ff : 0x2b3340,
+                    1,
+                  );
+                  this.overlayGraphics.fillRoundedRect(
+                    visualX - healthWidth / 2 + 2 + index * (segmentWidth + segmentGap),
+                    resourceY + 2,
+                    segmentWidth,
+                    resourceHeight - 4,
+                    2,
+                  );
+                }
+                resourceText = `经验 ${Math.min(unit.policeKillProgress, segmentCount)}/${segmentCount}`;
+              }
+              if (!resourceLabel) {
+                resourceLabel = this.add
+                  .text(visualX, resourceY, "", {
+                    fontSize: "9px",
+                    fontFamily: '"Microsoft YaHei", Arial, sans-serif',
+                    fontStyle: "bold",
+                    color: "#ffffff",
+                    stroke: "#161118",
+                    strokeThickness: 2,
+                  })
+                  .setOrigin(0.5)
+                  .setDepth(25);
+                this.resourceLabels.set(unit.id, resourceLabel);
+              }
+              if (resourceLabel.text !== resourceText) {
+                resourceLabel.setText(resourceText);
+              }
+              resourceLabel
+                .setVisible(true)
+                .setPosition(visualX, resourceY + resourceHeight / 2)
+                .setAlpha(alpha);
+            } else {
+              resourceLabel?.setVisible(false);
+            }
 
             const buffs: string[] = [];
             if (time < unit.burnUntil) buffs.push("🔥 灼烧");

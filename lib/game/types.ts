@@ -52,6 +52,8 @@ export type SoundCue = {
   preset?: SynthPreset;
   assetId?: string;
   phrases?: string[];
+  /** 技能语音可按本次技能音效选择更贴合的台词。 */
+  phrasesBySound?: Partial<Record<SynthPreset, string[]>>;
   speechRate?: number;
   speechPitch?: number;
   volume: number;
@@ -75,6 +77,7 @@ export type SynthPreset =
   | "rocket"
   | "explosion"
   | "gatling"
+  | "reload"
   | "kick"
   | "chew"
   | "dig"
@@ -94,8 +97,14 @@ export type AttackDefinition = {
   cooldown: number;
   windup: number;
   mode: "melee" | "projectile" | "burst" | "gatling";
+  /** 近战仅能命中角色朝向前方的扇区；默认 120 度。 */
+  frontArcDegrees?: number;
   projectileSpeed?: number;
   projectileKind?: "bullet" | "rocket";
+  /** 火箭发射多久后进入加速段。 */
+  projectileBoostAfter?: number;
+  /** 火箭进入加速段后的速度倍率。 */
+  projectileBoostMultiplier?: number;
   /** 每颗弹丸围绕锁定方向产生的最大随机偏角。 */
   spreadDegrees?: number;
   burstCount?: number;
@@ -135,6 +144,8 @@ export type PandaSkillParameters = {
   policeSummonCooldown: number;
   policeCallDuration: number;
   policeMergePadding: number;
+  bambooRespawnInterval: number;
+  bambooRespawnLimit: number;
 };
 
 export type MoleSkillParameters = {
@@ -142,7 +153,6 @@ export type MoleSkillParameters = {
   digDuration: number;
   minimumHoleDistance: number;
   holeRadius: number;
-  stompsToFlatten: number;
   ambushRange: number;
   ambushCooldown: number;
   tunnelSpeedMultiplier: number;
@@ -151,7 +161,12 @@ export type MoleSkillParameters = {
 };
 
 export type PoliceSkillParameters = {
-  killsPerPromotion: number;
+  killsToStar2: number;
+  killsToStar3: number;
+  killsToStar4: number;
+  killsToStar5: number;
+  gatlingMagazineSize: number;
+  gatlingReloadDuration: number;
   kickRange: number;
   kickDistance: number;
   kickDamage: number;
@@ -257,6 +272,7 @@ export type UnitAction =
   | "satisfied"
   | "digging"
   | "tunneling"
+  | "reloading"
   | "kick"
   | "knockback"
   | "stunned"
@@ -337,6 +353,8 @@ export type RuntimeUnit = {
     shotsRemaining: number;
     nextShotIn: number;
     nextKickAt: number;
+    magazineSize: number;
+    ammoRemaining: number;
     roundDirection?: Vec2;
     roundTargetId?: string;
   };
@@ -349,8 +367,6 @@ export type RuntimeHole = {
   x: number;
   y: number;
   radius: number;
-  stompsRequired: number;
-  stompsRemaining: number;
   bornAt: number;
 };
 
@@ -360,6 +376,10 @@ export type RuntimeProjectile = {
   factionId: string;
   sourceUnitId: string;
   kind: "bullet" | "rocket";
+  bornAt: number;
+  boostAt?: number;
+  boostMultiplier?: number;
+  boosted?: boolean;
   x: number;
   y: number;
   vx: number;

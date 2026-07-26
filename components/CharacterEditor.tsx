@@ -65,6 +65,7 @@ const synthPresetOptions: Array<{ value: SynthPreset; label: string }> = [
   { value: "rocket", label: "火箭发射（低沉尾焰）" },
   { value: "explosion", label: "爆炸（范围冲击）" },
   { value: "gatling", label: "加特林（高速连射）" },
+  { value: "reload", label: "换弹（机械装填）" },
   { value: "kick", label: "踹击（重击）" },
   { value: "chew", label: "咀嚼（吃竹子）" },
   { value: "dig", label: "挖洞（土石声）" },
@@ -79,27 +80,20 @@ const synthPresetOptions: Array<{ value: SynthPreset; label: string }> = [
   { value: "moleSqueak", label: "地鼠叫声（短促吱声）" },
 ];
 
-const funnyPhrases = (
-  character: CharacterDefinition,
-  slot: SoundSlot,
-): string[] => {
+const skillPhrases = (character: CharacterDefinition): string[] => {
   if (character.pluginId === "panda") {
-    if (slot === "hurt") return ["谁打保护动物？", "警察同志，就是他！", "我躺着也中招？"];
-    if (slot === "skill") return ["先吃口竹子，别催。", "慢慢来，竹子又不会跑。"];
-    if (slot === "death") return ["今天先歇业。", "这班我不上了。"];
-    return ["我就轻轻拍一下。", "非要让我起来是吧。"];
+    return ["SOS，保护动物申请场外支援。", "别催技能，饭点到了。"];
   }
   if (character.pluginId === "mole") {
-    if (slot === "skill") return ["地下通道，借过一下！", "猜猜我从哪出来？"];
-    if (slot === "hurt") return ["谁踩我洞口？", "地底下都不安全啦！"];
-    return ["土里土气的一击！", "钻出来吓你一跳！"];
+    return ["地图没有路，我自己打个洞。", "你在地上秀，我从地下溜。"];
   }
   if (character.pluginId === "police") {
-    if (slot === "hurt") return ["袭警了啊！", "执法记录仪开着呢！"];
-    if (slot === "death") return ["申请支援！", "先撤回派出所。"];
-    return ["保护动物执法现场！", "不许动！", "就是你打的熊猫？"];
+    if (character.policeStar === 5) {
+      return ["无畏模式上线，先把音量调低。", "弹仓见底，暂停营业，马上换好。"];
+    }
+    return ["保护动物执法现场。", "功劳簿先记上，升星再说。"];
   }
-  return ["看招！", "这一下有点意思。", "别急，节目效果来了。"];
+  return ["技能开张，节目效果来了。", "这一招先记在小本本上。"];
 };
 
 const skillFields: Record<
@@ -114,13 +108,14 @@ const skillFields: Record<
     { key: "policeSummonCooldown", label: "受击召警冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
     { key: "policeCallDuration", label: "呼救动作时长（秒）", fallback: 0.7, min: 0.1, step: 0.05 },
     { key: "policeMergePadding", label: "警察碰撞合并余量", fallback: 0, min: 0 },
+    { key: "bambooRespawnInterval", label: "竹子刷新间隔（秒）", fallback: 15, min: 0.1, step: 0.1 },
+    { key: "bambooRespawnLimit", label: "场上竹子上限", fallback: 3, min: 0, max: 99, step: 1 },
   ],
   mole: [
     { key: "digCooldown", label: "挖洞冷却（秒）", fallback: 10, min: 0, step: 0.1 },
     { key: "digDuration", label: "挖洞动作（秒）", fallback: 0.6, min: 0.1, step: 0.1 },
     { key: "minimumHoleDistance", label: "洞口最小间距", fallback: 220, min: 0 },
     { key: "holeRadius", label: "洞口范围半径", fallback: 80, min: 10 },
-    { key: "stompsToFlatten", label: "踩平所需进入次数", fallback: 3, min: 1, max: 99, step: 1 },
     { key: "ambushRange", label: "钻洞偷袭范围", fallback: 150, min: 0 },
     { key: "ambushCooldown", label: "偷袭冷却（秒）", fallback: 3, min: 0, step: 0.1 },
     { key: "tunnelSpeedMultiplier", label: "钻地速度倍率（相对移速）", fallback: 2.5, min: 0.1, max: 50, step: 0.1 },
@@ -128,14 +123,12 @@ const skillFields: Record<
     { key: "tunnelChance", label: "随机钻洞概率", fallback: 0.2, min: 0, max: 1, step: 0.05 },
   ],
   police: [
-    {
-      key: "killsPerPromotion",
-      label: "升星所需击杀数",
-      fallback: 2,
-      min: 1,
-      max: 99,
-      step: 1,
-    },
+    { key: "killsToStar2", label: "1→2星经验格", fallback: 1, min: 1, max: 99 },
+    { key: "killsToStar3", label: "2→3星经验格", fallback: 2, min: 1, max: 99 },
+    { key: "killsToStar4", label: "3→4星经验格", fallback: 2, min: 1, max: 99 },
+    { key: "killsToStar5", label: "4→5星经验格", fallback: 3, min: 1, max: 99 },
+    { key: "gatlingMagazineSize", label: "五星弹仓容量（发）", fallback: 150, min: 1, max: 9999 },
+    { key: "gatlingReloadDuration", label: "五星换弹时间（秒）", fallback: 3, min: 0.05, step: 0.05 },
     { key: "kickRange", label: "五星踹击范围", fallback: 160, min: 0 },
     { key: "kickDistance", label: "五星踹飞距离", fallback: 140, min: 0 },
     { key: "kickDamage", label: "五星踹击伤害", fallback: 25, min: 0 },
@@ -234,7 +227,13 @@ export function CharacterEditor({
 
   const uploadAnimation = async (
     files: File[],
-    clipName: "idle" | "attack" | "skill" | "callPolice" | "tunnelAttack",
+    clipName:
+      | "idle"
+      | "attack"
+      | "skill"
+      | "callPolice"
+      | "tunnelAttack"
+      | "reload",
   ) => {
     if (!files.length) return;
     const newAssets: AssetRef[] = [];
@@ -291,6 +290,8 @@ export function CharacterEditor({
             ? "普攻"
             : clipName === "tunnelAttack"
               ? "钻洞攻击"
+              : clipName === "reload"
+                ? "换弹"
               : "技能"
       }动作`,
     );
@@ -368,6 +369,10 @@ export function CharacterEditor({
   };
 
   const setSoundStyle = (slot: SoundSlot, source: "synth" | "speech") => {
+    if (source === "speech" && slot !== "skill") {
+      onNotice("语音播报只用于技能；其他动作请使用合成或上传音效");
+      return;
+    }
     updateCharacter((character) => {
       const existing = character.sounds[slot];
       character.sounds[slot] =
@@ -377,7 +382,7 @@ export function CharacterEditor({
               source,
               phrases: existing?.phrases?.length
                 ? existing.phrases
-                : funnyPhrases(character, slot),
+                : skillPhrases(character),
               speechRate: existing?.speechRate ?? 1.08,
               speechPitch: existing?.speechPitch ?? (character.pluginId === "mole" ? 1.35 : 1),
               volume: existing?.volume ?? 0.78,
@@ -587,7 +592,7 @@ export function CharacterEditor({
                 />
               </label>
               <label>
-                攻击距离
+                {selected.attack.mode === "melee" ? "近战触发距离" : "攻击距离"}
                 <input
                   type="number"
                   min={1}
@@ -600,6 +605,33 @@ export function CharacterEditor({
                   }
                 />
               </label>
+              {selected.attack.mode === "melee" && (
+                <label>
+                  正面攻击扇区（度）
+                  <input
+                    type="number"
+                    min={10}
+                    max={360}
+                    step={1}
+                    value={selected.attack.frontArcDegrees ?? 120}
+                    onChange={(event) =>
+                      updateCharacter(
+                        (character) =>
+                          (character.attack.frontArcDegrees = Math.max(
+                            10,
+                            Math.min(
+                              360,
+                              numeric(
+                                event.target.value,
+                                character.attack.frontArcDegrees ?? 120,
+                              ),
+                            ),
+                          )),
+                      )
+                    }
+                  />
+                </label>
+              )}
               <label>
                 {selected.attack.mode === "gatling" ? "射击周期（秒）" : "攻击间隔（秒）"}
                 <input
@@ -711,6 +743,11 @@ export function CharacterEditor({
                 </>
               )}
             </div>
+            {selected.attack.mode === "melee" && (
+              <p className="editor-card-note">
+                近战只会在接近身体时触发，并在命中帧再次检查目标是否仍位于角色正面扇区。
+              </p>
+            )}
           </div>
 
           {(selected.attack.mode === "burst" || selected.attack.mode === "gatling") && (
@@ -820,6 +857,48 @@ export function CharacterEditor({
                     }
                   />
                 </label>
+                <label>
+                  火箭加速前时长（秒）
+                  <input
+                    type="number"
+                    min={0}
+                    step={0.05}
+                    value={selected.attack.projectileBoostAfter ?? 1.5}
+                    onChange={(event) =>
+                      updateCharacter(
+                        (character) =>
+                          (character.attack.projectileBoostAfter = Math.max(
+                            0,
+                            numeric(
+                              event.target.value,
+                              character.attack.projectileBoostAfter ?? 1.5,
+                            ),
+                          )),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  加速段速度倍率
+                  <input
+                    type="number"
+                    min={0.1}
+                    step={0.05}
+                    value={selected.attack.projectileBoostMultiplier ?? 1.5}
+                    onChange={(event) =>
+                      updateCharacter(
+                        (character) =>
+                          (character.attack.projectileBoostMultiplier = Math.max(
+                            0.1,
+                            numeric(
+                              event.target.value,
+                              character.attack.projectileBoostMultiplier ?? 1.5,
+                            ),
+                          )),
+                      )
+                    }
+                  />
+                </label>
               </div>
             </div>
           )}
@@ -838,7 +917,7 @@ export function CharacterEditor({
               </div>
               <p className="editor-card-note">
                 内置行为也完全参数化；修改后重新部署战斗生效。
-                {selected.pluginId === "mole" && " 洞口默认需被敌人重新进入 3 次才会踩平。"}
+                {selected.pluginId === "mole" && " 洞口创建后会持续存在，直到地鼠所属阵营彻底退场。"}
               </p>
               <div className="form-grid two-columns">
                 {skillFields[selected.pluginId].map((field) => (
@@ -884,10 +963,12 @@ export function CharacterEditor({
                 ["skill", "技能动作", true],
                 ["callPolice", "熊猫呼救动作", true],
                 ["tunnelAttack", "钻洞攻击动作", true],
+                ["reload", "五星换弹动作", true],
               ] as const)
                 .filter(
                   ([clipName]) =>
-                    clipName !== "callPolice" || selected.pluginId === "panda",
+                    (clipName !== "callPolice" || selected.pluginId === "panda") &&
+                    (clipName !== "reload" || selected.policeStar === 5),
                 )
                 .map(([clipName, label, multiple]) => (
                 <label className="upload-tile" key={clipName}>
@@ -932,6 +1013,9 @@ export function CharacterEditor({
               <AudioLines size={17} />
               <span>动作音效</span>
             </div>
+            <p className="editor-card-note">
+              只有技能会播放角色台词；普攻、命中、受伤和死亡使用合成音或上传音频，避免播报干扰战况。
+            </p>
             <div className="sound-list">
               {soundSlots.map(([slot, label]) => {
                 const cue = selected.sounds[slot];
@@ -950,7 +1034,13 @@ export function CharacterEditor({
                       </span>
                       <select
                         aria-label={`${label}声音类型`}
-                        value={cue?.source === "asset" ? "asset" : cue?.source ?? "synth"}
+                        value={
+                          cue?.source === "asset"
+                            ? "asset"
+                            : cue?.source === "speech" && slot === "skill"
+                              ? "speech"
+                              : "synth"
+                        }
                         onChange={(event) => {
                           if (event.target.value !== "asset") {
                             setSoundStyle(slot, event.target.value as "synth" | "speech");
@@ -958,7 +1048,7 @@ export function CharacterEditor({
                         }}
                       >
                         <option value="synth">合成 / 动物叫声</option>
-                        <option value="speech">搞笑台词</option>
+                        {slot === "skill" && <option value="speech">搞笑技能台词</option>}
                         {cue?.source === "asset" && <option value="asset">已上传音频</option>}
                       </select>
                       <label className="upload-pill">
@@ -982,6 +1072,7 @@ export function CharacterEditor({
                                   .split("\n")
                                   .map((phrase) => phrase.trim())
                                   .filter(Boolean);
+                                sound.phrasesBySound = undefined;
                               })
                             }
                           />

@@ -190,8 +190,8 @@ export function GameApp() {
   const [speed, setSpeed] = useState(1);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.72);
-  const [announcementsEnabled, setAnnouncementsEnabled] = useState(true);
-  const [announcementVolume, setAnnouncementVolume] = useState(0.78);
+  const [skillVoicesEnabled, setSkillVoicesEnabled] = useState(true);
+  const [skillVoiceVolume, setSkillVoiceVolume] = useState(0.78);
   const [hydrated, setHydrated] = useState(false);
   const [savedAt, setSavedAt] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -204,6 +204,7 @@ export function GameApp() {
   const [fullscreenControlsVisible, setFullscreenControlsVisible] = useState(false);
   const [mobileSidebarPanel, setMobileSidebarPanel] =
     useState<MobileSidebarPanel>("lineup");
+  const [selectedContestantId, setSelectedContestantId] = useState<string>();
   const arenaRef = useRef<ArenaHandle>(null);
   const battleControlBarRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -212,6 +213,7 @@ export function GameApp() {
   const previewSyncFrameRef = useRef<number | undefined>(undefined);
   const fullscreenControlsTimerRef = useRef<number | undefined>(undefined);
   const nativeFullscreenRef = useRef(false);
+  const contestantTeamRefs = useRef(new Map<string, HTMLSelectElement>());
 
   const revealFullscreenControls = useCallback(() => {
     if (fullscreenControlsTimerRef.current !== undefined) {
@@ -299,12 +301,12 @@ export function GameApp() {
   }, [volume]);
 
   useEffect(() => {
-    arenaRef.current?.setAnnouncementsEnabled(announcementsEnabled);
-  }, [announcementsEnabled]);
+    arenaRef.current?.setSkillVoicesEnabled(skillVoicesEnabled);
+  }, [skillVoicesEnabled]);
 
   useEffect(() => {
-    arenaRef.current?.setAnnouncementVolume(announcementVolume);
-  }, [announcementVolume]);
+    arenaRef.current?.setSkillVoiceVolume(skillVoiceVolume);
+  }, [skillVoiceVolume]);
 
   useEffect(() => {
     const syncFullscreenState = () => {
@@ -459,8 +461,8 @@ export function GameApp() {
     arenaRef.current?.setSpeed(speed);
     arenaRef.current?.setMuted(muted);
     arenaRef.current?.setVolume(volume);
-    arenaRef.current?.setAnnouncementsEnabled(announcementsEnabled);
-    arenaRef.current?.setAnnouncementVolume(announcementVolume);
+    arenaRef.current?.setSkillVoicesEnabled(skillVoicesEnabled);
+    arenaRef.current?.setSkillVoiceVolume(skillVoiceVolume);
     if (!pendingAutoStart) arenaRef.current?.syncReadySetup(manifest.setup);
     if (pendingAutoStart) {
       arenaRef.current?.start();
@@ -755,6 +757,31 @@ export function GameApp() {
     setNotice(`背景音乐已切换为：${file.name}`);
   };
 
+  const selectContestantInstance = useCallback((contestantId: string) => {
+    setSelectedContestantId(contestantId);
+    window.requestAnimationFrame(() => {
+      document
+        .getElementById(`contestant-entry-${contestantId}`)
+        ?.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    });
+  }, []);
+
+  const requestContestantTeam = useCallback(
+    (contestantId: string) => {
+      selectContestantInstance(contestantId);
+      const select = contestantTeamRefs.current.get(contestantId);
+      select?.focus({ preventScroll: true });
+      try {
+        (
+          select as (HTMLSelectElement & { showPicker?: () => void }) | undefined
+        )?.showPicker?.();
+      } catch {
+        // Focus still provides a quick keyboard-accessible fallback.
+      }
+    },
+    [selectContestantInstance],
+  );
+
   const importFile = async (file?: File) => {
     if (!file) return;
     try {
@@ -1004,24 +1031,24 @@ export function GameApp() {
                 value={volume}
                 onChange={(event) => setVolume(Number(event.target.value))}
               />
-              <div className="announcer-controls" title="击杀与获胜语音播报">
+              <div className="announcer-controls" title="角色技能语音">
                 <button
                   type="button"
-                  className={`icon-control ${announcementsEnabled ? "is-active" : ""}`}
-                  onClick={() => setAnnouncementsEnabled((enabled) => !enabled)}
-                  aria-label={announcementsEnabled ? "关闭语音播报" : "开启语音播报"}
+                  className={`icon-control ${skillVoicesEnabled ? "is-active" : ""}`}
+                  onClick={() => setSkillVoicesEnabled((enabled) => !enabled)}
+                  aria-label={skillVoicesEnabled ? "关闭技能语音" : "开启技能语音"}
                 >
-                  {announcementsEnabled ? <Mic size={17} /> : <MicOff size={17} />}
+                  {skillVoicesEnabled ? <Mic size={17} /> : <MicOff size={17} />}
                 </button>
                 <input
-                  aria-label="语音播报音量"
+                  aria-label="技能语音音量"
                   type="range"
                   min={0}
                   max={1}
                   step={0.01}
-                  value={announcementVolume}
-                  disabled={!announcementsEnabled}
-                  onChange={(event) => setAnnouncementVolume(Number(event.target.value))}
+                  value={skillVoiceVolume}
+                  disabled={!skillVoicesEnabled}
+                  onChange={(event) => setSkillVoiceVolume(Number(event.target.value))}
                 />
               </div>
               <div className="music-controls">
@@ -1183,6 +1210,9 @@ export function GameApp() {
                 onChange={updateSetup}
                 liveUnits={snapshot?.units}
                 battleStatus={snapshot?.status}
+                selectedContestantId={selectedContestantId}
+                onSelectContestant={selectContestantInstance}
+                onRequestTeam={requestContestantTeam}
               />
               <div className="contestant-list">
                 {manifest.setup.contestants.map((contestant, index) => {
@@ -1190,7 +1220,16 @@ export function GameApp() {
                     (character) => character.id === contestant.definitionId,
                   );
                   return (
-                    <div className="contestant-entry" key={contestant.id}>
+                    <div
+                      id={`contestant-entry-${contestant.id}`}
+                      className={`contestant-entry ${
+                        selectedContestantId === contestant.id
+                          ? "is-selected"
+                          : ""
+                      }`}
+                      key={contestant.id}
+                      onClick={() => setSelectedContestantId(contestant.id)}
+                    >
                       <div className="contestant-row">
                         <span className="contestant-index" style={{ borderColor: contestant.color }}>
                           {index + 1}
@@ -1222,6 +1261,13 @@ export function GameApp() {
                         </div>
                         <select
                           className="contestant-team"
+                          ref={(element) => {
+                            if (element) {
+                              contestantTeamRefs.current.set(contestant.id, element);
+                            } else {
+                              contestantTeamRefs.current.delete(contestant.id);
+                            }
+                          }}
                           aria-label={`${contestant.displayName}阵营`}
                           value={contestant.teamId ?? ""}
                           onChange={(event) => {

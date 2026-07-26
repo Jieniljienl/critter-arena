@@ -33,6 +33,7 @@ export const actionClipName = (
     }
     return "tunnelEmerge";
   }
+  if (unit.action === "reloading") return "reload";
   if (unit.action === "victory") return "victory";
   if (unit.action === "eating") return "eat";
   if (unit.action === "satisfied") return "eatComplete";

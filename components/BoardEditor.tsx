@@ -1,6 +1,6 @@
 "use client";
 
-import { useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   Check,
   CircleDot,
@@ -261,6 +261,43 @@ export function BoardEditor({
       if (prop) update(prop);
     });
   };
+
+  const removeProp = (propId: string) => {
+    const currentIndex = selected.props.findIndex((prop) => prop.id === propId);
+    const nextSelection =
+      selected.props[currentIndex + 1]?.id ??
+      selected.props[currentIndex - 1]?.id;
+    updateBoard(
+      (board) =>
+        (board.props = board.props.filter((candidate) => candidate.id !== propId)),
+    );
+    setSelectedPropId(nextSelection);
+    setDraggingPropId(undefined);
+    setDraggingHandle(undefined);
+    onNotice("已删除选中的棋盘道具");
+  };
+
+  useEffect(() => {
+    const handleDeleteShortcut = (event: KeyboardEvent) => {
+      if (
+        !selectedPropId ||
+        (event.key !== "Delete" && event.key !== "Backspace")
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.isContentEditable ||
+        target?.closest("input, textarea, select, [contenteditable='true']")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      removeProp(selectedPropId);
+    };
+    window.addEventListener("keydown", handleDeleteShortcut);
+    return () => window.removeEventListener("keydown", handleDeleteShortcut);
+  });
 
   const createBoard = () => {
     const id = `board-${Date.now()}`;
@@ -797,13 +834,7 @@ export function BoardEditor({
                   type="button"
                   className="icon-button danger"
                   title="删除区域"
-                  onClick={() => {
-                    updateBoard(
-                      (board) =>
-                        (board.props = board.props.filter((candidate) => candidate.id !== prop.id)),
-                    );
-                    if (selectedPropId === prop.id) setSelectedPropId(undefined);
-                  }}
+                  onClick={() => removeProp(prop.id)}
                 >
                   <Trash2 size={15} />
                 </button>

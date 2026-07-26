@@ -16,6 +16,9 @@ type FormationEditorProps = {
   onChange: (setup: MatchSetup) => void;
   liveUnits?: RuntimeUnit[];
   battleStatus?: BattleStatus;
+  selectedContestantId?: string;
+  onSelectContestant?: (contestantId: string) => void;
+  onRequestTeam?: (contestantId: string) => void;
 };
 
 type FormationDrag = {
@@ -34,6 +37,9 @@ export function FormationEditor({
   onChange,
   liveUnits,
   battleStatus,
+  selectedContestantId,
+  onSelectContestant,
+  onRequestTeam,
 }: FormationEditorProps) {
   const boardRef = useRef<HTMLDivElement>(null);
   const dragRef = useRef<FormationDrag | undefined>(undefined);
@@ -191,7 +197,10 @@ export function FormationEditor({
             key={contestant.id}
             type="button"
             className={`formation-token ${
-              !isLive && selectedId === contestant.id ? "is-selected" : ""
+              (selectedContestantId ?? (!isLive ? selectedId : undefined)) ===
+              contestant.id
+                ? "is-selected"
+                : ""
             } ${draggingId === contestant.id ? "is-dragging" : ""} ${
               draggingId === contestant.id && touchDragging ? "is-touch-dragging" : ""
             } ${eliminated ? "is-eliminated" : ""} ${missing ? "is-missing" : ""}`}
@@ -202,7 +211,8 @@ export function FormationEditor({
               background: `color-mix(in srgb, ${contestant.color} 32%, #17151c)`,
             }}
             onPointerDown={(event) => {
-              if (isLive) return;
+              onSelectContestant?.(contestant.id);
+              if (isLive || event.button !== 0) return;
               event.preventDefault();
               event.stopPropagation();
               try {
@@ -222,6 +232,12 @@ export function FormationEditor({
               setDraggingId(contestant.id);
               setTouchDragging(event.pointerType === "touch");
             }}
+            onContextMenu={(event) => {
+              event.preventDefault();
+              event.stopPropagation();
+              onSelectContestant?.(contestant.id);
+              onRequestTeam?.(contestant.id);
+            }}
             onLostPointerCapture={(event) => {
               const drag = dragRef.current;
               if (drag?.pointerId !== event.pointerId) return;
@@ -229,7 +245,10 @@ export function FormationEditor({
               setDraggingId(undefined);
               setTouchDragging(false);
             }}
-            aria-pressed={!isLive && selectedId === contestant.id}
+            aria-pressed={
+              (selectedContestantId ?? (!isLive ? selectedId : undefined)) ===
+              contestant.id
+            }
             aria-label={
               isLive
                 ? `${contestant.displayName}（${definition?.name ?? "未知角色"}）战斗位置`

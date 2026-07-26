@@ -90,6 +90,8 @@ export const defaultAssets: AssetRef[] = [
   asset("panda-lazy-skill-2", "/assets/panda-lazy-skill-2.png", "懒洋洋熊猫躺吃一"),
   asset("panda-lazy-skill-3", "/assets/panda-lazy-skill-3.png", "懒洋洋熊猫躺吃二"),
   asset("panda-lazy-skill-4", "/assets/panda-lazy-skill-4.png", "懒洋洋熊猫揉肚子"),
+  asset("panda-lazy-sos", "/assets/panda-lazy-sos.png?v=20260726", "懒洋洋熊猫SOS呼救"),
+  asset("panda-lazy-sos-2", "/assets/panda-lazy-sos-2.png?v=20260726", "懒洋洋熊猫SOS挥手"),
   asset("mole-idle", "/assets/mole-idle.png?v=20260726b", "地鼠待机"),
   asset("mole-attack-1", "/assets/mole-attack-1.png?v=20260726b", "地鼠攻击蓄力"),
   asset("mole-attack-2", "/assets/mole-attack-2.png?v=20260726b", "地鼠攻击命中"),
@@ -110,7 +112,8 @@ export const defaultAssets: AssetRef[] = [
 ];
 
 for (let star = 1; star <= 5; star += 1) {
-  const version = star === 4 ? "?v=20260726b" : "";
+  const version =
+    star === 3 ? "?v=20260726c" : star === 4 ? "?v=20260726b" : "";
   defaultAssets.push(
     asset(`police-${star}-idle`, `/assets/police-${star}-idle.png${version}`, `${star}星警察待机`),
     asset(`police-${star}-attack-1`, `/assets/police-${star}-attack-1.png${version}`, `${star}星警察攻击一`),
@@ -122,6 +125,8 @@ defaultAssets.push(
   asset("police-5-skill-1", "/assets/police-5-skill-1.png", "五星警察踹击一"),
   asset("police-5-skill-2", "/assets/police-5-skill-2.png", "五星警察踹击二"),
   asset("police-5-skill-3", "/assets/police-5-skill-3.png", "五星警察踹击三"),
+  asset("police-5-reload", "/assets/police-5-reload.png?v=20260726", "五星警察更换弹链"),
+  asset("police-5-reload-2", "/assets/police-5-reload-2.png?v=20260726", "五星警察扣合供弹盖"),
 );
 
 const baseAnimations = (prefix: string): Record<string, AnimationClip> => ({
@@ -142,6 +147,8 @@ const pandaSkillParameters = {
   policeSummonCooldown: 0.5,
   policeCallDuration: 0.7,
   policeMergePadding: 0,
+  bambooRespawnInterval: 15,
+  bambooRespawnLimit: 3,
 };
 
 const moleSkillParameters = {
@@ -149,7 +156,6 @@ const moleSkillParameters = {
   digDuration: 0.6,
   minimumHoleDistance: 220,
   holeRadius: 80,
-  stompsToFlatten: 3,
   ambushRange: 150,
   ambushCooldown: 3,
   tunnelSpeedMultiplier: 2.5,
@@ -158,7 +164,12 @@ const moleSkillParameters = {
 };
 
 const policeSkillParameters = {
-  killsPerPromotion: 2,
+  killsToStar2: 1,
+  killsToStar3: 2,
+  killsToStar4: 2,
+  killsToStar5: 3,
+  gatlingMagazineSize: 150,
+  gatlingReloadDuration: 3,
   kickRange: 160,
   kickDistance: 140,
   kickDamage: 25,
@@ -181,6 +192,13 @@ const policeDefinition = (
     "人类重装警察 · 定向周期连发与踹击",
   ];
   const attackSounds: SynthPreset[] = ["baton", "baton", "pistol", "rifle", "rocket", "gatling"];
+  const skillLines: Record<1 | 2 | 3 | 4 | 5, string[]> = {
+    1: ["警棍一抬，节目效果就来。", "一格经验到手，我马上升职。"],
+    2: ["这一枪先备案，命中看缘分。", "两格经验不多，功劳簿先记上。"],
+    3: ["三连发已寄出，签收看走位。", "点射讲节奏，升星靠战绩。"],
+    4: ["火箭到付，拒收也得爆。", "再攒两格，我就申请重装。"],
+    5: ["无畏模式上线，先把音量调低。", "这一轮弹链很长，站直线的先走。"],
+  };
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -199,7 +217,9 @@ const policeDefinition = (
       ...baseAnimations(`police-${star}`),
       victory: clip(
         "victory",
-        [star === 5 ? "police-5-skill-3" : `police-${star}-attack-3`],
+        star === 5
+          ? ["police-5-skill-3", "police-5-idle"]
+          : [`police-${star}-attack-3`, `police-${star}-attack-2`],
         true,
         520,
       ),
@@ -210,6 +230,17 @@ const policeDefinition = (
               "police-5-skill-2",
               "police-5-skill-3",
             ]),
+            reload: clip(
+              "reload",
+              [
+                "police-5-idle",
+                "police-5-reload",
+                "police-5-reload-2",
+                "police-5-idle",
+              ],
+              false,
+              620,
+            ),
           }
         : {}),
     },
@@ -217,7 +248,25 @@ const policeDefinition = (
       attack: synth(`police-${star}-attack`, attackSounds[star], 0.7),
       hit: synth(`police-${star}-hit`, star === 4 ? "explosion" : "hurt", 0.65),
       hurt: synth(`police-${star}-hurt`, "hurt", 0.45),
-      skill: synth(`police-${star}-skill`, star === 5 ? "kick" : attackSounds[star], 0.75),
+      skill: {
+        ...speech(`police-${star}-skill`, skillLines[star], 0.76),
+        speechPitch: [1, 1.08, 1, 0.94, 0.86, 0.72][star],
+        speechRate: star === 5 ? 0.92 : 1.04,
+        phrasesBySound:
+          star === 5
+            ? {
+                gatling: [
+                  "这一轮弹链很长，站直线的先走。",
+                  "无畏模式上线，先把音量调低。",
+                ],
+                kick: ["靠得太近？先吃我一脚。", "保持社交距离，谢谢配合。"],
+                reload: [
+                  "弹仓见底，暂停营业，马上换好。",
+                  "先别冲，正在给加特林续杯。",
+                ],
+              }
+            : undefined,
+      },
       death: synth(`police-${star}-death`, "death", 0.55),
     },
     abilities: [],
@@ -239,11 +288,12 @@ export const defaultCharacters: CharacterDefinition[] = [
     portraitAssetId: "panda-lazy-idle",
     victoryStyle: "taunt",
     attack: {
-      range: 150,
+      range: 58,
       damage: 30,
       cooldown: 1.25,
       windup: 0.32,
       mode: "melee",
+      frontArcDegrees: 120,
     },
     skillParameters: { panda: structuredClone(pandaSkillParameters) },
     animations: {
@@ -272,22 +322,43 @@ export const defaultCharacters: CharacterDefinition[] = [
       callPolice: clip(
         "callPolice",
         [
-          "panda-lazy-attack-3",
-          "panda-lazy-attack-1",
-          "panda-lazy-attack-3",
+          "panda-lazy-sos",
+          "panda-lazy-sos-2",
+          "panda-lazy-idle",
         ],
         false,
         170,
       ),
       eatComplete: clip("eatComplete", ["panda-lazy-skill-4"], false, 650),
-      victory: clip("victory", ["panda-lazy-skill-4"], true, 520),
+      victory: clip(
+        "victory",
+        ["panda-lazy-skill-4", "panda-lazy-idle"],
+        true,
+        520,
+      ),
     },
     sounds: {
-      attack: speech("panda-lazy-attack", ["别催，我打了。", "躺着也能拍到你。"]),
+      attack: synth("panda-lazy-attack", "pandaGrunt", 0.62),
       hit: synth("panda-lazy-hit", "pandaGrunt", 0.55),
-      hurt: speech("panda-lazy-hurt", ["保护动物也敢打？", "警察叔叔，有人动手。"]),
-      skill: speech("panda-lazy-chew", ["竹子拿近点，我不想起来。", "躺着吃，味道也一样。"]),
-      death: speech("panda-lazy-death", ["先躺一会儿，别叫我。"], 0.72),
+      hurt: synth("panda-lazy-hurt", "hurt", 0.48),
+      skill: {
+        ...speech(
+          "panda-lazy-skill",
+          ["SOS，保护动物申请场外支援。", "有人打保护动物，麻烦出个警。"],
+          0.76,
+        ),
+        speechPitch: 0.86,
+        speechRate: 0.94,
+        phrasesBySound: {
+          chew: [
+            "竹子管够，我这把先躺赢。",
+            "别催技能，饭点到了。",
+            "保护动物开饭，闲人回避。",
+          ],
+          heal: ["竹子补货到场，今天不用饿着。", "场上有熊猫，竹子自动续杯。"],
+        },
+      },
+      death: synth("panda-lazy-death", "death", 0.52),
     },
     abilities: [],
   },
@@ -305,11 +376,12 @@ export const defaultCharacters: CharacterDefinition[] = [
     portraitAssetId: "mole-idle",
     victoryStyle: "dance",
     attack: {
-      range: 150,
+      range: 45,
       damage: 15,
       cooldown: 1,
       windup: 0.25,
       mode: "melee",
+      frontArcDegrees: 120,
     },
     skillParameters: { mole: structuredClone(moleSkillParameters) },
     animations: {
@@ -324,13 +396,25 @@ export const defaultCharacters: CharacterDefinition[] = [
       tunnelMove: clip("tunnelMove", ["mole-tunnel-2"], true, 120),
       tunnelEmerge: clip("tunnelEmerge", ["mole-tunnel-3"], false, 160),
       tunnelAttack: clip("tunnelAttack", ["mole-tunnel-4"], false, 160),
-      victory: clip("victory", ["mole-victory"], true, 500),
+      victory: clip("victory", ["mole-victory", "mole-idle"], true, 500),
     },
     sounds: {
       attack: synth("mole-attack", "moleSqueak", 0.65),
       hit: synth("mole-hit", "swipe", 0.55),
-      hurt: speech("mole-hurt", ["谁踩我洞口？", "我的洞还有耐久呢。"], 0.72),
-      skill: speech("mole-dig", ["借个洞，我马上回来。", "地下通道，人人能用。"], 0.72),
+      hurt: synth("mole-hurt", "hurt", 0.48),
+      skill: {
+        ...speech(
+          "mole-skill",
+          ["地图没有路，我自己打个洞。", "地道战专业户，先下线再上线。"],
+          0.74,
+        ),
+        speechPitch: 1.24,
+        speechRate: 1.12,
+        phrasesBySound: {
+          dig: ["地图没有路，我自己打个洞。", "开工挖地道，路过别催进度。"],
+          tunnel: ["你在地上秀，我从地下溜。", "先下线一秒，换个洞口登录。"],
+        },
+      },
       death: synth("mole-death", "death", 0.65),
     },
     abilities: [],
@@ -339,14 +423,21 @@ export const defaultCharacters: CharacterDefinition[] = [
     maxHp: 30,
     speed: 120,
     radius: 24,
-    attack: { range: 210, damage: 20, cooldown: 1.2, windup: 0.28, mode: "melee" },
+    attack: {
+      range: 46,
+      damage: 20,
+      cooldown: 1.2,
+      windup: 0.28,
+      mode: "melee",
+      frontArcDegrees: 120,
+    },
   }),
   policeDefinition(2, {
     maxHp: 30,
     speed: 105,
     radius: 24,
     attack: {
-      range: 9999,
+      range: 1100,
       damage: 30,
       cooldown: 1.8,
       windup: 0.24,
@@ -361,7 +452,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     speed: 100,
     radius: 24,
     attack: {
-      range: 9999,
+      range: 1200,
       damage: 30,
       cooldown: 2.8,
       windup: 0.2,
@@ -378,13 +469,15 @@ export const defaultCharacters: CharacterDefinition[] = [
     speed: 85,
     radius: 27,
     attack: {
-      range: 9999,
+      range: 1250,
       damage: 100,
       cooldown: 4,
       windup: 0.52,
       mode: "projectile",
       projectileKind: "rocket",
       projectileSpeed: 300,
+      projectileBoostAfter: 1.5,
+      projectileBoostMultiplier: 1.5,
       spreadDegrees: 1,
       splashDamage: 50,
       splashRadius: 150,
@@ -395,7 +488,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     speed: 60,
     radius: 40,
     attack: {
-      range: 9999,
+      range: 1050,
       damage: 5,
       cooldown: 7,
       windup: 0,
@@ -983,10 +1076,15 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     "mole-victory",
     "hole",
     "rocket",
+    "panda-lazy-sos",
+    "panda-lazy-sos-2",
+    "police-3-attack-1",
     "police-4-idle",
     "police-4-attack-1",
     "police-4-attack-2",
     "police-4-attack-3",
+    "police-5-reload",
+    "police-5-reload-2",
   ]);
   for (const assetDefinition of defaults.assets) {
     const existingAsset = upgraded.assets.find(
@@ -1032,6 +1130,10 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       );
       character.skillParameters.panda.policeCallDuration ??=
         defaultCharacter.skillParameters.panda.policeCallDuration;
+      character.skillParameters.panda.bambooRespawnInterval ??=
+        defaultCharacter.skillParameters.panda.bambooRespawnInterval;
+      character.skillParameters.panda.bambooRespawnLimit ??=
+        defaultCharacter.skillParameters.panda.bambooRespawnLimit;
       character.animations.callPolice ??= structuredClone(
         defaultCharacter.animations.callPolice,
       );
@@ -1041,12 +1143,39 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.skillParameters.police ??= structuredClone(
         defaultCharacter.skillParameters.police,
       );
-      character.skillParameters.police.killsPerPromotion ??=
-        defaultCharacter.skillParameters.police.killsPerPromotion;
-      character.skillParameters.police.kickDamage ??=
+      const policeParameters = character.skillParameters.police;
+      const legacyPoliceParameters = policeParameters as typeof policeParameters & {
+        killsPerPromotion?: number;
+      };
+      const legacyKills = Math.max(
+        1,
+        Math.round(legacyPoliceParameters.killsPerPromotion ?? 2),
+      );
+      policeParameters.killsToStar2 ??=
+        defaultCharacter.policeStar !== undefined
+          ? defaultCharacter.skillParameters.police.killsToStar2
+          : legacyKills;
+      policeParameters.killsToStar3 ??=
+        defaultCharacter.policeStar !== undefined
+          ? defaultCharacter.skillParameters.police.killsToStar3
+          : legacyKills;
+      policeParameters.killsToStar4 ??=
+        defaultCharacter.policeStar !== undefined
+          ? defaultCharacter.skillParameters.police.killsToStar4
+          : legacyKills;
+      policeParameters.killsToStar5 ??=
+        defaultCharacter.policeStar !== undefined
+          ? defaultCharacter.skillParameters.police.killsToStar5
+          : legacyKills;
+      policeParameters.gatlingMagazineSize ??=
+        defaultCharacter.skillParameters.police.gatlingMagazineSize;
+      policeParameters.gatlingReloadDuration ??=
+        defaultCharacter.skillParameters.police.gatlingReloadDuration;
+      policeParameters.kickDamage ??=
         defaultCharacter.skillParameters.police.kickDamage;
-      character.skillParameters.police.kickWallStunDuration ??=
+      policeParameters.kickWallStunDuration ??=
         defaultCharacter.skillParameters.police.kickWallStunDuration;
+      delete legacyPoliceParameters.killsPerPromotion;
     }
     if (defaultCharacter.skillParameters?.mole) {
       character.skillParameters ??= {};
@@ -1055,6 +1184,11 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       );
       character.skillParameters.mole.tunnelSpeedMultiplier ??=
         defaultCharacter.skillParameters.mole.tunnelSpeedMultiplier;
+      delete (
+        character.skillParameters.mole as typeof character.skillParameters.mole & {
+          stompsToFlatten?: number;
+        }
+      ).stompsToFlatten;
     }
     if (
       defaultCharacter.id === "police-5" &&
@@ -1064,6 +1198,24 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     }
     character.victoryStyle ??= defaultCharacter.victoryStyle ?? "cool";
     character.attack.spreadDegrees ??= defaultCharacter.attack.spreadDegrees ?? 0;
+    character.attack.projectileBoostAfter ??=
+      defaultCharacter.attack.projectileBoostAfter;
+    character.attack.projectileBoostMultiplier ??=
+      defaultCharacter.attack.projectileBoostMultiplier;
+    character.attack.frontArcDegrees ??=
+      defaultCharacter.attack.frontArcDegrees;
+    const legacyDefaultRanges: Partial<Record<string, number>> = {
+      "panda-lazy": 150,
+      mole: 150,
+      "police-1": 210,
+      "police-2": 9999,
+      "police-3": 9999,
+      "police-4": 9999,
+      "police-5": 9999,
+    };
+    if (character.attack.range === legacyDefaultRanges[defaultCharacter.id]) {
+      character.attack.range = defaultCharacter.attack.range;
+    }
     if (defaultCharacter.id === "mole" && character.radius === 32) {
       character.radius = defaultCharacter.radius;
     }
@@ -1074,6 +1226,31 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       )
     ) {
       character.animations.attack = structuredClone(defaultCharacter.animations.attack);
+    }
+    if (defaultCharacter.id === "panda-lazy") {
+      const callPoliceFrameIds =
+        character.animations.callPolice?.frames.map((frame) => frame.assetId) ??
+        [];
+      const usesLegacyCallFrames =
+        callPoliceFrameIds.length === 0 ||
+        callPoliceFrameIds.every((assetId) =>
+          [
+            "panda-lazy-attack-1",
+            "panda-lazy-attack-3",
+            "panda-lazy-sos",
+            "panda-lazy-idle",
+          ].includes(assetId),
+        );
+      if (usesLegacyCallFrames && !callPoliceFrameIds.includes("panda-lazy-sos-2")) {
+        character.animations.callPolice = structuredClone(
+          defaultCharacter.animations.callPolice,
+        );
+      }
+    }
+    if ((character.animations.victory?.frames.length ?? 0) < 2) {
+      character.animations.victory = structuredClone(
+        defaultCharacter.animations.victory,
+      );
     }
     if (defaultCharacter.id === "police-5") {
       const legacyPolice = character.skillParameters?.police;
@@ -1109,6 +1286,30 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         character.attack.burstGap = defaultCharacter.attack.burstGap;
       }
     }
+    for (const slot of ["attack", "hit", "hurt", "death"] as const) {
+      const cue = character.sounds[slot];
+      if (
+        cue?.source === "speech" &&
+        cue.id.startsWith(`${defaultCharacter.id}-`) &&
+        defaultCharacter.sounds[slot]
+      ) {
+        character.sounds[slot] = structuredClone(defaultCharacter.sounds[slot]);
+      }
+    }
+    const existingSkillCue = character.sounds.skill;
+    const usesLegacySkillCue =
+      !existingSkillCue ||
+      (defaultCharacter.id === "panda-lazy" &&
+        existingSkillCue.id === "panda-lazy-chew") ||
+      (defaultCharacter.id === "mole" && existingSkillCue.id === "mole-dig") ||
+      (defaultCharacter.pluginId === "police" &&
+        existingSkillCue.source === "synth");
+    if (
+      defaultCharacter.sounds.skill &&
+      usesLegacySkillCue
+    ) {
+      character.sounds.skill = structuredClone(defaultCharacter.sounds.skill);
+    }
     for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {
       character.animations[clipId] ??= structuredClone(animation);
     }
@@ -1127,11 +1328,54 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     }
   }
   for (const character of upgraded.characters) {
+    if (character.pluginId === "panda") {
+      character.skillParameters ??= {};
+      character.skillParameters.panda ??= structuredClone(pandaSkillParameters);
+      character.skillParameters.panda.bambooRespawnInterval ??=
+        pandaSkillParameters.bambooRespawnInterval;
+      character.skillParameters.panda.bambooRespawnLimit ??=
+        pandaSkillParameters.bambooRespawnLimit;
+    }
     if (character.pluginId === "mole") {
       character.skillParameters ??= {};
       character.skillParameters.mole ??= structuredClone(moleSkillParameters);
       character.skillParameters.mole.tunnelSpeedMultiplier ??=
         moleSkillParameters.tunnelSpeedMultiplier;
+      delete (
+        character.skillParameters.mole as typeof character.skillParameters.mole & {
+          stompsToFlatten?: number;
+        }
+      ).stompsToFlatten;
+    }
+    if (character.pluginId === "police") {
+      character.skillParameters ??= {};
+      character.skillParameters.police ??= structuredClone(
+        policeSkillParameters,
+      );
+      const parameters = character.skillParameters.police;
+      const legacy = parameters as typeof parameters & {
+        killsPerPromotion?: number;
+      };
+      const legacyKills = Math.max(
+        1,
+        Math.round(legacy.killsPerPromotion ?? 2),
+      );
+      parameters.killsToStar2 ??= legacyKills;
+      parameters.killsToStar3 ??= legacyKills;
+      parameters.killsToStar4 ??= legacyKills;
+      parameters.killsToStar5 ??= legacyKills;
+      parameters.gatlingMagazineSize ??=
+        policeSkillParameters.gatlingMagazineSize;
+      parameters.gatlingReloadDuration ??=
+        policeSkillParameters.gatlingReloadDuration;
+      delete legacy.killsPerPromotion;
+    }
+    if (character.attack.mode === "melee") {
+      character.attack.frontArcDegrees ??= 120;
+    }
+    if (character.attack.projectileKind === "rocket") {
+      character.attack.projectileBoostAfter ??= 1.5;
+      character.attack.projectileBoostMultiplier ??= 1.5;
     }
     if (!upgraded.nameLibraries.some((item) => item.definitionId === character.id)) {
       upgraded.nameLibraries.push({

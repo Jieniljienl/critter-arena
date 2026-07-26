@@ -142,23 +142,20 @@ const policeSkillParameters = {
   kickDistance: 140,
   kickCooldown: 0.5,
   kickDuration: 0.35,
-  gatlingFireDuration: 5,
-  gatlingRestDuration: 5,
-  gatlingShots: 15,
 };
 
 const policeDefinition = (
   star: 1 | 2 | 3 | 4 | 5,
   data: Pick<CharacterDefinition, "maxHp" | "speed" | "radius" | "attack">,
 ): CharacterDefinition => {
-  const names = ["", "巡逻警员", "手枪警员", "步枪警员", "火箭警员", "加特林警长"];
+  const names = ["", "巡逻警员", "手枪警员", "步枪警员", "火箭警员", "重装无畏战士"];
   const subtitles = [
     "",
     "人类警员 · 警棍近身压制",
     "人类警员 · 手枪全图弹道",
     "人类警员 · 步枪三连发",
     "人类警员 · RPG范围爆破",
-    "人类警长 · 加特林与踹击",
+    "人类重装警察 · 定向周期连发与踹击",
   ];
   const attackSounds: SynthPreset[] = ["baton", "baton", "pistol", "rifle", "rocket", "gatling"];
 
@@ -256,7 +253,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     pluginId: "mole",
     maxHp: 180,
     speed: 135,
-    radius: 32,
+    radius: 26,
     accent: "#ed8f63",
     portraitAssetId: "mole-idle",
     attack: {
@@ -355,6 +352,8 @@ export const defaultCharacters: CharacterDefinition[] = [
       mode: "gatling",
       projectileKind: "bullet",
       projectileSpeed: 800,
+      burstCount: 15,
+      burstGap: 0.33,
     },
   }),
 ];
@@ -404,7 +403,7 @@ export const defaultNameLibraries: ProjectManifest["nameLibraries"] = [
   },
   {
     definitionId: "police-5",
-    names: ["加特林菩萨", "五星麦克阿瑟", "火力不足恐惧症", "正义机关枪", "突突五秒钟"],
+    names: ["加特林菩萨", "五星麦克阿瑟", "火力不足恐惧症", "重装门神", "一轮十五响"],
   },
 ];
 
@@ -704,14 +703,53 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.name = defaultCharacter.name;
       character.subtitle = defaultCharacter.subtitle;
     }
+    if (
+      defaultCharacter.id === "police-5" &&
+      (character.name === "5星加特林警长" ||
+        character.subtitle === "人类警长 · 加特林与踹击")
+    ) {
+      character.name = defaultCharacter.name;
+      character.subtitle = defaultCharacter.subtitle;
+    }
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
+    if (defaultCharacter.id === "mole" && character.radius === 32) {
+      character.radius = defaultCharacter.radius;
+    }
+    if (defaultCharacter.id === "police-5") {
+      const legacyPolice = character.skillParameters?.police;
+      const legacyShots = Math.max(
+        1,
+        Math.round(legacyPolice?.gatlingShots ?? defaultCharacter.attack.burstCount ?? 15),
+      );
+      const legacyFireDuration = legacyPolice?.gatlingFireDuration ?? 5;
+      character.attack.burstCount ??= legacyShots;
+      character.attack.burstGap ??= Number(
+        (legacyFireDuration / legacyShots).toFixed(2),
+      );
+      if (Math.abs(character.attack.burstGap - 1 / 3) < 0.0001) {
+        character.attack.burstGap = 0.33;
+      }
+      if (legacyPolice) {
+        delete legacyPolice.gatlingFireDuration;
+        delete legacyPolice.gatlingRestDuration;
+        delete legacyPolice.gatlingShots;
+      }
+    }
     for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {
       character.animations[clipId] ??= structuredClone(animation);
     }
   }
   for (const library of defaults.nameLibraries) {
-    if (!upgraded.nameLibraries.some((item) => item.definitionId === library.definitionId)) {
+    const existingLibrary = upgraded.nameLibraries.find(
+      (item) => item.definitionId === library.definitionId,
+    );
+    if (!existingLibrary) {
       upgraded.nameLibraries.push(structuredClone(library));
+    } else if (
+      library.definitionId === "police-5" &&
+      existingLibrary.names.includes("突突五秒钟")
+    ) {
+      existingLibrary.names = structuredClone(library.names);
     }
   }
   for (const character of upgraded.characters) {

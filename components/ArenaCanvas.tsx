@@ -184,12 +184,16 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private arenaGraphics!: PhaserType.GameObjects.Graphics;
           private overlayGraphics!: PhaserType.GameObjects.Graphics;
           private unitImages = new Map<string, PhaserType.GameObjects.Image>();
+          private projectileImages = new Map<string, PhaserType.GameObjects.Image>();
+          private effectImages = new Map<string, PhaserType.GameObjects.Image>();
           private unitFallbacks = new Map<string, PhaserType.GameObjects.Text>();
           private unitLabels = new Map<string, PhaserType.GameObjects.Text>();
           private healthLabels = new Map<string, PhaserType.GameObjects.Text>();
           private holeLabels = new Map<string, PhaserType.GameObjects.Text>();
           private eventLabels = new Map<string, PhaserType.GameObjects.Text>();
           private announcementLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private announcementDetailLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private announcementImages = new Map<string, PhaserType.GameObjects.Image>();
           private accumulatedMs = 0;
           private finishedVisualTime = 0;
           private failedTextures = new Set<string>();
@@ -299,6 +303,17 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.unitFallbacks.delete(id);
               }
             }
+            const activeProjectileIds = new Set(
+              snapshot.projectiles
+                .filter((projectile) => projectile.kind === "rocket")
+                .map((projectile) => projectile.id),
+            );
+            for (const [id, image] of this.projectileImages) {
+              if (!activeProjectileIds.has(id)) {
+                image.destroy();
+                this.projectileImages.delete(id);
+              }
+            }
             for (const [id, label] of this.unitLabels) {
               if (!activeIds.has(id)) {
                 label.destroy();
@@ -331,6 +346,21 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!visibleEventIds.has(id)) {
                 label.destroy();
                 this.eventLabels.delete(id);
+              }
+            }
+            const visibleExplosionIds = new Set(
+              snapshot.events
+                .filter(
+                  (event) =>
+                    event.sound === "explosion" &&
+                    snapshot.time + finishedVisualTime - event.time <= 0.85,
+                )
+                .map((event) => event.id),
+            );
+            for (const [id, image] of this.effectImages) {
+              if (!visibleExplosionIds.has(id)) {
+                image.destroy();
+                this.effectImages.delete(id);
               }
             }
 
@@ -492,14 +522,31 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private drawProjectiles(snapshot: BattleSnapshot) {
             for (const projectile of snapshot.projectiles) {
               if (projectile.kind === "rocket") {
-                this.overlayGraphics.fillStyle(0xffc66b, 1);
-                this.overlayGraphics.fillCircle(projectile.x, projectile.y, 14);
-                this.overlayGraphics.fillStyle(0xff573a, 0.75);
-                this.overlayGraphics.fillCircle(
-                  projectile.x - projectile.vx / 45,
-                  projectile.y - projectile.vy / 45,
-                  8,
-                );
+                const rocketKey = "asset:rocket";
+                if (this.textures.exists(rocketKey) && !this.failedTextures.has(rocketKey)) {
+                  let image = this.projectileImages.get(projectile.id);
+                  if (!image) {
+                    image = this.add.image(projectile.x, projectile.y, rocketKey).setDepth(34);
+                    this.projectileImages.set(projectile.id, image);
+                  }
+                  image
+                    .setPosition(projectile.x, projectile.y)
+                    .setDisplaySize(projectile.radius * 4.9, projectile.radius * 4.9)
+                    .setRotation(Math.atan2(projectile.vy, projectile.vx));
+                } else {
+                  const angle = Math.atan2(projectile.vy, projectile.vx);
+                  const noseX = projectile.x + Math.cos(angle) * 22;
+                  const noseY = projectile.y + Math.sin(angle) * 22;
+                  this.overlayGraphics.fillStyle(0xd93c32, 1);
+                  this.overlayGraphics.fillTriangle(
+                    noseX,
+                    noseY,
+                    projectile.x + Math.cos(angle + 2.15) * 17,
+                    projectile.y + Math.sin(angle + 2.15) * 17,
+                    projectile.x + Math.cos(angle - 2.15) * 17,
+                    projectile.y + Math.sin(angle - 2.15) * 17,
+                  );
+                }
               } else {
                 this.overlayGraphics.fillStyle(0xffe888, 1);
                 this.overlayGraphics.fillCircle(projectile.x, projectile.y, 7);
@@ -517,7 +564,14 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private drawEventEffects(snapshot: BattleSnapshot, finishedVisualTime: number) {
             for (const event of snapshot.events) {
               const age = snapshot.time + finishedVisualTime - event.time;
-              const maxAge = event.type === "victory" ? 2.8 : event.type === "merge" ? 1.25 : 0.9;
+              const maxAge =
+                event.type === "victory" && event.unitId
+                  ? Number.POSITIVE_INFINITY
+                  : event.type === "victory"
+                    ? 2.8
+                    : event.type === "merge"
+                      ? 1.25
+                      : 0.9;
               if (age < 0 || age > maxAge || event.x === undefined || event.y === undefined) continue;
               const progress = Math.min(1, age / 0.55);
               const color =
@@ -531,6 +585,51 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (age <= 0.55) {
                 this.overlayGraphics.lineStyle(5 * (1 - progress), color, 0.8 * (1 - progress));
                 this.overlayGraphics.strokeCircle(event.x, event.y, 18 + progress * 95);
+              }
+              if (event.sound === "explosion" && age <= 0.85) {
+                const explosionKey = "asset:explosion";
+                const explosionProgress = Math.min(1, age / 0.85);
+                if (
+                  this.textures.exists(explosionKey) &&
+                  !this.failedTextures.has(explosionKey)
+                ) {
+                  let image = this.effectImages.get(event.id);
+                  if (!image) {
+                    image = this.add.image(event.x, event.y, explosionKey).setDepth(45);
+                    this.effectImages.set(event.id, image);
+                  }
+                  image
+                    .setPosition(event.x, event.y)
+                    .setDisplaySize(
+                      105 + explosionProgress * 165,
+                      105 + explosionProgress * 165,
+                    )
+                    .setRotation(age * 0.7)
+                    .setAlpha(Math.max(0, 1 - explosionProgress ** 1.6));
+                }
+                this.overlayGraphics.lineStyle(
+                  10 * (1 - explosionProgress),
+                  0xffe26f,
+                  0.9 * (1 - explosionProgress),
+                );
+                this.overlayGraphics.strokeCircle(
+                  event.x,
+                  event.y,
+                  30 + explosionProgress * 150,
+                );
+                for (let spark = 0; spark < 12; spark += 1) {
+                  const angle = spark * (Math.PI * 2 / 12) + event.time;
+                  const reach = 35 + explosionProgress * (90 + (spark % 3) * 28);
+                  this.overlayGraphics.fillStyle(
+                    spark % 2 ? 0xffd45c : 0xff6b38,
+                    Math.max(0, 1 - explosionProgress),
+                  );
+                  this.overlayGraphics.fillCircle(
+                    event.x + Math.cos(angle) * reach,
+                    event.y + Math.sin(angle) * reach,
+                    3 + (spark % 3),
+                  );
+                }
               }
               if (event.type === "merge" && age <= 1.1) {
                 const fade = Math.max(0, 1 - age / 1.1);
@@ -629,39 +728,187 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.announcementLabels.delete(id);
               }
             }
+            for (const [id, label] of this.announcementDetailLabels) {
+              if (!visibleIds.has(id)) {
+                label.destroy();
+                this.announcementDetailLabels.delete(id);
+              }
+            }
+            for (const [key, image] of this.announcementImages) {
+              const eventId = key.split(":")[0];
+              if (!visibleIds.has(eventId)) {
+                image.destroy();
+                this.announcementImages.delete(key);
+              }
+            }
             if (!event?.announcement) return;
 
             const age = now - event.time;
             const duration = durationFor(event.type);
             const fadeIn = Math.min(1, age / 0.14);
             const fadeOut = Math.min(1, Math.max(0, (duration - age) / 0.42));
+            const alpha = fadeIn * fadeOut;
+            const centerX = board.width / 2;
+            const centerY = Math.max(68, board.height * 0.082);
+            const bannerWidth = Math.max(
+              410,
+              Math.min(760, board.width * (board.height > board.width ? 0.72 : 0.56)),
+            );
+            const bannerHeight = Math.max(82, Math.min(104, board.height * 0.115));
+            const left = centerX - bannerWidth / 2;
+            const right = centerX + bannerWidth / 2;
+            const top = centerY - bannerHeight / 2;
+            const isDeath = event.type === "death";
+            const isVictory = event.type === "victory";
+            const accent = isVictory ? 0xdfff68 : isDeath ? 0xff5b62 : 0xffd666;
+
+            this.overlayGraphics.fillStyle(0x0d0c12, 0.92 * alpha);
+            this.overlayGraphics.fillRoundedRect(
+              left + 44,
+              top,
+              bannerWidth - 88,
+              bannerHeight,
+              14,
+            );
+            this.overlayGraphics.fillStyle(isVictory ? 0x455b25 : 0x601d2a, 0.76 * alpha);
+            this.overlayGraphics.fillTriangle(
+              left + 44,
+              top + 8,
+              left - 6,
+              centerY,
+              left + 44,
+              top + bannerHeight - 8,
+            );
+            this.overlayGraphics.fillTriangle(
+              right - 44,
+              top + 8,
+              right + 6,
+              centerY,
+              right - 44,
+              top + bannerHeight - 8,
+            );
+            this.overlayGraphics.lineStyle(3, accent, 0.72 * alpha);
+            this.overlayGraphics.strokeRoundedRect(
+              left + 44,
+              top,
+              bannerWidth - 88,
+              bannerHeight,
+              14,
+            );
+            this.overlayGraphics.lineStyle(2, 0xffffff, 0.25 * alpha);
+            this.overlayGraphics.lineBetween(left + 112, centerY, centerX - 110, centerY);
+            this.overlayGraphics.lineBetween(centerX + 110, centerY, right - 112, centerY);
+
+            const chain = event.announcement.match(/完成([^，。！]+)$/)?.[1];
+            const headline = isVictory
+              ? "获得胜利！"
+              : isDeath
+                ? `${chain ?? "击败"}！`
+                : event.type === "merge"
+                  ? "升星成功！"
+                  : "战况播报";
+            const attackerName = isDeath ? event.targetName : event.unitName;
+            const victimName = isDeath ? event.unitName : undefined;
+            const detail =
+              isDeath && attackerName && victimName
+                ? `${attackerName}  击败  ${victimName}`
+                : isVictory
+                  ? event.unitName ?? snapshot.winnerName ?? event.announcement
+                  : event.announcement;
             const fontSize = Math.round(
-              Math.max(22, Math.min(38, Math.min(board.width, board.height) * 0.042)),
+              Math.max(20, Math.min(34, Math.min(board.width, board.height) * 0.038)),
             );
             let label = this.announcementLabels.get(event.id);
             if (!label) {
               label = this.add
-                .text(board.width / 2, Math.max(56, board.height * 0.075), "", {
+                .text(centerX, centerY - 10, "", {
                   fontSize: `${fontSize}px`,
                   fontFamily: '"Microsoft YaHei", Arial, sans-serif',
                   fontStyle: "bold",
-                  color: event.type === "victory" ? "#e8ff72" : "#ffe6a3",
+                  color: isVictory ? "#e8ff72" : "#fff1c7",
                   stroke: "#130f16",
-                  strokeThickness: 7,
-                  backgroundColor: "#15131de6",
-                  padding: { x: 20, y: 11 },
+                  strokeThickness: 6,
                   align: "center",
-                  wordWrap: { width: board.width * 0.78, useAdvancedWrap: true },
                 })
                 .setOrigin(0.5)
-                .setDepth(60);
+                .setDepth(64);
               this.announcementLabels.set(event.id, label);
             }
             label
-              .setText(event.announcement)
-              .setPosition(board.width / 2, Math.max(56, board.height * 0.075))
-              .setAlpha(fadeIn * fadeOut)
+              .setText(headline)
+              .setPosition(centerX, centerY - 12)
+              .setAlpha(alpha)
               .setScale(0.92 + fadeIn * 0.08);
+
+            let detailLabel = this.announcementDetailLabels.get(event.id);
+            if (!detailLabel) {
+              detailLabel = this.add
+                .text(centerX, centerY + 23, "", {
+                  fontSize: `${Math.max(12, Math.round(fontSize * 0.48))}px`,
+                  fontFamily: '"Microsoft YaHei", Arial, sans-serif',
+                  fontStyle: "bold",
+                  color: "#f4edf2",
+                  stroke: "#130f16",
+                  strokeThickness: 4,
+                  align: "center",
+                })
+                .setOrigin(0.5)
+                .setDepth(64);
+              this.announcementDetailLabels.set(event.id, detailLabel);
+            }
+            detailLabel
+              .setText(detail)
+              .setPosition(centerX, centerY + 23)
+              .setAlpha(alpha);
+
+            const placePortrait = (
+              slot: "attacker" | "victim",
+              definitionId: string | undefined,
+              x: number,
+            ) => {
+              if (!definitionId) return;
+              const character = manifest.characters.find(
+                (candidate) => candidate.id === definitionId,
+              );
+              const textureKey = character
+                ? `asset:${character.portraitAssetId}`
+                : undefined;
+              if (
+                !textureKey ||
+                !this.textures.exists(textureKey) ||
+                this.failedTextures.has(textureKey)
+              ) {
+                return;
+              }
+              const key = `${event.id}:${slot}`;
+              let image = this.announcementImages.get(key);
+              if (!image) {
+                image = this.add.image(x, centerY, textureKey).setDepth(63);
+                this.announcementImages.set(key, image);
+              }
+              const portraitSize = Math.min(68, bannerHeight * 0.72);
+              this.overlayGraphics.fillStyle(0x15131c, 0.96 * alpha);
+              this.overlayGraphics.fillCircle(x, centerY, portraitSize * 0.58);
+              this.overlayGraphics.lineStyle(
+                4,
+                slot === "attacker" ? accent : 0xd8d6df,
+                0.95 * alpha,
+              );
+              this.overlayGraphics.strokeCircle(x, centerY, portraitSize * 0.58);
+              image
+                .setTexture(textureKey)
+                .setPosition(x, centerY + 2)
+                .setDisplaySize(portraitSize, portraitSize)
+                .setAlpha(alpha)
+                .setScale((0.9 + fadeIn * 0.1) * image.scaleX);
+            };
+
+            if (isDeath) {
+              placePortrait("attacker", event.targetDefinitionId, left + 78);
+              placePortrait("victim", event.unitDefinitionId, right - 78);
+            } else {
+              placePortrait("attacker", event.unitDefinitionId, left + 78);
+            }
           }
 
           private drawUnit(unit: RuntimeUnit, time: number) {
@@ -769,7 +1016,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (image.texture.key !== textureKey) image.setTexture(textureKey);
               image
                 .setPosition(visualX, visualY + bob)
-                .setDisplaySize(unit.radius * 3 * displayScale, unit.radius * 3 * displayScale)
+                .setDisplaySize(
+                  unit.radius *
+                    (unit.definitionId === "mole" ? 2.05 : 3) *
+                    displayScale,
+                  unit.radius * 3 * displayScale,
+                )
                 .setFlipX(unit.vx < 0)
                 .setAlpha(alpha)
                 .setAngle(

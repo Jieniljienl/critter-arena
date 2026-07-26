@@ -698,33 +698,11 @@ textarea:focus-visible {
   font-size: 10px;
 }
 
-.arena-stage:fullscreen {
-  width: 100vw;
-  height: 100vh;
-  border: 0;
-  border-radius: 0;
-  background: #000;
-  box-shadow: none;
-}
-
-.arena-stage:fullscreen::after,
-.arena-stage:fullscreen .match-status-badge {
-  display: none;
-}
-
 .fullscreen-control-hotzone {
   display: none;
 }
 
-.arena-panel:fullscreen {
-  width: 100vw;
-  height: 100vh;
-  padding: 0;
-  overflow: hidden;
-  background: #000;
-}
-
-.clean-spectator .arena-panel:fullscreen .battle-control-bar {
+.clean-spectator .arena-panel .battle-control-bar {
   position: fixed;
   right: 12px;
   bottom: 12px;
@@ -748,17 +726,17 @@ textarea:focus-visible {
   backdrop-filter: blur(18px);
 }
 
-.clean-spectator .arena-panel:fullscreen .battle-control-bar::-webkit-scrollbar {
+.clean-spectator .arena-panel .battle-control-bar::-webkit-scrollbar {
   display: none;
 }
 
-.clean-spectator .arena-panel:fullscreen .battle-control-bar.is-fullscreen-visible {
+.clean-spectator .arena-panel .battle-control-bar.is-fullscreen-visible {
   opacity: 1;
   pointer-events: auto;
   transform: translateY(0);
 }
 
-.clean-spectator .arena-panel:fullscreen .fullscreen-control-hotzone {
+.clean-spectator .arena-panel .fullscreen-control-hotzone {
   position: fixed;
   right: 0;
   bottom: 0;
@@ -833,15 +811,37 @@ textarea:focus-visible {
   .battle-sidebar {
     height: 100%;
     min-height: 0;
-    overflow-y: auto;
     overscroll-behavior-y: contain;
     scrollbar-gutter: stable;
+  }
+
+  .arena-panel {
+    overflow-y: auto;
+  }
+
+  .battle-sidebar {
+    overflow: hidden;
   }
 }
 
 .sidebar-section {
   min-height: 0;
+  overflow: hidden;
   padding: 18px;
+}
+
+.lineup-section {
+  overflow-y: auto;
+  overscroll-behavior-y: contain;
+}
+
+.lineup-section::-webkit-scrollbar {
+  width: 5px;
+}
+
+.lineup-section::-webkit-scrollbar-thumb {
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.12);
 }
 
 .sidebar-section + .sidebar-section {
@@ -2573,6 +2573,11 @@ textarea:focus-visible {
 
   .lineup-section {
     grid-column: 1 / -1;
+    overflow: visible;
+  }
+
+  .sidebar-section {
+    overflow: visible;
   }
 
   .sidebar-section + .sidebar-section {

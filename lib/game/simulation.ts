@@ -124,6 +124,7 @@ export class BattleSimulation {
   private winnerName: string | undefined;
   private draw = false;
   private finishAt: number | undefined;
+  private lastMainKillerId: string | undefined;
 
   constructor(manifest: ProjectManifest, setup: MatchSetup = manifest.setup) {
     manifest.characters.forEach((definition) => this.definitions.set(definition.id, definition));
@@ -166,6 +167,7 @@ export class BattleSimulation {
     this.winnerName = undefined;
     this.draw = false;
     this.finishAt = undefined;
+    this.lastMainKillerId = undefined;
     this.initializeContestants();
     return true;
   }
@@ -194,7 +196,14 @@ export class BattleSimulation {
         ...unit,
         moduleCooldowns: { ...unit.moduleCooldowns },
         tunnelData: unit.tunnelData ? structuredClone(unit.tunnelData) : undefined,
-        gatling: unit.gatling ? { ...unit.gatling } : undefined,
+        gatling: unit.gatling
+          ? {
+              ...unit.gatling,
+              roundDirection: unit.gatling.roundDirection
+                ? { ...unit.gatling.roundDirection }
+                : undefined,
+            }
+          : undefined,
       })),
       holes: [...this.holes.values()].map((hole) => ({ ...hole })),
       projectiles: [...this.projectiles.values()].map((projectile) => ({ ...projectile })),
@@ -239,7 +248,6 @@ export class BattleSimulation {
       normalize({ x: Math.cos(this.random.angle()), y: Math.sin(this.random.angle()) });
     const definition = options.definition;
     const radius = definition.radius * (this.board.unitScale ?? 1);
-    const policeParameters = definition.skillParameters?.police;
     const unit: RuntimeUnit = {
       id: options.id ?? this.nextId(definition.id),
       definitionId: definition.id,
@@ -280,10 +288,9 @@ export class BattleSimulation {
       ...(definition.policeStar === 5
         ? {
             gatling: {
-              phase: "fire" as const,
-              phaseRemaining: policeParameters?.gatlingFireDuration ?? 5,
-              shotsRemaining: policeParameters?.gatlingShots ?? 15,
-              nextShotIn: 0.08,
+              nextRoundIn: 0.08,
+              shotsRemaining: 0,
+              nextShotIn: 0,
               nextKickAt: 0,
             },
           }
@@ -574,31 +581,60 @@ export class BattleSimulation {
   ): void {
     const gatling = unit.gatling;
     if (!gatling || unit.action === "kick" || unit.action === "dead") return;
-    const parameters = definition.skillParameters?.police;
-    const fireDuration = parameters?.gatlingFireDuration ?? 5;
-    const restDuration = parameters?.gatlingRestDuration ?? 5;
-    const shotCount = Math.max(1, Math.round(parameters?.gatlingShots ?? 15));
-    gatling.phaseRemaining -= dt;
-    if (gatling.phase === "fire") {
-      gatling.nextShotIn -= dt;
-      while (gatling.nextShotIn <= 0 && gatling.shotsRemaining > 0) {
-        const target = this.random.pick(this.validTargets(unit, definition.attack.range));
-        if (target) this.launchProjectile(unit, target, definition);
-        gatling.shotsRemaining -= 1;
-        gatling.nextShotIn += fireDuration / shotCount;
+    const attack = definition.attack;
+    const shotCount = Math.max(1, Math.round(attack.burstCount ?? 15));
+    const shotGap = Math.max(0.01, attack.burstGap ?? 0.33);
+
+    gatling.nextRoundIn = Math.max(0, gatling.nextRoundIn - dt);
+    if (gatling.shotsRemaining <= 0) {
+      if (gatling.nextRoundIn > EPSILON) return;
+      const target = this.random.pick(this.validTargets(unit, attack.range));
+      if (!target) {
+        gatling.nextRoundIn = 0.1;
+        return;
       }
-      if (gatling.phaseRemaining <= 0) {
-        gatling.phase = "rest";
-        gatling.phaseRemaining += restDuration;
-        gatling.shotsRemaining = 0;
-        gatling.nextShotIn = 0;
-      }
-    } else if (gatling.phaseRemaining <= 0) {
-      gatling.phase = "fire";
-      gatling.phaseRemaining += fireDuration;
+      gatling.roundDirection = normalize({
+        x: target.x - unit.x,
+        y: target.y - unit.y,
+      });
+      gatling.roundTargetId = target.id;
       gatling.shotsRemaining = shotCount;
+      gatling.nextShotIn = Math.max(0, attack.windup);
+      gatling.nextRoundIn = Math.max(0.1, attack.cooldown);
+      this.emit(
+        "skill",
+        `${unit.name} 锁定 ${target.name} 的方向，开始一轮 ${shotCount} 发连射`,
+        unit,
+        target,
+        "gatling",
+      );
+    }
+
+    gatling.nextShotIn -= dt;
+    while (
+      gatling.nextShotIn <= EPSILON &&
+      gatling.shotsRemaining > 0 &&
+      gatling.roundDirection
+    ) {
+      const target = gatling.roundTargetId
+        ? this.units.get(gatling.roundTargetId)
+        : undefined;
+      this.launchProjectileInDirection(
+        unit,
+        gatling.roundDirection,
+        definition,
+        target,
+      );
+      unit.action = "attack";
+      unit.actionStartedAt = this.time;
+      unit.actionUntil = Math.max(unit.actionUntil, this.time + 0.16);
+      gatling.shotsRemaining -= 1;
+      gatling.nextShotIn += shotGap;
+    }
+    if (gatling.shotsRemaining <= 0) {
+      gatling.roundDirection = undefined;
+      gatling.roundTargetId = undefined;
       gatling.nextShotIn = 0;
-      this.emit("skill", `${unit.name} 的加特林再次开火`, unit, undefined, "gatling");
     }
   }
 
@@ -797,8 +833,17 @@ export class BattleSimulation {
     target: RuntimeUnit,
     definition: CharacterDefinition,
   ): void {
-    const attack = definition.attack;
     const direction = normalize({ x: target.x - source.x, y: target.y - source.y });
+    this.launchProjectileInDirection(source, direction, definition, target);
+  }
+
+  private launchProjectileInDirection(
+    source: RuntimeUnit,
+    direction: Vec2,
+    definition: CharacterDefinition,
+    target?: RuntimeUnit,
+  ): void {
+    const attack = definition.attack;
     const speed = attack.projectileSpeed ?? 650;
     const kind = attack.projectileKind ?? "bullet";
     const projectile: RuntimeProjectile = {
@@ -827,7 +872,15 @@ export class BattleSimulation {
             : definition.policeStar === 5
               ? "gatling"
               : definition.sounds.attack?.preset ?? "swipe";
-    this.emit("attack", `${source.name} 向 ${target.name} 开火`, source, target, sound);
+    this.emit(
+      "attack",
+      target
+        ? `${source.name} 向 ${target.name} 的锁定方向开火`
+        : `${source.name} 沿锁定方向开火`,
+      source,
+      target,
+      sound,
+    );
   }
 
   private updateProjectiles(dt: number): void {
@@ -1155,6 +1208,7 @@ export class BattleSimulation {
     let announcement: string | undefined;
     let message = source ? `${target.name} 被 ${source.name} 击败` : `${target.name} 倒下了`;
     if (source && target.main) {
+      this.lastMainKillerId = source.id;
       const chain = this.recordMainKill(source);
       const chainLabel = this.killChainLabel(chain);
       announcement = `${source.name} 击败了 ${target.name}${chainLabel ? `，完成${chainLabel}` : ""}`;
@@ -1247,10 +1301,12 @@ export class BattleSimulation {
         winner.actionStartedAt = this.time;
         winner.actionUntil = Number.POSITIVE_INFINITY;
       }
+      const featuredWinner =
+        livingMain.find((unit) => unit.id === this.lastMainKillerId) ?? livingMain[0];
       this.emit(
         "victory",
         `${this.winnerName} 获得胜利！`,
-        livingMain[0],
+        featuredWinner,
         undefined,
         "merge",
         undefined,
@@ -1371,6 +1427,10 @@ export class BattleSimulation {
       y: unit?.y,
       unitId: unit?.id,
       targetId: target?.id,
+      unitName: unit?.name,
+      targetName: target?.name,
+      unitDefinitionId: unit?.definitionId,
+      targetDefinitionId: target?.definitionId,
       sound,
       amount,
       announcement,

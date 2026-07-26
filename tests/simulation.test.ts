@@ -404,6 +404,64 @@ test("an RPG that misses its moving target explodes on the board edge", () => {
   );
 });
 
+test("five-star police fires each periodic round along one locked direction", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.width = 2_000;
+  board.height = 1_200;
+  const officer = definition(manifest, "police-5");
+  const target = definition(manifest, "mole");
+  officer.speed = 0;
+  officer.attack.damage = 0;
+  officer.attack.cooldown = 3;
+  officer.attack.windup = 0;
+  officer.attack.projectileSpeed = 20;
+  officer.attack.burstCount = 4;
+  officer.attack.burstGap = 0.1;
+  target.pluginId = undefined;
+  target.speed = 120;
+  target.attack.range = 0;
+  target.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "direction-lock-officer",
+      definitionId: "police-5",
+      displayName: "无畏测试员",
+      position: { x: 150, y: 500 },
+      direction: { x: 1, y: 0 },
+      color: "#f6d85f",
+    },
+    {
+      id: "moving-lock-target",
+      definitionId: "mole",
+      displayName: "移动方向靶",
+      position: { x: 1_600, y: 300 },
+      direction: { x: 0, y: 1 },
+      color: "#72d4af",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 35);
+  let projectiles = simulation.getSnapshot().projectiles;
+  assert.equal(projectiles.length, 4);
+  const firstDirection = {
+    x: projectiles[0].vx / 20,
+    y: projectiles[0].vy / 20,
+  };
+  for (const projectile of projectiles.slice(1)) {
+    assert.ok(Math.abs(projectile.vx / 20 - firstDirection.x) < 1e-9);
+    assert.ok(Math.abs(projectile.vy / 20 - firstDirection.y) < 1e-9);
+  }
+
+  runSteps(simulation, 125);
+  assert.equal(simulation.getSnapshot().projectiles.length, 4);
+  runSteps(simulation, 35);
+  projectiles = simulation.getSnapshot().projectiles;
+  assert.ok(projectiles.length > 4, "the next round should begin only after its period");
+});
+
 test("burning and spring buffs settle exactly once per second", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
@@ -711,15 +769,18 @@ test("main-character kills use concise announcements and report rapid multi-kill
   const simulation = new BattleSimulation(manifest);
   simulation.start();
   runSteps(simulation, 180);
-  const announcements = simulation
+  const deathEvents = simulation
     .getSnapshot()
-    .events.filter((event) => event.type === "death" && event.announcement)
-    .map((event) => event.announcement ?? "");
+    .events.filter((event) => event.type === "death" && event.announcement);
+  const announcements = deathEvents.map((event) => event.announcement ?? "");
 
   assert.equal(announcements.length, 2);
   assert.match(announcements[0], /^老王 击败了 /);
   assert.doesNotMatch(announcements.join(" "), /击杀播报/);
   assert.match(announcements[1], /完成二连击败$/);
+  assert.equal(deathEvents[0].targetName, "老王");
+  assert.equal(deathEvents[0].targetDefinitionId, "police-1");
+  assert.ok(["mole", "panda-lazy"].includes(deathEvents[0].unitDefinitionId ?? ""));
 });
 
 test("allied selectable police merge on contact and play a star-up action", () => {

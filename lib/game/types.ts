@@ -151,9 +151,12 @@ export type PoliceSkillParameters = {
   kickDistance: number;
   kickCooldown: number;
   kickDuration: number;
-  gatlingFireDuration: number;
-  gatlingRestDuration: number;
-  gatlingShots: number;
+  /** 旧版五星警察参数，仅用于导入迁移。 */
+  gatlingFireDuration?: number;
+  /** 旧版五星警察参数，仅用于导入迁移。 */
+  gatlingRestDuration?: number;
+  /** 旧版五星警察参数，仅用于导入迁移。 */
+  gatlingShots?: number;
 };
 
 export type CharacterDefinition = {
@@ -296,11 +299,12 @@ export type RuntimeUnit = {
   };
   digPosition?: Vec2;
   gatling?: {
-    phase: "fire" | "rest";
-    phaseRemaining: number;
+    nextRoundIn: number;
     shotsRemaining: number;
     nextShotIn: number;
     nextKickAt: number;
+    roundDirection?: Vec2;
+    roundTargetId?: string;
   };
   moduleCooldowns: Record<string, number>;
 };
@@ -351,6 +355,10 @@ export type CombatEvent = {
   y?: number;
   unitId?: string;
   targetId?: string;
+  unitName?: string;
+  targetName?: string;
+  unitDefinitionId?: string;
+  targetDefinitionId?: string;
   sound?: SynthPreset;
   amount?: number;
   announcement?: string;

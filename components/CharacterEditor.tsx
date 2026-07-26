@@ -57,26 +57,26 @@ const soundSlots: Array<[SoundSlot, string]> = [
   ["death", "死亡"],
 ];
 
-const synthPresets: SynthPreset[] = [
-  "swipe",
-  "baton",
-  "pistol",
-  "rifle",
-  "rocket",
-  "explosion",
-  "gatling",
-  "kick",
-  "chew",
-  "dig",
-  "tunnel",
-  "hurt",
-  "heal",
-  "merge",
-  "death",
-  "lava",
-  "spring",
-  "pandaGrunt",
-  "moleSqueak",
+const synthPresetOptions: Array<{ value: SynthPreset; label: string }> = [
+  { value: "swipe", label: "挥击（破风声）" },
+  { value: "baton", label: "警棍（钝击声）" },
+  { value: "pistol", label: "手枪（单发）" },
+  { value: "rifle", label: "步枪（三连发）" },
+  { value: "rocket", label: "火箭发射（低沉尾焰）" },
+  { value: "explosion", label: "爆炸（范围冲击）" },
+  { value: "gatling", label: "加特林（高速连射）" },
+  { value: "kick", label: "踹击（重击）" },
+  { value: "chew", label: "咀嚼（吃竹子）" },
+  { value: "dig", label: "挖洞（土石声）" },
+  { value: "tunnel", label: "钻洞（地下穿行）" },
+  { value: "hurt", label: "受伤（短促反馈）" },
+  { value: "heal", label: "治疗（柔和提示）" },
+  { value: "merge", label: "升星合并（上升音）" },
+  { value: "death", label: "死亡（低沉结束）" },
+  { value: "lava", label: "燃烧（柔和灼烧）" },
+  { value: "spring", label: "温泉回血（柔和水声）" },
+  { value: "pandaGrunt", label: "熊猫叫声（低声哼哼）" },
+  { value: "moleSqueak", label: "地鼠叫声（短促吱声）" },
 ];
 
 const funnyPhrases = (
@@ -130,9 +130,6 @@ const skillFields: Record<
     { key: "kickDistance", label: "五星踹飞距离", fallback: 140, min: 0 },
     { key: "kickCooldown", label: "踹击冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
     { key: "kickDuration", label: "踹击动作（秒）", fallback: 0.35, min: 0.05, step: 0.05 },
-    { key: "gatlingFireDuration", label: "加特林开火时长", fallback: 5, min: 0.1, step: 0.1 },
-    { key: "gatlingRestDuration", label: "加特林休息时长", fallback: 5, min: 0, step: 0.1 },
-    { key: "gatlingShots", label: "每轮子弹数", fallback: 15, min: 1, step: 1 },
   ],
 };
 
@@ -414,7 +411,7 @@ export function CharacterEditor({
       <section className="editor-main">
         <div className="editor-title-row">
           <div>
-            <span className="eyebrow">Character definition</span>
+            <span className="eyebrow">角色定义</span>
             <h1>{selected.name}</h1>
             <p>{selected.subtitle}</p>
           </div>
@@ -427,7 +424,7 @@ export function CharacterEditor({
           <div className="editor-card">
             <div className="card-title">
               <Sparkles size={17} />
-              <span>基础与战斗数值</span>
+              <span>身份与基础属性</span>
             </div>
             <div className="form-grid two-columns">
               <label>
@@ -478,6 +475,25 @@ export function CharacterEditor({
                 />
               </label>
               <label>
+                角色色
+                <input
+                  type="color"
+                  value={selected.accent}
+                  onChange={(event) =>
+                    updateCharacter((character) => (character.accent = event.target.value))
+                  }
+                />
+              </label>
+            </div>
+          </div>
+
+          <div className="editor-card">
+            <div className="card-title">
+              <Sparkles size={17} />
+              <span>普通攻击</span>
+            </div>
+            <div className="form-grid two-columns">
+              <label>
                 普攻伤害
                 <input
                   type="number"
@@ -506,7 +522,7 @@ export function CharacterEditor({
                 />
               </label>
               <label>
-                攻击间隔（秒）
+                {selected.attack.mode === "gatling" ? "射击周期（秒）" : "攻击间隔（秒）"}
                 <input
                   type="number"
                   min={0.1}
@@ -555,103 +571,156 @@ export function CharacterEditor({
                   }
                 />
               </label>
-              <label>
-                弹丸速度
-                <input
-                  type="number"
-                  min={1}
-                  value={selected.attack.projectileSpeed ?? 650}
-                  onChange={(event) =>
-                    updateCharacter(
-                      (character) =>
-                        (character.attack.projectileSpeed = numeric(
-                          event.target.value,
-                          character.attack.projectileSpeed ?? 650,
-                        )),
-                    )
-                  }
-                />
-              </label>
-              <label>
-                连发数量
-                <input
-                  type="number"
-                  min={1}
-                  step={1}
-                  value={selected.attack.burstCount ?? 1}
-                  onChange={(event) =>
-                    updateCharacter(
-                      (character) =>
-                        (character.attack.burstCount = Math.max(
-                          1,
-                          Math.round(numeric(event.target.value, character.attack.burstCount ?? 1)),
-                        )),
-                    )
-                  }
-                />
-              </label>
-              <label>
-                连发间隔（秒）
-                <input
-                  type="number"
-                  min={0}
-                  step={0.05}
-                  value={selected.attack.burstGap ?? 0.3}
-                  onChange={(event) =>
-                    updateCharacter(
-                      (character) =>
-                        (character.attack.burstGap = numeric(
-                          event.target.value,
-                          character.attack.burstGap ?? 0.3,
-                        )),
-                    )
-                  }
-                />
-              </label>
-              <label>
-                爆炸溅射伤害
-                <input
-                  type="number"
-                  min={0}
-                  value={selected.attack.splashDamage ?? 0}
-                  onChange={(event) =>
-                    updateCharacter(
-                      (character) =>
-                        (character.attack.splashDamage = numeric(
-                          event.target.value,
-                          character.attack.splashDamage ?? 0,
-                        )),
-                    )
-                  }
-                />
-              </label>
-              <label>
-                爆炸半径
-                <input
-                  type="number"
-                  min={0}
-                  value={selected.attack.splashRadius ?? 0}
-                  onChange={(event) =>
-                    updateCharacter(
-                      (character) =>
-                        (character.attack.splashRadius = numeric(
-                          event.target.value,
-                          character.attack.splashRadius ?? 0,
-                        )),
-                    )
-                  }
-                />
-              </label>
-              <label>
-                角色色
-                <input
-                  type="color"
-                  value={selected.accent}
-                  onChange={(event) => updateCharacter((character) => (character.accent = event.target.value))}
-                />
-              </label>
+              {selected.attack.mode !== "melee" && (
+                <>
+                  <label>
+                    弹丸外观
+                    <select
+                      value={selected.attack.projectileKind ?? "bullet"}
+                      onChange={(event) =>
+                        updateCharacter(
+                          (character) =>
+                            (character.attack.projectileKind = event.target.value as
+                              | "bullet"
+                              | "rocket"),
+                        )
+                      }
+                    >
+                      <option value="bullet">普通子弹</option>
+                      <option value="rocket">火箭弹（RPG）</option>
+                    </select>
+                  </label>
+                  <label>
+                    弹丸速度
+                    <input
+                      type="number"
+                      min={1}
+                      value={selected.attack.projectileSpeed ?? 650}
+                      onChange={(event) =>
+                        updateCharacter(
+                          (character) =>
+                            (character.attack.projectileSpeed = numeric(
+                              event.target.value,
+                              character.attack.projectileSpeed ?? 650,
+                            )),
+                        )
+                      }
+                    />
+                  </label>
+                </>
+              )}
             </div>
           </div>
+
+          {(selected.attack.mode === "burst" || selected.attack.mode === "gatling") && (
+            <div className="editor-card">
+              <div className="card-title">
+                <Sparkles size={17} />
+                <span>
+                  {selected.attack.mode === "gatling" ? "周期连发" : "单次连发"}
+                </span>
+              </div>
+              <p className="editor-card-note">
+                {selected.attack.mode === "gatling"
+                  ? "每轮只锁定一次方向；本轮全部子弹沿同一方向飞行。射击周期从本轮开始计到下一轮开始。"
+                  : "同一次攻击按固定间隔连续发射多颗弹丸。"}
+              </p>
+              <div className="form-grid two-columns">
+                <label>
+                  {selected.attack.mode === "gatling" ? "每轮子弹数（连发数量）" : "连发数量"}
+                  <input
+                    type="number"
+                    min={1}
+                    step={1}
+                    value={selected.attack.burstCount ?? (selected.attack.mode === "gatling" ? 15 : 3)}
+                    onChange={(event) =>
+                      updateCharacter(
+                        (character) =>
+                          (character.attack.burstCount = Math.max(
+                            1,
+                            Math.round(
+                              numeric(
+                                event.target.value,
+                                character.attack.burstCount ??
+                                  (character.attack.mode === "gatling" ? 15 : 3),
+                              ),
+                            ),
+                          )),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  连发间隔（秒）
+                  <input
+                    type="number"
+                    min={0.01}
+                    step={0.01}
+                    value={selected.attack.burstGap ?? (selected.attack.mode === "gatling" ? 0.33 : 0.3)}
+                    onChange={(event) =>
+                      updateCharacter(
+                        (character) =>
+                          (character.attack.burstGap = numeric(
+                            event.target.value,
+                            character.attack.burstGap ??
+                              (character.attack.mode === "gatling" ? 0.33 : 0.3),
+                          )),
+                      )
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          )}
+
+          {(selected.attack.projectileKind === "rocket" ||
+            (selected.attack.splashRadius ?? 0) > 0) && (
+            <div className="editor-card">
+              <div className="card-title">
+                <Sparkles size={17} />
+                <span>火箭与爆炸</span>
+              </div>
+              <p className="editor-card-note">
+                火箭直击造成普攻伤害；其他敌人进入爆炸半径时承受溅射伤害。
+              </p>
+              <div className="form-grid two-columns">
+                <label>
+                  爆炸溅射伤害
+                  <input
+                    type="number"
+                    min={0}
+                    value={selected.attack.splashDamage ?? 0}
+                    onChange={(event) =>
+                      updateCharacter(
+                        (character) =>
+                          (character.attack.splashDamage = numeric(
+                            event.target.value,
+                            character.attack.splashDamage ?? 0,
+                          )),
+                      )
+                    }
+                  />
+                </label>
+                <label>
+                  爆炸半径
+                  <input
+                    type="number"
+                    min={0}
+                    value={selected.attack.splashRadius ?? 0}
+                    onChange={(event) =>
+                      updateCharacter(
+                        (character) =>
+                          (character.attack.splashRadius = numeric(
+                            event.target.value,
+                            character.attack.splashRadius ?? 0,
+                          )),
+                      )
+                    }
+                  />
+                </label>
+              </div>
+            </div>
+          )}
 
           {selected.pluginId && (
             <div className="editor-card">
@@ -662,7 +731,7 @@ export function CharacterEditor({
                     ? "熊猫内置技能参数"
                     : selected.pluginId === "mole"
                       ? "地鼠内置技能参数"
-                      : "警察内置技能参数"}
+                      : "警察近身反制（五星生效）"}
                 </span>
               </div>
               <p className="editor-card-note">
@@ -856,8 +925,10 @@ export function CharacterEditor({
                               )
                             }
                           >
-                            {synthPresets.map((preset) => (
-                              <option key={preset} value={preset}>{preset}</option>
+                            {synthPresetOptions.map((preset) => (
+                              <option key={preset.value} value={preset.value}>
+                                {preset.label}
+                              </option>
                             ))}
                           </select>
                         </label>
@@ -1120,8 +1191,10 @@ export function CharacterEditor({
                               })
                             }
                           >
-                            {synthPresets.map((preset) => (
-                              <option key={preset} value={preset}>{preset}</option>
+                            {synthPresetOptions.map((preset) => (
+                              <option key={preset.value} value={preset.value}>
+                                {preset.label}
+                              </option>
                             ))}
                           </select>
                         </label>

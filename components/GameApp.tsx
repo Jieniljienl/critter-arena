@@ -127,7 +127,6 @@ export function GameApp() {
   const [cleanView, setCleanView] = useState(false);
   const [fullscreenControlsVisible, setFullscreenControlsVisible] = useState(false);
   const arenaRef = useRef<ArenaHandle>(null);
-  const arenaStageRef = useRef<HTMLElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const musicImportRef = useRef<HTMLInputElement>(null);
   const pendingPreviewSetupRef = useRef<MatchSetup>();
@@ -198,41 +197,23 @@ export function GameApp() {
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (target?.matches("input, textarea, select")) return;
-      if (event.code === "Space" && view === "battle") {
+      if (event.key === "Escape" && cleanView) {
         event.preventDefault();
-        arenaRef.current?.togglePause();
+        setCleanView(false);
+        setFullscreenControlsVisible(false);
+        return;
       }
+      if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === "." && view === "battle") arenaRef.current?.step();
       if (event.key.toLowerCase() === "f" && view === "battle") {
         event.preventDefault();
-        if (document.fullscreenElement) {
-          void document.exitFullscreen();
-          setCleanView(false);
-          setFullscreenControlsVisible(false);
-        } else {
-          setCleanView(true);
-          setFullscreenControlsVisible(false);
-          void arenaStageRef.current?.requestFullscreen().catch(() => {
-            setCleanView(false);
-          });
-        }
+        setCleanView((current) => !current);
+        setFullscreenControlsVisible(false);
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [view]);
-
-  useEffect(() => {
-    const handleFullscreenChange = () => {
-      if (!document.fullscreenElement) {
-        setCleanView(false);
-        setFullscreenControlsVisible(false);
-      }
-    };
-    document.addEventListener("fullscreenchange", handleFullscreenChange);
-    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
-  }, []);
+  }, [cleanView, view]);
 
   const showNotice = useCallback((message: string) => setNotice(message), []);
 
@@ -258,7 +239,7 @@ export function GameApp() {
     : currentBoard?.props ?? [];
   const currentBoardHoles = hasRuntimeBoard ? snapshot?.holes ?? [] : [];
 
-  const beginFreshBattle = (newSeed = false) => {
+  const beginFreshBattle = useCallback((newSeed = false) => {
     if (manifest.setup.contestants.length < 2) {
       setNotice("至少添加两名主角色才能开战");
       return;
@@ -273,7 +254,28 @@ export function GameApp() {
     setSnapshot(undefined);
     setPendingAutoStart(true);
     setBattleKey((key) => key + 1);
-  };
+  }, [manifest]);
+
+  useEffect(() => {
+    const handleSpace = (event: KeyboardEvent) => {
+      const target = event.target as HTMLElement | null;
+      if (
+        event.code !== "Space" ||
+        view !== "battle" ||
+        target?.matches("input, textarea, select, [contenteditable='true']")
+      ) {
+        return;
+      }
+      event.preventDefault();
+      if (!snapshot || snapshot.status === "ready" || snapshot.status === "finished") {
+        beginFreshBattle(false);
+      } else {
+        arenaRef.current?.togglePause();
+      }
+    };
+    window.addEventListener("keydown", handleSpace);
+    return () => window.removeEventListener("keydown", handleSpace);
+  }, [beginFreshBattle, snapshot, view]);
 
   const resetBattle = () => {
     const next = structuredClone(manifest);
@@ -356,15 +358,11 @@ export function GameApp() {
   const enterCleanView = () => {
     setCleanView(true);
     setFullscreenControlsVisible(false);
-    void arenaStageRef.current?.requestFullscreen().catch(() => {
-      setCleanView(false);
-    });
   };
 
   const exitCleanView = () => {
     setCleanView(false);
     setFullscreenControlsVisible(false);
-    if (document.fullscreenElement) void document.exitFullscreen();
   };
 
   const revealFullscreenControls = () => {
@@ -611,7 +609,7 @@ export function GameApp() {
 
       {view === "battle" && (
         <div className="battle-workspace">
-          <section ref={arenaStageRef} className="arena-panel">
+          <section className="arena-panel">
             <div className="arena-panel-header">
               <div>
                 <span className="live-dot" />

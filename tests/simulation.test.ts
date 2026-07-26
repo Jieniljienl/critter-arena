@@ -1148,6 +1148,12 @@ test("allied selectable police merge on contact and play a star-up action", () =
   assert.ok(merged);
   assert.equal(merged.main, true);
   assert.equal(merged.action, "merge");
+  assert.equal(
+    merged.appearanceDefinitionId,
+    "police-1",
+    "collision promotions should keep one original officer appearance",
+  );
+  assert.ok(merged.promotionUntil > merged.promotionStartedAt);
   assert.ok(snapshot.events.some((event) => event.type === "merge" && event.announcement));
 });
 
@@ -1209,6 +1215,11 @@ test("a police officer promotes after every two personal kills and stops at five
   assert.ok(officer);
   assert.equal(officer.policeStar, 5);
   assert.equal(officer.definitionId, "police-5");
+  assert.equal(
+    officer.appearanceDefinitionId,
+    "police-1",
+    "personal kill promotions should retain the officer's original appearance",
+  );
   assert.equal(officer.policeKillProgress, 0);
   assert.equal(officer.factionId, "team:red");
   assert.equal(officer.main, true);

@@ -323,6 +323,7 @@ export class BattleSimulation {
   private createUnit(options: {
     id?: string;
     definition: CharacterDefinition;
+    appearanceDefinitionId?: string;
     name?: string;
     ownerId: string;
     factionId: string;
@@ -340,6 +341,8 @@ export class BattleSimulation {
     const unit: RuntimeUnit = {
       id: options.id ?? this.nextId(definition.id),
       definitionId: definition.id,
+      appearanceDefinitionId:
+        options.appearanceDefinitionId ?? definition.id,
       name: options.name ?? definition.name,
       ownerId: options.ownerId,
       factionId: options.factionId,
@@ -359,6 +362,8 @@ export class BattleSimulation {
       action: "move",
       actionStartedAt: this.time,
       actionUntil: 0,
+      promotionStartedAt: 0,
+      promotionUntil: 0,
       nextPandaSummonAt: 0,
       pandaCallStartedAt: 0,
       pandaCallUntil: 0,
@@ -1374,6 +1379,9 @@ export class BattleSimulation {
       const merged = this.createUnit({
         id: mergedId,
         definition,
+        appearanceDefinitionId: (
+          left.main ? left : right.main ? right : left
+        ).appearanceDefinitionId,
         ownerId: main ? mergedId : inheritedOwnerId,
         factionId: left.factionId,
         main,
@@ -1385,6 +1393,8 @@ export class BattleSimulation {
       merged.action = "merge";
       merged.actionStartedAt = this.time;
       merged.actionUntil = this.time + 0.62;
+      merged.promotionStartedAt = this.time;
+      merged.promotionUntil = this.time + 1.1;
       this.addUnit(merged);
       for (const projectile of this.projectiles.values()) {
         if (projectile.sourceUnitId === left.id || projectile.sourceUnitId === right.id) {
@@ -1589,6 +1599,8 @@ export class BattleSimulation {
     source.action = "merge";
     source.actionStartedAt = this.time;
     source.actionUntil = this.time + 0.62;
+    source.promotionStartedAt = this.time;
+    source.promotionUntil = this.time + 1.1;
     source.burnUntil = 0;
     source.burnDamagePerSecond = 0;
     source.springUntil = 0;

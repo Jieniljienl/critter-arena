@@ -288,6 +288,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private unitFallbacks = new Map<string, PhaserType.GameObjects.Text>();
           private unitLabels = new Map<string, PhaserType.GameObjects.Text>();
           private healthLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private buffLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private promotionLabels = new Map<string, PhaserType.GameObjects.Text>();
           private callLabels = new Map<string, PhaserType.GameObjects.Text>();
           private holeLabels = new Map<string, PhaserType.GameObjects.Text>();
           private eventLabels = new Map<string, PhaserType.GameObjects.Text>();
@@ -409,9 +411,14 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private loadRuntimeUnitAssets(units: RuntimeUnit[]): void {
             const newDefinitionIds = new Set<string>();
             for (const unit of units) {
-              if (this.seenRuntimeDefinitionIds.has(unit.definitionId)) continue;
-              this.seenRuntimeDefinitionIds.add(unit.definitionId);
-              newDefinitionIds.add(unit.definitionId);
+              for (const definitionId of [
+                unit.definitionId,
+                unit.appearanceDefinitionId,
+              ]) {
+                if (this.seenRuntimeDefinitionIds.has(definitionId)) continue;
+                this.seenRuntimeDefinitionIds.add(definitionId);
+                newDefinitionIds.add(definitionId);
+              }
             }
             if (
               newDefinitionIds.size > 0 &&
@@ -484,6 +491,18 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!activeIds.has(id)) {
                 label.destroy();
                 this.healthLabels.delete(id);
+              }
+            }
+            for (const [id, label] of this.buffLabels) {
+              if (!activeIds.has(id)) {
+                label.destroy();
+                this.buffLabels.delete(id);
+              }
+            }
+            for (const [id, label] of this.promotionLabels) {
+              if (!activeIds.has(id)) {
+                label.destroy();
+                this.promotionLabels.delete(id);
               }
             }
             for (const [id, label] of this.callLabels) {
@@ -799,7 +818,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     : event.type === "merge"
                       ? 0xffdf70
                       : 0xffffff;
-              if (age <= 0.55 && event.type !== "attack") {
+              if (
+                age <= 0.55 &&
+                event.type !== "attack" &&
+                event.type !== "merge"
+              ) {
                 this.overlayGraphics.lineStyle(5 * (1 - progress), color, 0.8 * (1 - progress));
                 this.overlayGraphics.strokeCircle(event.x, event.y, 18 + progress * 95);
               }
@@ -848,21 +871,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   );
                 }
               }
-              if (event.type === "merge" && age <= 1.1) {
-                const fade = Math.max(0, 1 - age / 1.1);
-                this.overlayGraphics.lineStyle(4, 0xffe783, fade);
-                for (let ray = 0; ray < 10; ray += 1) {
-                  const angle = ray * (Math.PI * 2 / 10) + age * 2.4;
-                  const inner = 34 + age * 22;
-                  const outer = 72 + age * 56;
-                  this.overlayGraphics.lineBetween(
-                    event.x + Math.cos(angle) * inner,
-                    event.y + Math.sin(angle) * inner,
-                    event.x + Math.cos(angle) * outer,
-                    event.y + Math.sin(angle) * outer,
-                  );
-                }
-              } else if (event.type === "death" && age <= 0.75) {
+              if (event.type === "death" && age <= 0.75) {
                 const fade = Math.max(0, 1 - age / 0.75);
                 this.overlayGraphics.lineStyle(6, 0xff5968, fade);
                 const reach = 35 + age * 95;
@@ -1127,8 +1136,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           }
 
           private drawUnit(unit: RuntimeUnit, time: number) {
-            const definition = characterById.get(unit.definitionId);
-            if (!definition) return;
+            const combatDefinition = characterById.get(unit.definitionId);
+            if (!combatDefinition) return;
+            const definition =
+              characterById.get(unit.appearanceDefinitionId) ??
+              combatDefinition;
             const callingForHelp =
               unit.action !== "dead" && time < unit.pandaCallUntil;
             const requestedClip = actionClipName(unit, callingForHelp);
@@ -1148,90 +1160,56 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const hasTexture = this.textures.exists(textureKey) && !this.failedTextures.has(textureKey);
             let visualX = unit.x;
             let visualY = unit.y;
-            let tunnelAlpha = 1;
-            let tunnelScale = 1;
             if (unit.action === "tunneling" && unit.tunnelData) {
               const duration = Math.max(0.001, unit.actionUntil - unit.actionStartedAt);
               const progress = Math.max(0, Math.min(1, (time - unit.actionStartedAt) / duration));
               const origin = unit.tunnelData.origin;
               const destination = unit.tunnelData.destination;
               if (unit.tunnelData.mode === "travel") {
-                if (progress < 0.24) {
-                  visualX = origin.x;
-                  visualY = origin.y;
-                  tunnelAlpha = 1 - progress / 0.24;
-                  tunnelScale = Math.max(0.18, 1 - progress / 0.3);
-                } else if (progress < 0.62) {
-                  visualX = origin.x;
-                  visualY = origin.y;
-                  tunnelAlpha = 0;
-                } else {
-                  visualX = destination.x;
-                  visualY = destination.y;
-                  tunnelAlpha = Math.min(1, (progress - 0.62) / 0.22);
-                  tunnelScale = 0.38 + tunnelAlpha * 0.62;
-                }
-              } else if (progress < 0.2) {
+                const travelProgress = Math.max(
+                  0,
+                  Math.min(1, (progress - 0.12) / 0.72),
+                );
+                const eased =
+                  travelProgress *
+                  travelProgress *
+                  (3 - 2 * travelProgress);
+                visualX = origin.x + (destination.x - origin.x) * eased;
+                visualY = origin.y + (destination.y - origin.y) * eased;
+              } else if (progress < 0.16) {
                 visualX = origin.x;
                 visualY = origin.y;
-                tunnelAlpha = 1 - progress / 0.2;
-                tunnelScale = Math.max(0.2, 1 - progress / 0.26);
               } else if (progress < 0.36) {
-                const travelProgress = (progress - 0.2) / 0.16;
-                visualX = origin.x + (destination.x - origin.x) * travelProgress;
-                visualY = origin.y + (destination.y - origin.y) * travelProgress;
-                tunnelAlpha = 0.28;
-                tunnelScale = 0.42;
-                this.arenaGraphics.fillStyle(0x5f3b24, 0.22);
-                this.arenaGraphics.fillEllipse(
-                  visualX,
-                  visualY + unit.radius * 0.35,
-                  unit.radius * 1.25,
-                  unit.radius * 0.42,
-                );
-              } else if (progress < 0.68) {
-                visualX = destination.x;
-                visualY = destination.y;
-                const emerge = Math.min(1, (progress - 0.36) / 0.1);
-                const leave =
-                  unit.tunnelData.hitSucceeded && progress > 0.6
-                    ? Math.max(0, 1 - (progress - 0.6) / 0.08)
-                    : 1;
-                tunnelAlpha = Math.min(emerge, leave);
-                tunnelScale = 0.35 + tunnelAlpha * 0.78;
+                const travelProgress = (progress - 0.16) / 0.2;
+                const eased =
+                  travelProgress *
+                  travelProgress *
+                  (3 - 2 * travelProgress);
+                visualX = origin.x + (destination.x - origin.x) * eased;
+                visualY = origin.y + (destination.y - origin.y) * eased;
               } else if (
-                unit.tunnelData.hitSucceeded &&
-                unit.tunnelData.returnDestination
+                progress < 0.68 ||
+                !unit.tunnelData.hitSucceeded ||
+                !unit.tunnelData.returnDestination
               ) {
-                const returnDestination = unit.tunnelData.returnDestination;
-                if (progress < 0.84) {
-                  const returnProgress = (progress - 0.68) / 0.16;
-                  visualX =
-                    destination.x +
-                    (returnDestination.x - destination.x) * returnProgress;
-                  visualY =
-                    destination.y +
-                    (returnDestination.y - destination.y) * returnProgress;
-                  tunnelAlpha = 0.24;
-                  tunnelScale = 0.4;
-                  this.arenaGraphics.fillStyle(0x5f3b24, 0.2);
-                  this.arenaGraphics.fillEllipse(
-                    visualX,
-                    visualY + unit.radius * 0.34,
-                    unit.radius * 1.2,
-                    unit.radius * 0.4,
-                  );
-                } else {
-                  visualX = returnDestination.x;
-                  visualY = returnDestination.y;
-                  tunnelAlpha = Math.min(1, (progress - 0.84) / 0.13);
-                  tunnelScale = 0.35 + tunnelAlpha * 0.65;
-                }
-              } else {
                 visualX = destination.x;
                 visualY = destination.y;
-                tunnelAlpha = 1;
-                tunnelScale = 1;
+              } else {
+                const returnDestination = unit.tunnelData.returnDestination;
+                const returnProgress = Math.max(
+                  0,
+                  Math.min(1, (progress - 0.68) / 0.2),
+                );
+                const eased =
+                  returnProgress *
+                  returnProgress *
+                  (3 - 2 * returnProgress);
+                visualX =
+                  destination.x +
+                  (returnDestination.x - destination.x) * eased;
+                visualY =
+                  destination.y +
+                  (returnDestination.y - destination.y) * eased;
               }
             }
             if (callingForHelp) {
@@ -1265,11 +1243,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const alpha =
               unit.action === "dead"
                 ? Math.max(0, (unit.actionUntil - time) / 0.45)
-                : unit.action === "tunneling"
-                  ? tunnelAlpha
-                  : unit.targetable
-                    ? 1
-                    : 0.16;
+                : 1;
             const scaleBump =
               callingForHelp
                 ? 1.1
@@ -1277,16 +1251,14 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 ? 1.12
                 : unit.action === "kill"
                   ? 1.22
-                  : unit.action === "merge"
-                    ? 1.12 + Math.sin((time - unit.actionStartedAt) * 20) * 0.12
-                    : unit.action === "victory"
+                  : unit.action === "victory"
                       ? 1.18
                 : unit.action === "eating" ||
                     unit.action === "satisfied" ||
                     unit.action === "digging"
                   ? 1.06
                   : 1;
-            const displayScale = scaleBump * tunnelScale;
+            const displayScale = scaleBump;
 
             if (unit.action === "victory") {
               const victoryStyle = definition.victoryStyle ?? "spotlight";
@@ -1322,16 +1294,14 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.unitImages.set(unit.id, image);
               }
               if (image.texture.key !== textureKey) image.setTexture(textureKey);
+              const spriteSize =
+                unit.radius *
+                (unit.appearanceDefinitionId === "mole" ? 2.78 : 3) *
+                displayScale;
               image
+                .setVisible(true)
                 .setPosition(visualX, visualY + bob)
-                .setDisplaySize(
-                  unit.radius *
-                    (unit.definitionId === "mole" ? 1.72 : 3) *
-                    displayScale,
-                  unit.radius *
-                    (unit.definitionId === "mole" ? 2.78 : 3) *
-                    displayScale,
-                )
+                .setDisplaySize(spriteSize, spriteSize)
                 .setFlipX(unit.vx < 0)
                 .setAlpha(alpha)
                 .setAngle(
@@ -1343,10 +1313,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 );
               this.unitFallbacks.get(unit.id)?.setVisible(false);
             } else {
+              this.unitImages.get(unit.id)?.setVisible(false);
               let fallback = this.unitFallbacks.get(unit.id);
               if (!fallback) {
                 fallback = this.add
-                  .text(visualX, visualY, fallbackGlyph(unit.definitionId), {
+                  .text(visualX, visualY, fallbackGlyph(unit.appearanceDefinitionId), {
                     fontSize: `${Math.round(unit.radius * 1.7)}px`,
                     fontFamily: "Arial",
                   })
@@ -1403,7 +1374,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const healthRatio = Math.max(0, unit.hp / unit.maxHp);
             const healthY = Math.max(24, visualY - unit.radius - 31);
             this.overlayGraphics.fillStyle(0x100e13, 0.82);
-            this.overlayGraphics.lineStyle(2, color, unit.targetable ? 0.95 : 0.3);
+            this.overlayGraphics.lineStyle(2, color, 0.95);
             this.overlayGraphics.fillRoundedRect(
               visualX - healthWidth / 2,
               healthY,
@@ -1441,10 +1412,49 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setDepth(24);
               this.healthLabels.set(unit.id, healthLabel);
             }
-            const status =
-              time < unit.burnUntil ? "🔥 " : time < unit.springUntil ? "♨ " : "";
-            const healthText = `${status}${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`;
+            const healthText = `${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`;
             if (healthLabel.text !== healthText) healthLabel.setText(healthText);
+
+            const buffs: string[] = [];
+            if (time < unit.burnUntil) buffs.push("🔥 灼烧");
+            if (time < unit.springUntil) buffs.push("♨ 疗愈");
+            if (!unit.targetable && unit.action !== "dead") {
+              buffs.push("◌ 不可选");
+            }
+            const buffText = buffs.join("  ");
+            let buffLabel = this.buffLabels.get(unit.id);
+            if (buffText) {
+              if (!buffLabel) {
+                buffLabel = this.add
+                  .text(visualX, healthY, buffText, {
+                    fontSize: "10px",
+                    fontFamily: '"Microsoft YaHei", Arial, sans-serif',
+                    fontStyle: "bold",
+                    color: "#fff2cf",
+                    backgroundColor: "rgba(14, 12, 17, 0.86)",
+                    stroke: "#151218",
+                    strokeThickness: 2,
+                  })
+                  .setPadding(6, 3, 6, 3)
+                  .setDepth(25);
+                this.buffLabels.set(unit.id, buffLabel);
+              }
+              if (buffLabel.text !== buffText) buffLabel.setText(buffText);
+              const boardWidth = board?.width ?? 1600;
+              const placeRight =
+                visualX + healthWidth / 2 + 10 + buffLabel.width <=
+                boardWidth - 8;
+              buffLabel
+                .setVisible(true)
+                .setOrigin(placeRight ? 0 : 1, 0.5)
+                .setPosition(
+                  visualX + (placeRight ? 1 : -1) * (healthWidth / 2 + 8),
+                  healthY + 9,
+                )
+                .setAlpha(alpha);
+            } else {
+              buffLabel?.setVisible(false);
+            }
 
             let label = this.unitLabels.get(unit.id);
             if (!label) {
@@ -1468,6 +1478,55 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             healthLabel.setOrigin(0.5).setPosition(visualX, healthY + 9);
             label.setColor(nameColor).setAlpha(alpha);
             healthLabel.setAlpha(alpha);
+
+            const promotionActive =
+              unit.policeStar !== undefined &&
+              time >= unit.promotionStartedAt &&
+              time < unit.promotionUntil;
+            let promotionLabel = this.promotionLabels.get(unit.id);
+            if (promotionActive) {
+              if (!promotionLabel) {
+                promotionLabel = this.add
+                  .text(visualX, healthY - 30, "", {
+                    fontSize: "14px",
+                    fontFamily: '"Microsoft YaHei", Arial, sans-serif',
+                    fontStyle: "bold",
+                    color: "#ffe477",
+                    backgroundColor: "rgba(45, 34, 11, 0.9)",
+                    stroke: "#4c3109",
+                    strokeThickness: 3,
+                  })
+                  .setOrigin(0.5)
+                  .setPadding(9, 4, 9, 4)
+                  .setDepth(27);
+                this.promotionLabels.set(unit.id, promotionLabel);
+              }
+              const duration = Math.max(
+                0.001,
+                unit.promotionUntil - unit.promotionStartedAt,
+              );
+              const progress = Math.max(
+                0,
+                Math.min(1, (time - unit.promotionStartedAt) / duration),
+              );
+              const fadeIn = Math.min(1, progress / 0.14);
+              const fadeOut = Math.min(1, (1 - progress) / 0.22);
+              const pulse = 1 + Math.sin(progress * Math.PI * 8) * 0.06;
+              const promotionText = `★ 升至 ${unit.policeStar} 星`;
+              if (promotionLabel.text !== promotionText) {
+                promotionLabel.setText(promotionText);
+              }
+              promotionLabel
+                .setVisible(true)
+                .setPosition(
+                  visualX,
+                  healthY - 34 - Math.sin(progress * Math.PI) * 8,
+                )
+                .setScale(pulse)
+                .setAlpha(Math.min(fadeIn, fadeOut) * alpha);
+            } else {
+              promotionLabel?.setVisible(false);
+            }
           }
         }
 

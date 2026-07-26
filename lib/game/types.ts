@@ -263,6 +263,8 @@ export type UnitAction =
 export type RuntimeUnit = {
   id: string;
   definitionId: string;
+  /** 战斗参数可升星更新，外观仍保持该单位入场时的角色形象。 */
+  appearanceDefinitionId: string;
   name: string;
   ownerId: string;
   factionId: string;
@@ -282,6 +284,8 @@ export type RuntimeUnit = {
   action: UnitAction;
   actionStartedAt: number;
   actionUntil: number;
+  promotionStartedAt: number;
+  promotionUntil: number;
   nextPandaSummonAt: number;
   pandaCallStartedAt: number;
   pandaCallUntil: number;

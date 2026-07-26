@@ -2,6 +2,7 @@
 
 import { useMemo, useRef, useState } from "react";
 import {
+  Check,
   CircleDot,
   CopyPlus,
   Flame,
@@ -10,8 +11,10 @@ import {
   Square,
   Trash2,
   Trees,
+  Undo2,
   Upload,
   Waves,
+  X,
 } from "lucide-react";
 import { fileToDataUrl } from "@/lib/game/storage";
 import type {
@@ -19,6 +22,7 @@ import type {
   BoardProp,
   ProjectManifest,
   RegionShape,
+  Vec2,
 } from "@/lib/game/types";
 
 type BoardEditorProps = {
@@ -40,6 +44,31 @@ type BoardTool =
   | "spring-polygon";
 
 type ShapeKind = RegionShape["kind"];
+type RectangleCorner = "northWest" | "northEast" | "southEast" | "southWest";
+
+type ShapeHandle =
+  | { key: string; kind: "circleCenter" | "circleRadius"; x: number; y: number; label: string }
+  | {
+      key: string;
+      kind: "rectangleCorner";
+      corner: RectangleCorner;
+      x: number;
+      y: number;
+      label: string;
+    }
+  | {
+      key: string;
+      kind: "polygonPoint";
+      pointIndex: number;
+      x: number;
+      y: number;
+      label: string;
+    };
+
+type DraggingShapeHandle = ShapeHandle & {
+  propId: string;
+  anchor?: Vec2;
+};
 
 const shapeBounds = (shape: RegionShape) => {
   if (shape.kind === "circle") {
@@ -51,6 +80,7 @@ const shapeBounds = (shape: RegionShape) => {
     };
   }
   if (shape.kind === "rectangle") return shape;
+  if (!shape.points.length) return { x: 0, y: 0, width: 1, height: 1 };
   const xs = shape.points.map((point) => point.x);
   const ys = shape.points.map((point) => point.y);
   const x = Math.min(...xs);
@@ -61,6 +91,81 @@ const shapeBounds = (shape: RegionShape) => {
     width: Math.max(1, Math.max(...xs) - x),
     height: Math.max(1, Math.max(...ys) - y),
   };
+};
+
+const shapeHandles = (shape: RegionShape): ShapeHandle[] => {
+  if (shape.kind === "circle") {
+    return [
+      {
+        key: "circle-center",
+        kind: "circleCenter",
+        x: shape.x,
+        y: shape.y,
+        label: "拖动圆心",
+      },
+      {
+        key: "circle-radius",
+        kind: "circleRadius",
+        x: shape.x + shape.radius,
+        y: shape.y,
+        label: "拖动调整半径",
+      },
+    ];
+  }
+  if (shape.kind === "rectangle") {
+    return [
+      {
+        key: "rectangle-north-west",
+        kind: "rectangleCorner",
+        corner: "northWest",
+        x: shape.x,
+        y: shape.y,
+        label: "拖动左上角",
+      },
+      {
+        key: "rectangle-north-east",
+        kind: "rectangleCorner",
+        corner: "northEast",
+        x: shape.x + shape.width,
+        y: shape.y,
+        label: "拖动右上角",
+      },
+      {
+        key: "rectangle-south-east",
+        kind: "rectangleCorner",
+        corner: "southEast",
+        x: shape.x + shape.width,
+        y: shape.y + shape.height,
+        label: "拖动右下角",
+      },
+      {
+        key: "rectangle-south-west",
+        kind: "rectangleCorner",
+        corner: "southWest",
+        x: shape.x,
+        y: shape.y + shape.height,
+        label: "拖动左下角",
+      },
+    ];
+  }
+  return shape.points.map((point, pointIndex) => ({
+    key: `polygon-${pointIndex}`,
+    kind: "polygonPoint" as const,
+    pointIndex,
+    x: point.x,
+    y: point.y,
+    label: `拖动第 ${pointIndex + 1} 个顶点`,
+  }));
+};
+
+const rectangleAnchor = (
+  shape: Extract<RegionShape, { kind: "rectangle" }>,
+  corner: RectangleCorner,
+): Vec2 => {
+  if (corner === "northWest") return { x: shape.x + shape.width, y: shape.y + shape.height };
+  if (corner === "northEast") return { x: shape.x, y: shape.y + shape.height };
+  if (corner === "southEast") return { x: shape.x, y: shape.y };
+  return { x: shape.x + shape.width, y: shape.y };
 };
 
 const moveShape = (shape: RegionShape, x: number, y: number): RegionShape => {
@@ -131,6 +236,9 @@ export function BoardEditor({
   const selected = manifest.boards.find((board) => board.id === selectedId) ?? manifest.boards[0];
   const [tool, setTool] = useState<BoardTool>("select");
   const [draggingPropId, setDraggingPropId] = useState<string>();
+  const [draggingHandle, setDraggingHandle] = useState<DraggingShapeHandle>();
+  const [selectedPropId, setSelectedPropId] = useState<string>();
+  const [drawingPoints, setDrawingPoints] = useState<Vec2[]>([]);
   const [polygonDrafts, setPolygonDrafts] = useState<Record<string, string>>({});
   const previewRef = useRef<HTMLDivElement>(null);
   const background = useMemo(
@@ -201,10 +309,38 @@ export function BoardEditor({
     };
   };
 
+  const addBoardProp = (propType: BoardProp["type"], shape: RegionShape) => {
+    const id = `${propType}-${shape.kind}-${Date.now()}`;
+    const prop: BoardProp = {
+      id,
+      type: propType,
+      active: true,
+      label:
+        propType === "bamboo"
+          ? "新竹子"
+          : `${shape.kind === "circle" ? "圆形" : shape.kind === "rectangle" ? "矩形" : "点绘"}${
+              propType === "lava" ? "岩浆" : "温泉"
+            }`,
+      shape,
+      ...(propType === "bamboo" ? {} : { buffDuration: 3, effectPerSecond: 5 }),
+    };
+    updateBoard((board) => board.props.push(prop));
+    setSelectedPropId(id);
+  };
+
+  const chooseTool = (nextTool: BoardTool) => {
+    setTool(nextTool);
+    setDrawingPoints([]);
+    setDraggingPropId(undefined);
+    setDraggingHandle(undefined);
+  };
+
   const addProp = (clientX: number, clientY: number) => {
-    if (tool === "select") return;
+    if (tool === "select") {
+      setSelectedPropId(undefined);
+      return;
+    }
     const point = coordinatesFromPointer(clientX, clientY);
-    const id = `${tool}-${Date.now()}`;
     const propType: BoardProp["type"] =
       tool === "bamboo" ? "bamboo" : tool.startsWith("spring") ? "hotSpring" : "lava";
     const kind: ShapeKind = tool.endsWith("rectangle")
@@ -212,6 +348,10 @@ export function BoardEditor({
       : tool.endsWith("polygon")
         ? "polygon"
         : "circle";
+    if (kind === "polygon") {
+      setDrawingPoints((points) => [...points, point]);
+      return;
+    }
     const scale = Math.max(0.55, Math.min(selected.width / 1600, selected.height / 900));
     const radius = Math.round((propType === "bamboo" ? 90 : 120) * scale);
     const shape: RegionShape =
@@ -225,36 +365,55 @@ export function BoardEditor({
               width: 240 * scale,
               height: 160 * scale,
             }
-          : {
-              kind,
-              points: [
-                { x: point.x, y: point.y - 115 * scale },
-                { x: point.x + 135 * scale, y: point.y - 15 * scale },
-                { x: point.x + 65 * scale, y: point.y + 110 * scale },
-                { x: point.x - 105 * scale, y: point.y + 80 * scale },
-                { x: point.x - 130 * scale, y: point.y - 45 * scale },
-              ],
-            };
-    const prop: BoardProp = {
-      id,
-      type: propType,
-      active: true,
-      label:
-        propType === "bamboo"
-          ? "新竹子"
-          : `${kind === "circle" ? "圆形" : kind === "rectangle" ? "矩形" : "多边形"}${
-              propType === "lava" ? "岩浆" : "温泉"
-            }`,
-      shape,
-      ...(propType === "bamboo" ? {} : { buffDuration: 3, effectPerSecond: 5 }),
-    };
-    updateBoard((board) => board.props.push(prop));
+          : { kind: "polygon", points: [] };
+    addBoardProp(propType, shape);
     setTool("select");
   };
 
-  const moveProp = (clientX: number, clientY: number) => {
-    if (!draggingPropId) return;
+  const finishPointDrawing = () => {
+    if (drawingPoints.length < 3) {
+      onNotice("按点绘制至少需要三个顶点");
+      return;
+    }
+    const propType: BoardProp["type"] = tool.startsWith("spring") ? "hotSpring" : "lava";
+    addBoardProp(propType, { kind: "polygon", points: drawingPoints });
+    setDrawingPoints([]);
+    setTool("select");
+    onNotice(`已创建${propType === "lava" ? "岩浆" : "温泉"}点绘区域，可继续拖动每个顶点`);
+  };
+
+  const moveSelection = (clientX: number, clientY: number) => {
     const point = coordinatesFromPointer(clientX, clientY);
+    if (draggingHandle) {
+      updateProp(draggingHandle.propId, (prop) => {
+        if (draggingHandle.kind === "circleCenter" && prop.shape.kind === "circle") {
+          prop.shape.x = point.x;
+          prop.shape.y = point.y;
+        } else if (draggingHandle.kind === "circleRadius" && prop.shape.kind === "circle") {
+          prop.shape.radius = Math.max(10, Math.hypot(point.x - prop.shape.x, point.y - prop.shape.y));
+        } else if (
+          draggingHandle.kind === "rectangleCorner" &&
+          prop.shape.kind === "rectangle" &&
+          draggingHandle.anchor
+        ) {
+          const anchor = draggingHandle.anchor;
+          const width = Math.max(12, Math.abs(point.x - anchor.x));
+          const height = Math.max(12, Math.abs(point.y - anchor.y));
+          prop.shape.x = point.x < anchor.x ? anchor.x - width : anchor.x;
+          prop.shape.y = point.y < anchor.y ? anchor.y - height : anchor.y;
+          prop.shape.width = width;
+          prop.shape.height = height;
+        } else if (
+          draggingHandle.kind === "polygonPoint" &&
+          prop.shape.kind === "polygon" &&
+          prop.shape.points[draggingHandle.pointIndex]
+        ) {
+          prop.shape.points[draggingHandle.pointIndex] = point;
+        }
+      });
+      return;
+    }
+    if (!draggingPropId) return;
     updateProp(draggingPropId, (prop) => {
       prop.shape = moveShape(prop.shape, point.x, point.y);
     });
@@ -265,6 +424,8 @@ export function BoardEditor({
     lava: selected.props.filter((prop) => prop.type === "lava").length,
     spring: selected.props.filter((prop) => prop.type === "hotSpring").length,
   };
+  const selectedPreviewProp = selected.props.find((prop) => prop.id === selectedPropId);
+  const isPointDrawing = tool === "lava-polygon" || tool === "spring-polygon";
 
   return (
     <div className="board-editor-layout">
@@ -373,7 +534,7 @@ export function BoardEditor({
               Board builder · {selected.width} × {selected.height}
             </span>
             <h1>{selected.name}</h1>
-            <p>区域是真实范围，不是点。可拖动，也可在下方精确编辑形状、边界和效果。</p>
+            <p>圆形和矩形可快速添加；点绘区域可逐点勾勒，选中后直接拖动圆心、边角或任意顶点。</p>
           </div>
           <div className="board-stats">
             <span><Trees size={15} /> {propCounts.bamboo}</span>
@@ -388,16 +549,16 @@ export function BoardEditor({
             ["bamboo", "竹子范围", Trees],
             ["lava-circle", "圆形岩浆", CircleDot],
             ["lava-rectangle", "矩形岩浆", Square],
-            ["lava-polygon", "多边形岩浆", Flame],
+            ["lava-polygon", "点绘岩浆", Flame],
             ["spring-circle", "圆形温泉", CircleDot],
             ["spring-rectangle", "矩形温泉", Square],
-            ["spring-polygon", "多边形温泉", Waves],
+            ["spring-polygon", "点绘温泉", Waves],
           ] as const).map(([id, label, Icon]) => (
             <button
               key={id}
               type="button"
               className={`${tool === id ? "is-active" : ""} ${id.startsWith("spring") ? "spring-tool" : ""}`}
-              onClick={() => setTool(id)}
+              onClick={() => chooseTool(id)}
             >
               <Icon size={16} /> {label}
             </button>
@@ -411,6 +572,41 @@ export function BoardEditor({
             />
           </label>
         </div>
+
+        {isPointDrawing && (
+          <div className={`point-draw-guide ${tool.startsWith("spring") ? "is-spring" : "is-lava"}`}>
+            <span>
+              在棋盘上依次点击顶点
+              <strong>{drawingPoints.length} 个点</strong>
+            </span>
+            <div className="point-draw-actions">
+              <button
+                type="button"
+                onClick={() => setDrawingPoints((points) => points.slice(0, -1))}
+                disabled={!drawingPoints.length}
+              >
+                <Undo2 size={14} /> 撤回一点
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setDrawingPoints([]);
+                  setTool("select");
+                }}
+              >
+                <X size={14} /> 取消
+              </button>
+              <button
+                type="button"
+                className="finish-drawing"
+                onClick={finishPointDrawing}
+                disabled={drawingPoints.length < 3}
+              >
+                <Check size={14} /> 闭合并创建
+              </button>
+            </div>
+          </div>
+        )}
 
         <div
           ref={previewRef}
@@ -426,10 +622,59 @@ export function BoardEditor({
           onClick={(event) => {
             if (event.target === event.currentTarget) addProp(event.clientX, event.clientY);
           }}
-          onPointerMove={(event) => moveProp(event.clientX, event.clientY)}
-          onPointerUp={() => setDraggingPropId(undefined)}
-          onPointerLeave={() => setDraggingPropId(undefined)}
+          onPointerMove={(event) => moveSelection(event.clientX, event.clientY)}
+          onPointerUp={() => {
+            setDraggingPropId(undefined);
+            setDraggingHandle(undefined);
+          }}
+          onPointerCancel={() => {
+            setDraggingPropId(undefined);
+            setDraggingHandle(undefined);
+          }}
+          onPointerLeave={() => {
+            setDraggingPropId(undefined);
+            setDraggingHandle(undefined);
+          }}
         >
+          {isPointDrawing && drawingPoints.length > 0 && (
+            <svg
+              className={`board-drawing-layer ${tool.startsWith("spring") ? "is-spring" : "is-lava"}`}
+              viewBox={`0 0 ${selected.width} ${selected.height}`}
+              preserveAspectRatio="none"
+              aria-hidden="true"
+            >
+              {drawingPoints.length >= 3 && (
+                <polygon
+                  points={drawingPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+                  className="draft-region-fill"
+                />
+              )}
+              <polyline
+                points={drawingPoints.map((point) => `${point.x},${point.y}`).join(" ")}
+                className="draft-region-line"
+              />
+              {drawingPoints.map((point, index) => (
+                <g key={`${point.x}-${point.y}-${index}`}>
+                  <circle
+                    cx={point.x}
+                    cy={point.y}
+                    r={Math.max(7, selected.width / 190)}
+                    className="draft-region-point"
+                  />
+                  <text
+                    x={point.x}
+                    y={point.y}
+                    dy="0.34em"
+                    textAnchor="middle"
+                    className="draft-region-index"
+                  >
+                    {index + 1}
+                  </text>
+                </g>
+              ))}
+            </svg>
+          )}
+
           {selected.props.map((prop) => {
             if (!prop.active) return null;
             const bounds = shapeBounds(prop.shape);
@@ -446,7 +691,9 @@ export function BoardEditor({
               <button
                 type="button"
                 key={prop.id}
-                className={`board-prop ${prop.type} ${prop.shape.kind}`}
+                className={`board-prop ${prop.type} ${prop.shape.kind} ${
+                  selectedPropId === prop.id ? "is-selected" : ""
+                }`}
                 style={{
                   left: `${(bounds.x / selected.width) * 100}%`,
                   top: `${(bounds.y / selected.height) * 100}%`,
@@ -458,6 +705,8 @@ export function BoardEditor({
                 onPointerDown={(event) => {
                   event.stopPropagation();
                   event.currentTarget.setPointerCapture(event.pointerId);
+                  setSelectedPropId(prop.id);
+                  setDraggingHandle(undefined);
                   setDraggingPropId(prop.id);
                 }}
               >
@@ -471,11 +720,48 @@ export function BoardEditor({
               </button>
             );
           })}
+
+          {tool === "select" &&
+            selectedPreviewProp?.active &&
+            shapeHandles(selectedPreviewProp.shape).map((handle) => (
+              <button
+                type="button"
+                className={`board-shape-handle handle-${handle.kind}`}
+                key={`${selectedPreviewProp.id}-${handle.key}`}
+                style={{
+                  left: `${(handle.x / selected.width) * 100}%`,
+                  top: `${(handle.y / selected.height) * 100}%`,
+                }}
+                title={handle.label}
+                aria-label={handle.label}
+                onPointerDown={(event) => {
+                  event.stopPropagation();
+                  event.currentTarget.setPointerCapture(event.pointerId);
+                  setDraggingPropId(undefined);
+                  setDraggingHandle({
+                    ...handle,
+                    propId: selectedPreviewProp.id,
+                    ...(handle.kind === "rectangleCorner" &&
+                    selectedPreviewProp.shape.kind === "rectangle"
+                      ? {
+                          anchor: rectangleAnchor(selectedPreviewProp.shape, handle.corner),
+                        }
+                      : {}),
+                  });
+                }}
+              >
+                {handle.kind === "polygonPoint" ? handle.pointIndex + 1 : ""}
+              </button>
+            ))}
         </div>
 
         <div className="prop-list">
           {selected.props.map((prop) => (
-            <article className="prop-editor" key={prop.id}>
+            <article
+              className={`prop-editor ${selectedPropId === prop.id ? "is-selected" : ""}`}
+              key={prop.id}
+              onClick={() => setSelectedPropId(prop.id)}
+            >
               <div className="prop-editor-heading">
                 <span className={`prop-icon ${prop.type}`}>
                   {prop.type === "bamboo" ? (
@@ -505,12 +791,13 @@ export function BoardEditor({
                   type="button"
                   className="icon-button danger"
                   title="删除区域"
-                  onClick={() =>
+                  onClick={() => {
                     updateBoard(
                       (board) =>
                         (board.props = board.props.filter((candidate) => candidate.id !== prop.id)),
-                    )
-                  }
+                    );
+                    if (selectedPropId === prop.id) setSelectedPropId(undefined);
+                  }}
                 >
                   <Trash2 size={15} />
                 </button>

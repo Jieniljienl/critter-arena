@@ -18,7 +18,7 @@ import {
   type Vec2,
 } from "./types";
 
-type DamageSource = "attack" | "environment";
+type DamageSource = "directAttack" | "effect" | "environment" | "existingBuff";
 
 type ScheduledShot = {
   id: string;
@@ -32,6 +32,17 @@ type ScheduledShot = {
 };
 
 const EPSILON = 0.0001;
+
+const teamName = (factionId: string): string => {
+  const names: Record<string, string> = {
+    "team:red": "红队",
+    "team:blue": "蓝队",
+    "team:green": "绿队",
+    "team:purple": "紫队",
+    "team:gold": "金队",
+  };
+  return names[factionId] ?? "同盟";
+};
 
 const distance = (a: Vec2, b: Vec2) => Math.hypot(a.x - b.x, a.y - b.y);
 
@@ -182,7 +193,7 @@ export class BattleSimulation {
         definition,
         name: contestant.displayName,
         ownerId: contestant.id,
-        factionId: contestant.id,
+        factionId: contestant.teamId ? `team:${contestant.teamId}` : contestant.id,
         main: true,
         x: contestant.position.x,
         y: contestant.position.y,
@@ -271,13 +282,15 @@ export class BattleSimulation {
       const definition = this.definitions.get(unit.definitionId);
       if (!definition) continue;
 
-      this.runIntervalModules(unit);
+      if (unit.action !== "tunneling") this.runIntervalModules(unit);
       this.updateSpecialAbility(unit, definition, dt);
 
-      const immobilized = ["eating", "digging", "tunneling", "kick"].includes(unit.action);
+      const immobilized = ["eating", "digging", "tunneling", "kick", "merge", "victory"].includes(
+        unit.action,
+      );
       if (!immobilized) this.moveUnit(unit, dt, definition.speed);
 
-      this.updateAreaBuffs(unit, dt);
+      this.updateAreaBuffs(unit);
       if (unit.action === "dead") continue;
 
       if (definition.attack.mode !== "gatling" && this.canBeginAttack(unit)) {
@@ -286,13 +299,16 @@ export class BattleSimulation {
     }
   }
 
-  private updateAreaBuffs(unit: RuntimeUnit, dt: number): void {
-    const touchingLava = this.props.filter(
-      (prop) =>
-        prop.active &&
-        prop.type === "lava" &&
-        circleOverlapsRegion(unit, unit.radius, prop.shape),
-    );
+  private updateAreaBuffs(unit: RuntimeUnit): void {
+    const canReceiveNewEffects = unit.action !== "tunneling";
+    const touchingLava = canReceiveNewEffects
+      ? this.props.filter(
+          (prop) =>
+            prop.active &&
+            prop.type === "lava" &&
+            circleOverlapsRegion(unit, unit.radius, prop.shape),
+        )
+      : [];
     const wasBurning = this.time < unit.burnUntil;
     if (touchingLava.length) {
       unit.burnUntil =
@@ -300,36 +316,38 @@ export class BattleSimulation {
       unit.burnDamagePerSecond = Math.max(
         ...touchingLava.map((prop) => prop.effectPerSecond ?? 5),
       );
-      if (!wasBurning) unit.nextBurnFeedbackAt = this.time + 0.5;
+      if (!wasBurning) unit.nextBurnFeedbackAt = this.time + 1;
     }
-    if (this.time < unit.burnUntil && unit.burnDamagePerSecond > 0) {
-      this.damageUnit(
-        unit.id,
-        unit.burnDamagePerSecond * dt,
-        undefined,
-        "environment",
-      );
-      if (this.time >= unit.nextBurnFeedbackAt && unit.action !== "dead") {
-        const amount = unit.burnDamagePerSecond * 0.5;
+    if (this.time <= unit.burnUntil + EPSILON && unit.burnDamagePerSecond > 0) {
+      while (
+        unit.nextBurnFeedbackAt > 0 &&
+        this.time + EPSILON >= unit.nextBurnFeedbackAt &&
+        unit.nextBurnFeedbackAt <= unit.burnUntil + EPSILON
+      ) {
+        const amount = unit.burnDamagePerSecond;
+        this.damageUnit(unit.id, amount, undefined, "existingBuff");
+        if (unit.action === "dead") break;
         this.emit(
           "damage",
-          `${unit.name} 持续燃烧，损失 ${amount.toFixed(1)} 点血`,
+          `${unit.name} 的燃烧每秒结算，损失 ${amount.toFixed(1)} 点血`,
           unit,
           undefined,
           "lava",
           -amount,
         );
-        unit.nextBurnFeedbackAt = this.time + 0.5;
+        unit.nextBurnFeedbackAt += 1;
       }
     }
     if (unit.action === "dead") return;
 
-    const touchingSpring = this.props.filter(
-      (prop) =>
-        prop.active &&
-        prop.type === "hotSpring" &&
-        circleOverlapsRegion(unit, unit.radius, prop.shape),
-    );
+    const touchingSpring = canReceiveNewEffects
+      ? this.props.filter(
+          (prop) =>
+            prop.active &&
+            prop.type === "hotSpring" &&
+            circleOverlapsRegion(unit, unit.radius, prop.shape),
+        )
+      : [];
     const hadSpringBuff = this.time < unit.springUntil;
     if (touchingSpring.length) {
       unit.springUntil =
@@ -337,26 +355,27 @@ export class BattleSimulation {
       unit.springHealPerSecond = Math.max(
         ...touchingSpring.map((prop) => prop.effectPerSecond ?? 5),
       );
-      if (!hadSpringBuff) unit.nextSpringFeedbackAt = this.time + 0.5;
+      if (!hadSpringBuff) unit.nextSpringFeedbackAt = this.time + 1;
     }
-    if (
-      this.time < unit.springUntil &&
-      unit.springHealPerSecond > 0 &&
-      unit.hp < unit.maxHp
-    ) {
-      const healed = Math.min(unit.springHealPerSecond * dt, unit.maxHp - unit.hp);
-      unit.hp += healed;
-      if (this.time >= unit.nextSpringFeedbackAt) {
-        const amount = Math.min(unit.springHealPerSecond * 0.5, unit.maxHp - unit.hp + healed);
-        this.emit(
-          "heal",
-          `${unit.name} 受到温泉滋养，回复 ${amount.toFixed(1)} 点血`,
-          unit,
-          undefined,
-          "spring",
-          amount,
-        );
-        unit.nextSpringFeedbackAt = this.time + 0.5;
+    if (this.time <= unit.springUntil + EPSILON && unit.springHealPerSecond > 0) {
+      while (
+        unit.nextSpringFeedbackAt > 0 &&
+        this.time + EPSILON >= unit.nextSpringFeedbackAt &&
+        unit.nextSpringFeedbackAt <= unit.springUntil + EPSILON
+      ) {
+        const amount = Math.min(unit.springHealPerSecond, unit.maxHp - unit.hp);
+        if (amount > 0) {
+          unit.hp += amount;
+          this.emit(
+            "heal",
+            `${unit.name} 的温泉回血每秒结算，回复 ${amount.toFixed(1)} 点血`,
+            unit,
+            undefined,
+            "spring",
+            amount,
+          );
+        }
+        unit.nextSpringFeedbackAt += 1;
       }
     }
   }
@@ -404,6 +423,10 @@ export class BattleSimulation {
   }
 
   private updateMole(unit: RuntimeUnit): void {
+    if (unit.action === "tunneling") {
+      this.updateMoleTunnelPosition(unit);
+      return;
+    }
     if (unit.action !== "move" && unit.action !== "attack" && unit.action !== "hurt") return;
     const definition = this.definitions.get(unit.definitionId);
     if (!definition) return;
@@ -420,7 +443,6 @@ export class BattleSimulation {
       unit.lastHoleId = currentHole.id;
       if (this.time >= unit.nextAmbushAt) {
         const candidates = availableHoles
-          .filter((hole) => hole.id !== currentHole.id)
           .flatMap((hole) =>
             this.validTargets(unit, parameters?.ambushRange ?? definition.attack.range, hole).map((target) => ({
               hole,
@@ -455,7 +477,9 @@ export class BattleSimulation {
           });
           this.emit(
             "skill",
-            `${unit.name} 潜入地道，准备从另一处洞口偷袭`,
+            selection.hole.id === currentHole.id
+              ? `${unit.name} 钻入脚下洞口，准备从同一洞口突袭`
+              : `${unit.name} 潜入地道，准备从另一处洞口偷袭`,
             unit,
             selection.target,
             "tunnel",
@@ -499,6 +523,22 @@ export class BattleSimulation {
     unit.digPosition = { x: unit.x, y: unit.y };
     unit.nextDigAt = this.time + (parameters?.digCooldown ?? 10);
     this.emit("skill", `${unit.name} 开始挖洞`, unit, undefined, "dig");
+  }
+
+  private updateMoleTunnelPosition(unit: RuntimeUnit): void {
+    const tunnel = unit.tunnelData;
+    if (!tunnel) return;
+    const duration = Math.max(EPSILON, unit.actionUntil - unit.actionStartedAt);
+    const progress = Math.max(0, Math.min(1, (this.time - unit.actionStartedAt) / duration));
+    if (tunnel.mode === "travel") {
+      const position = progress >= 0.62 ? tunnel.destination : tunnel.origin;
+      unit.x = position.x;
+      unit.y = position.y;
+      return;
+    }
+    const position = progress >= 0.34 && progress < 0.78 ? tunnel.destination : tunnel.origin;
+    unit.x = position.x;
+    unit.y = position.y;
   }
 
   private updateGatling(
@@ -599,7 +639,13 @@ export class BattleSimulation {
         unit.tunnelData = undefined;
         this.emit("sound", `${unit.name} 钻出地面`, unit, undefined, "tunnel");
         this.resetAction(unit);
-      } else if (unit.action === "kick" || unit.action === "attack" || unit.action === "hurt") {
+      } else if (
+        unit.action === "kick" ||
+        unit.action === "attack" ||
+        unit.action === "hurt" ||
+        unit.action === "merge" ||
+        unit.action === "kill"
+      ) {
         this.resetAction(unit);
       }
     }
@@ -683,7 +729,7 @@ export class BattleSimulation {
             target.id,
             shot.damage ?? definition.attack.damage,
             source.id,
-            "attack",
+            "directAttack",
           );
           this.emit("attack", `${source.name} 从洞口偷袭 ${target.name}`, source, target, "swipe");
           this.runModules(source, "onAttack");
@@ -693,7 +739,7 @@ export class BattleSimulation {
 
       if (definition.attack.mode === "melee") {
         if (distance(source, target) <= definition.attack.range + target.radius) {
-          this.damageUnit(target.id, definition.attack.damage, source.id, "attack");
+          this.damageUnit(target.id, definition.attack.damage, source.id, "directAttack");
           this.emit(
             "attack",
             `${source.name} 命中 ${target.name}，造成 ${definition.attack.damage} 点伤害`,
@@ -777,10 +823,10 @@ export class BattleSimulation {
       if (!hit) continue;
 
       if (projectile.kind === "rocket") {
-        this.damageUnit(hit.id, projectile.damage, projectile.sourceUnitId, "attack");
+        this.damageUnit(hit.id, projectile.damage, projectile.sourceUnitId, "directAttack");
         this.explodeRocket(projectile, hit.id);
       } else {
-        this.damageUnit(hit.id, projectile.damage, projectile.sourceUnitId, "attack");
+        this.damageUnit(hit.id, projectile.damage, projectile.sourceUnitId, "directAttack");
       }
       this.projectiles.delete(projectile.id);
     }
@@ -798,7 +844,7 @@ export class BattleSimulation {
         continue;
       }
       if (distance(unit, projectile) <= radius + unit.radius) {
-        this.damageUnit(unit.id, splash, projectile.sourceUnitId, "attack");
+        this.damageUnit(unit.id, splash, projectile.sourceUnitId, "directAttack");
       }
     }
     this.emitAt(
@@ -818,8 +864,18 @@ export class BattleSimulation {
   ): void {
     const target = this.units.get(targetId);
     if (!target || target.action === "dead" || amount <= 0) return;
+    if (target.action === "tunneling" && source !== "existingBuff") return;
+    const sourceUnit = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
+    if (
+      source !== "environment" &&
+      source !== "existingBuff" &&
+      sourceUnit &&
+      sourceUnit.factionId === target.factionId
+    ) {
+      return;
+    }
     target.hp = Math.max(0, target.hp - amount);
-    if (source === "attack") {
+    if (source === "directAttack" || source === "effect") {
       this.emit(
         "damage",
         `${target.name} 受到 ${Math.round(amount)} 点伤害`,
@@ -829,7 +885,9 @@ export class BattleSimulation {
         -amount,
       );
       this.runModules(target, "onDamageTaken");
-      this.handleDamagePassive(target, sourceUnitId);
+      if (source === "directAttack" && sourceUnitId) {
+        this.handleDamagePassive(target, sourceUnitId);
+      }
     }
     if (target.hp <= 0) this.killUnit(target, sourceUnitId);
   }
@@ -915,10 +973,10 @@ export class BattleSimulation {
       const police = [...this.units.values()]
         .filter(
           (unit) =>
-            !unit.main &&
             unit.policeStar !== undefined &&
             unit.policeStar < 5 &&
-            unit.action !== "dead",
+            unit.action !== "dead" &&
+            unit.action !== "merge",
         )
         .sort((left, right) => left.bornAt - right.bornAt || left.id.localeCompare(right.id));
       let pair: [RuntimeUnit, RuntimeUnit] | undefined;
@@ -934,7 +992,7 @@ export class BattleSimulation {
         for (let rightIndex = leftIndex + 1; rightIndex < police.length; rightIndex += 1) {
           const right = police[rightIndex];
           if (
-            right.ownerId !== left.ownerId ||
+            right.factionId !== left.factionId ||
             right.policeStar !== left.policeStar
           ) {
             continue;
@@ -950,28 +1008,54 @@ export class BattleSimulation {
       const [left, right] = pair;
       const star = left.policeStar;
       if (!star || star >= 5) return;
-      const owner = this.units.get(left.ownerId);
       const nextStar = (star + 1) as 2 | 3 | 4 | 5;
       const definition = this.definitions.get(`police-${nextStar}`);
-      if (!owner || !definition) return;
+      if (!definition) return;
+      const main = left.main || right.main;
+      const mergedId = this.nextId(`police-${nextStar}-merged`);
+      const inheritedOwnerId = left.main
+        ? left.ownerId
+        : right.main
+          ? right.ownerId
+          : left.ownerId === right.ownerId
+            ? left.ownerId
+            : left.factionId;
       this.units.delete(left.id);
       this.units.delete(right.id);
       const merged = this.createUnit({
+        id: mergedId,
         definition,
-        ownerId: owner.id,
-        factionId: owner.factionId,
-        main: false,
-        name: `${owner.name}的${nextStar}星警察`,
+        ownerId: main ? mergedId : inheritedOwnerId,
+        factionId: left.factionId,
+        main,
+        name: main ? `${left.main ? left.name : right.name}★${nextStar}` : `${nextStar}星合体警察`,
         x: (left.x + right.x) / 2,
         y: (left.y + right.y) / 2,
       });
+      merged.action = "merge";
+      merged.actionStartedAt = this.time;
+      merged.actionUntil = this.time + 0.62;
       this.units.set(merged.id, merged);
+      if (main) {
+        const formerOwnerIds = new Set([left.id, right.id, left.ownerId, right.ownerId]);
+        for (const unit of this.units.values()) {
+          if (!unit.main && formerOwnerIds.has(unit.ownerId)) unit.ownerId = merged.id;
+        }
+        for (const hole of this.holes.values()) {
+          if (formerOwnerIds.has(hole.ownerId)) hole.ownerId = merged.id;
+        }
+        for (const projectile of this.projectiles.values()) {
+          if (formerOwnerIds.has(projectile.ownerId)) projectile.ownerId = merged.id;
+        }
+      }
       this.emit(
         "merge",
-        `两名${star}星警察撞到一起，合成为${nextStar}星`,
+        `同阵营的两名${star}星警察撞到一起，升为${nextStar}星`,
         merged,
         undefined,
         "merge",
+        undefined,
+        `升星成功！${nextStar}星警察登场`,
       );
     }
   }
@@ -1027,12 +1111,19 @@ export class BattleSimulation {
     target.actionStartedAt = this.time;
     target.actionUntil = this.time + 0.45;
     const source = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
+    if (source && source.action !== "dead") {
+      source.action = "kill";
+      source.actionStartedAt = this.time;
+      source.actionUntil = Math.max(source.actionUntil, this.time + 0.58);
+    }
     this.emit(
       "death",
       source ? `${target.name} 被 ${source.name} 击败` : `${target.name} 倒下了`,
       target,
       source,
       "death",
+      undefined,
+      source ? `击杀播报：${source.name} 击败了 ${target.name}` : `${target.name} 倒下了`,
     );
     this.runModules(target, "onDeath");
 
@@ -1061,9 +1152,10 @@ export class BattleSimulation {
   private checkVictory(): void {
     if (this.status === "finished" || this.time < 0.5) return;
     const livingMain = [...this.units.values()].filter(
-      (unit) => unit.main && unit.targetable && unit.action !== "dead",
+      (unit) => unit.main && unit.hp > 0 && unit.action !== "dead",
     );
-    if (livingMain.length > 1) {
+    const livingFactions = new Set(livingMain.map((unit) => unit.factionId));
+    if (livingFactions.size > 1) {
       this.finishAt = undefined;
       return;
     }
@@ -1080,10 +1172,27 @@ export class BattleSimulation {
       return;
     }
     this.status = "finished";
-    if (livingMain.length === 1) {
+    if (livingMain.length >= 1 && livingFactions.size === 1) {
+      const factionId = livingMain[0].factionId;
+      const isTeam = factionId.startsWith("team:");
       this.winnerId = livingMain[0].id;
-      this.winnerName = livingMain[0].name;
-      this.emit("victory", `${livingMain[0].name} 成为最后赢家！`, livingMain[0]);
+      this.winnerName = isTeam
+        ? `${teamName(factionId)} · ${livingMain.map((unit) => unit.name).join("、")}`
+        : livingMain[0].name;
+      for (const winner of livingMain) {
+        winner.action = "victory";
+        winner.actionStartedAt = this.time;
+        winner.actionUntil = Number.POSITIVE_INFINITY;
+      }
+      this.emit(
+        "victory",
+        `${this.winnerName} 获得胜利！`,
+        livingMain[0],
+        undefined,
+        "merge",
+        undefined,
+        `获胜播报：恭喜 ${this.winnerName} 获得胜利`,
+      );
     } else {
       this.draw = true;
       this.emitAt("victory", "所有主角色同时倒下，本局平局", this.board.width / 2, this.board.height / 2);
@@ -1147,7 +1256,7 @@ export class BattleSimulation {
       );
     } else if (action.kind === "damageNearby") {
       for (const target of this.validTargets(unit, action.radius)) {
-        this.damageUnit(target.id, action.amount, unit.id, "attack");
+        this.damageUnit(target.id, action.amount, unit.id, "effect");
       }
     } else if (action.kind === "spawnUnit") {
       const definition = this.definitions.get(action.definitionId);
@@ -1188,6 +1297,7 @@ export class BattleSimulation {
     target?: RuntimeUnit,
     sound?: SynthPreset,
     amount?: number,
+    announcement?: string,
   ): void {
     this.eventLog.push({
       id: this.nextId("event"),
@@ -1200,6 +1310,7 @@ export class BattleSimulation {
       targetId: target?.id,
       sound,
       amount,
+      announcement,
     });
     if (this.eventLog.length > 200) this.eventLog.splice(0, this.eventLog.length - 200);
   }

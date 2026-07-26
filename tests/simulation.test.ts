@@ -139,7 +139,7 @@ test("lava applies a three-second burning buff and does not summon police", () =
   assert.ok(runtimePanda);
   assert.ok(runtimePanda.x > 250, "the panda should already be outside the lava circle");
   assert.ok(runtimePanda.burnUntil > snapshot.time, "burning should persist after leaving");
-  assert.ok(runtimePanda.hp < runtimePanda.maxHp - 8);
+  assert.ok(runtimePanda.hp <= runtimePanda.maxHp - 5);
   assert.equal(snapshot.units.some((unit) => unit.policeStar !== undefined), false);
 });
 
@@ -148,44 +148,44 @@ test("hot spring healing persists for three seconds after leaving the region", (
   const board = selectedBoard(manifest);
   board.props = [
     {
-      id: "damage-strip",
-      type: "lava",
-      active: true,
-      shape: { kind: "rectangle", x: 40, y: 150, width: 80, height: 100 },
-      buffDuration: 0.1,
-      effectPerSecond: 60,
-    },
-    {
       id: "spring-strip",
       type: "hotSpring",
       active: true,
-      shape: { kind: "rectangle", x: 160, y: 150, width: 80, height: 100 },
+      shape: { kind: "rectangle", x: 40, y: 150, width: 100, height: 100 },
       buffDuration: 3,
       effectPerSecond: 12,
     },
   ];
-  disableCombat(manifest);
   const panda = definition(manifest, "panda-lazy");
   const mole = definition(manifest, "mole");
   panda.speed = 120;
   panda.pluginId = undefined;
   mole.speed = 0;
   mole.pluginId = undefined;
+  mole.attack = {
+    range: 9999,
+    damage: 60,
+    cooldown: 100,
+    windup: 0,
+    mode: "melee",
+  };
+  panda.attack.range = 0;
+  panda.attack.damage = 0;
   manifest.setup.contestants[0].position = { x: 70, y: 200 };
   manifest.setup.contestants[0].direction = { x: 1, y: 0 };
   manifest.setup.contestants[1].position = { x: 1200, y: 700 };
 
   const simulation = new BattleSimulation(manifest);
   simulation.start();
-  runSteps(simulation, 130);
+  runSteps(simulation, 80);
   const before = simulation
     .getSnapshot()
     .units.find((unit) => unit.definitionId === "panda-lazy");
   assert.ok(before);
-  assert.ok(before.x > 300, "the panda should have left the spring");
+  assert.ok(before.x > 180, "the panda should have left the spring");
   assert.ok(before.springUntil > simulation.getSnapshot().time);
   const hpBefore = before.hp;
-  runSteps(simulation, 30);
+  runSteps(simulation, 65);
   const after = simulation
     .getSnapshot()
     .units.find((unit) => unit.definitionId === "panda-lazy");
@@ -321,12 +321,12 @@ test("a hole loses durability only on three distinct entries before collapsing",
   assert.equal(snapshot.holes.length, 1);
   assert.equal(snapshot.holes[0].stompsRemaining, 2);
 
-  runSteps(simulation, 240);
+  runSteps(simulation, 360);
   snapshot = simulation.getSnapshot();
   assert.equal(snapshot.holes.length, 1);
   assert.equal(snapshot.holes[0].stompsRemaining, 1);
 
-  runSteps(simulation, 250);
+  runSteps(simulation, 180);
   snapshot = simulation.getSnapshot();
   assert.equal(snapshot.holes.length, 0);
   assert.equal(
@@ -402,4 +402,281 @@ test("an RPG that misses its moving target explodes on the board edge", () => {
       .getSnapshot()
       .events.some((event) => event.message.includes("RPG 撞上棋盘边界并爆炸")),
   );
+});
+
+test("burning and spring buffs settle exactly once per second", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [
+    {
+      id: "tick-lava",
+      type: "lava",
+      active: true,
+      shape: { kind: "circle", x: 180, y: 180, radius: 120 },
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+  ];
+  disableCombat(manifest);
+  const panda = definition(manifest, "panda-lazy");
+  const mole = definition(manifest, "mole");
+  panda.pluginId = undefined;
+  panda.speed = 0;
+  mole.pluginId = undefined;
+  mole.speed = 0;
+  manifest.setup.contestants[0].position = { x: 180, y: 180 };
+  manifest.setup.contestants[1].position = { x: 1200, y: 700 };
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 59);
+  let runtimePanda = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "panda-lazy");
+  assert.ok(runtimePanda);
+  assert.equal(runtimePanda.hp, runtimePanda.maxHp);
+
+  runSteps(simulation, 2);
+  runtimePanda = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "panda-lazy");
+  assert.ok(runtimePanda);
+  assert.equal(runtimePanda.hp, runtimePanda.maxHp - 5);
+
+  runSteps(simulation, 60);
+  runtimePanda = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "panda-lazy");
+  assert.ok(runtimePanda);
+  assert.equal(runtimePanda.hp, runtimePanda.maxHp - 10);
+});
+
+test("a panda remains targetable and keeps taking direct attacks while eating bamboo", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [
+    {
+      id: "meal-bamboo",
+      type: "bamboo",
+      active: true,
+      shape: { kind: "circle", x: 250, y: 250, radius: 90 },
+    },
+  ];
+  const panda = definition(manifest, "panda-lazy");
+  const mole = definition(manifest, "mole");
+  panda.speed = 0;
+  panda.attack.damage = 0;
+  for (const police of manifest.characters.filter((character) => character.policeStar)) {
+    police.speed = 0;
+    police.attack.damage = 0;
+    police.attack.range = 0;
+  }
+  mole.pluginId = undefined;
+  mole.speed = 0;
+  mole.attack = {
+    range: 9999,
+    damage: 10,
+    cooldown: 0.25,
+    windup: 0,
+    mode: "melee",
+  };
+  manifest.setup.contestants[0].position = { x: 250, y: 250 };
+  manifest.setup.contestants[1].position = { x: 1200, y: 700 };
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 100);
+  const runtimePanda = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "panda-lazy");
+  assert.ok(runtimePanda);
+  assert.equal(runtimePanda.action, "eating");
+  assert.equal(runtimePanda.targetable, true);
+  assert.ok(runtimePanda.hp <= runtimePanda.maxHp - 20);
+});
+
+test("a mole can ambush through a single nearby hole and stays immune to new damage while tunneling", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [
+    {
+      id: "mole-lava",
+      type: "lava",
+      active: true,
+      shape: { kind: "circle", x: 250, y: 250, radius: 120 },
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+  ];
+  const mole = definition(manifest, "mole");
+  const panda = definition(manifest, "panda-lazy");
+  mole.speed = 0;
+  mole.attack.damage = 15;
+  mole.skillParameters!.mole!.digCooldown = 100;
+  mole.skillParameters!.mole!.tunnelDuration = 1;
+  panda.pluginId = undefined;
+  panda.speed = 0;
+  panda.attack = {
+    range: 9999,
+    damage: 100,
+    cooldown: 100,
+    windup: 0.75,
+    mode: "melee",
+  };
+  manifest.setup.contestants = [
+    {
+      id: "single-hole-mole",
+      definitionId: "mole",
+      displayName: "单洞地鼠",
+      position: { x: 250, y: 250 },
+      direction: { x: 1, y: 0 },
+      color: "#ff8b62",
+    },
+    {
+      id: "single-hole-target",
+      definitionId: "panda-lazy",
+      displayName: "洞边目标",
+      position: { x: 420, y: 250 },
+      direction: { x: -1, y: 0 },
+      color: "#f6d85f",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 78);
+  const snapshot = simulation.getSnapshot();
+  const runtimeMole = snapshot.units.find((unit) => unit.id === "single-hole-mole");
+  assert.ok(runtimeMole);
+  assert.equal(snapshot.holes.length, 1);
+  assert.equal(runtimeMole.action, "tunneling");
+  assert.equal(runtimeMole.targetable, false);
+  assert.equal(runtimeMole.hp, runtimeMole.maxHp - 5, "existing burn should continue underground");
+  assert.ok(
+    snapshot.events.some((event) => event.message.includes("同一洞口突袭")),
+    "the single-hole ambush animation path should be selected",
+  );
+});
+
+test("allied projectiles pass through allies and team victory waits only for enemy factions", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.width = 900;
+  board.height = 400;
+  board.unitScale = 1;
+  const officer = definition(manifest, "police-2");
+  const panda = definition(manifest, "panda-lazy");
+  const mole = definition(manifest, "mole");
+  officer.speed = 0;
+  officer.attack.windup = 0;
+  officer.attack.cooldown = 100;
+  officer.attack.damage = 60;
+  panda.pluginId = undefined;
+  panda.speed = 0;
+  panda.attack.damage = 0;
+  mole.pluginId = undefined;
+  mole.speed = 0;
+  mole.maxHp = 50;
+  mole.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "red-officer",
+      definitionId: "police-2",
+      displayName: "红队枪手",
+      position: { x: 100, y: 200 },
+      direction: { x: 1, y: 0 },
+      color: "#ff6b6b",
+      teamId: "red",
+    },
+    {
+      id: "red-ally",
+      definitionId: "panda-lazy",
+      displayName: "红队挡路队友",
+      position: { x: 340, y: 200 },
+      direction: { x: 1, y: 0 },
+      color: "#ff9a9a",
+      teamId: "red",
+    },
+    {
+      id: "blue-target",
+      definitionId: "mole",
+      displayName: "蓝队目标",
+      position: { x: 620, y: 200 },
+      direction: { x: -1, y: 0 },
+      color: "#69a7ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 150);
+  const snapshot = simulation.getSnapshot();
+  const ally = snapshot.units.find((unit) => unit.id === "red-ally");
+  assert.ok(ally);
+  assert.equal(ally.hp, ally.maxHp, "the allied projectile must not collide with its ally");
+  assert.equal(snapshot.status, "finished");
+  assert.match(snapshot.winnerName ?? "", /红队/);
+  assert.ok(snapshot.events.some((event) => event.type === "victory" && event.announcement));
+});
+
+test("allied selectable police merge on contact and play a star-up action", () => {
+  const manifest = twoFighterManifest();
+  const officer = definition(manifest, "police-1");
+  const enemy = definition(manifest, "mole");
+  assert.equal(officer.role, "contestant");
+  officer.speed = 0;
+  officer.attack.damage = 0;
+  enemy.pluginId = undefined;
+  enemy.speed = 0;
+  enemy.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "red-police-a",
+      definitionId: "police-1",
+      displayName: "红队警察甲",
+      position: { x: 300, y: 300 },
+      direction: { x: 1, y: 0 },
+      color: "#ff6b6b",
+      teamId: "red",
+    },
+    {
+      id: "red-police-b",
+      definitionId: "police-1",
+      displayName: "红队警察乙",
+      position: { x: 300, y: 300 },
+      direction: { x: -1, y: 0 },
+      color: "#ff9a9a",
+      teamId: "red",
+    },
+    {
+      id: "blue-observer",
+      definitionId: "mole",
+      displayName: "蓝队观众",
+      position: { x: 1200, y: 700 },
+      direction: { x: 1, y: 0 },
+      color: "#69a7ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 1);
+  const snapshot = simulation.getSnapshot();
+  const merged = snapshot.units.find((unit) => unit.policeStar === 2 && unit.factionId === "team:red");
+  assert.ok(merged);
+  assert.equal(merged.main, true);
+  assert.equal(merged.action, "merge");
+  assert.ok(snapshot.events.some((event) => event.type === "merge" && event.announcement));
+});
+
+test("default character name libraries provide ordered, playful names for every selectable type", () => {
+  const manifest = createDefaultManifest();
+  for (const character of manifest.characters.filter((candidate) => candidate.role === "contestant")) {
+    const library = manifest.nameLibraries.find((candidate) => candidate.definitionId === character.id);
+    assert.ok(library, `${character.name} should have a name library`);
+    assert.ok(library.names.length >= 3);
+  }
+  assert.match(manifest.nameLibraries.find((item) => item.definitionId === "mole")!.names[0], /鼠鼠/);
 });

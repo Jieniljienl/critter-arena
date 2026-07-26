@@ -1,5 +1,6 @@
 import type {
   AssetRef,
+  BackgroundMusicConfig,
   CharacterDefinition,
   CombatEvent,
   RuntimeUnit,
@@ -15,6 +16,11 @@ export class ArenaAudio {
   private volume = 0.72;
   private lastPlayed = new Map<string, number>();
   private lastSpeechAt = 0;
+  private musicGain?: GainNode;
+  private musicSource?: AudioBufferSourceNode;
+  private musicConfig?: BackgroundMusicConfig;
+  private musicAssets: AssetRef[] = [];
+  private musicLoadToken = 0;
 
   async unlock(): Promise<void> {
     if (typeof window === "undefined") return;
@@ -22,7 +28,10 @@ export class ArenaAudio {
       this.context = new AudioContext();
       this.master = this.context.createGain();
       this.master.connect(this.context.destination);
+      this.musicGain = this.context.createGain();
+      this.musicGain.connect(this.master);
       this.applyMasterVolume();
+      this.applyMusicVolume();
     }
     if (this.context.state === "suspended") await this.context.resume();
   }
@@ -38,18 +47,61 @@ export class ArenaAudio {
     this.applyMasterVolume();
   }
 
+  async setMusic(config: BackgroundMusicConfig, assets: AssetRef[]): Promise<void> {
+    this.musicConfig = structuredClone(config);
+    this.musicAssets = assets;
+    this.applyMusicVolume();
+    if (!this.context || this.context.state === "suspended") return;
+    await this.restartMusic();
+  }
+
+  setMusicVolume(volume: number): void {
+    if (!this.musicConfig) return;
+    this.musicConfig.volume = Math.max(0, Math.min(1, volume));
+    this.applyMusicVolume();
+  }
+
+  async startMusic(config: BackgroundMusicConfig, assets: AssetRef[]): Promise<void> {
+    this.musicConfig = structuredClone(config);
+    this.musicAssets = assets;
+    await this.unlock();
+    await this.restartMusic();
+  }
+
+  stopMusic(): void {
+    this.musicLoadToken += 1;
+    try {
+      this.musicSource?.stop();
+    } catch {
+      // The source may already have naturally stopped.
+    }
+    this.musicSource?.disconnect();
+    this.musicSource = undefined;
+  }
+
+  dispose(): void {
+    this.stopMusic();
+    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    void this.context?.close();
+    this.context = undefined;
+    this.master = undefined;
+    this.musicGain = undefined;
+  }
+
   async playEvent(
     event: CombatEvent,
     units: RuntimeUnit[],
     definitions: CharacterDefinition[],
     assets: AssetRef[],
   ): Promise<void> {
-    if (!event.sound || this.muted) return;
+    if ((!event.sound && !event.announcement) || this.muted) return;
     const now = performance.now();
     const key = `${event.sound}-${event.unitId ?? "world"}`;
     if (now - (this.lastPlayed.get(key) ?? 0) < 36) return;
     this.lastPlayed.set(key, now);
     await this.unlock();
+    if (event.announcement) this.playAnnouncement(event.announcement, event.type === "victory");
+    if (!event.sound) return;
 
     const unit = units.find((candidate) => candidate.id === event.unitId);
     const definition = unit
@@ -78,10 +130,36 @@ export class ArenaAudio {
       }
     }
     if (cue?.source === "speech") {
-      this.playSpeech(cue);
+      if (!event.announcement) this.playSpeech(cue);
       return;
     }
-    this.playSynth(cue ?? { id: event.sound, source: "synth", preset: event.sound, volume: 0.7 });
+    const fallbackVolume =
+      event.sound === "lava" || event.sound === "spring" ? 0.24 : 0.7;
+    this.playSynth(
+      cue ?? {
+        id: event.sound,
+        source: "synth",
+        preset: event.sound,
+        volume: fallbackVolume,
+      },
+    );
+  }
+
+  private playAnnouncement(message: string, priority: boolean): void {
+    if (this.muted || typeof window === "undefined" || !window.speechSynthesis) return;
+    if (!priority && performance.now() - this.lastSpeechAt < 650) return;
+    if (priority) window.speechSynthesis.cancel();
+    this.lastSpeechAt = performance.now();
+    const utterance = new SpeechSynthesisUtterance(message);
+    utterance.lang = "zh-CN";
+    utterance.rate = priority ? 0.92 : 1.08;
+    utterance.pitch = priority ? 1.08 : 0.9;
+    utterance.volume = Math.min(0.88, this.volume * (priority ? 0.9 : 0.72));
+    const voice = window.speechSynthesis
+      .getVoices()
+      .find((candidate) => candidate.lang.toLowerCase().startsWith("zh"));
+    if (voice) utterance.voice = voice;
+    window.speechSynthesis.speak(utterance);
   }
 
   private playSpeech(cue: SoundCue): void {
@@ -156,10 +234,11 @@ export class ArenaAudio {
       this.tone(now, 210, 0.38, volume * 0.23, "sawtooth", 45);
       this.noiseBurst(now + 0.08, 0.26, volume * 0.18, 500, 70);
     } else if (preset === "lava") {
-      this.noiseBurst(now, 0.3, volume * 0.08, 950, 260);
+      this.noiseBurst(now, 0.24, volume * 0.035, 620, 180);
+      this.tone(now, 92, 0.22, volume * 0.025, "sine", 72);
     } else if (preset === "spring") {
-      [0, 0.08, 0.17].forEach((offset, index) =>
-        this.tone(now + offset, 420 + index * 95, 0.1, volume * 0.1, "sine", 520 + index * 80),
+      [0, 0.11].forEach((offset, index) =>
+        this.tone(now + offset, 280 + index * 70, 0.16, volume * 0.045, "sine", 340 + index * 65),
       );
     } else if (preset === "pandaGrunt") {
       this.tone(now, 155 * randomPitch, 0.16, volume * 0.24, "triangle", 105);
@@ -231,5 +310,78 @@ export class ArenaAudio {
   private applyMasterVolume(): void {
     if (!this.master || !this.context) return;
     this.master.gain.setTargetAtTime(this.muted ? 0 : this.volume, this.context.currentTime, 0.02);
+  }
+
+  private applyMusicVolume(): void {
+    if (!this.musicGain || !this.context) return;
+    const volume = this.musicConfig?.enabled ? this.musicConfig.volume : 0;
+    this.musicGain.gain.setTargetAtTime(
+      Math.max(0, Math.min(1, volume)),
+      this.context.currentTime,
+      0.08,
+    );
+  }
+
+  private async restartMusic(): Promise<void> {
+    const context = this.context;
+    const musicGain = this.musicGain;
+    const config = this.musicConfig;
+    if (!context || !musicGain || !config) return;
+    this.stopMusic();
+    this.applyMusicVolume();
+    if (!config.enabled) return;
+    const token = ++this.musicLoadToken;
+    let buffer: AudioBuffer;
+    if (config.source === "asset" && config.assetId) {
+      const asset = this.musicAssets.find((candidate) => candidate.id === config.assetId);
+      if (!asset) return;
+      try {
+        const response = await fetch(asset.url);
+        if (!response.ok) return;
+        buffer = await context.decodeAudioData(await response.arrayBuffer());
+      } catch {
+        return;
+      }
+    } else {
+      buffer = this.createDefaultMusicBuffer(context);
+    }
+    if (token !== this.musicLoadToken || !this.musicConfig?.enabled) return;
+    const source = context.createBufferSource();
+    source.buffer = buffer;
+    source.loop = true;
+    source.connect(musicGain);
+    source.start();
+    this.musicSource = source;
+  }
+
+  private createDefaultMusicBuffer(context: AudioContext): AudioBuffer {
+    const duration = 16;
+    const sampleRate = Math.min(24000, context.sampleRate);
+    const buffer = context.createBuffer(2, duration * sampleRate, sampleRate);
+    const melody = [64, 67, 71, 69, 64, 62, 59, 62, 64, 67, 74, 71, 69, 67, 64, 62];
+    const bass = [40, 40, 43, 43, 45, 45, 43, 43];
+    const midiToFrequency = (midi: number) => 440 * 2 ** ((midi - 69) / 12);
+    for (let channel = 0; channel < 2; channel += 1) {
+      const data = buffer.getChannelData(channel);
+      for (let index = 0; index < data.length; index += 1) {
+        const time = index / sampleRate;
+        const beat = Math.floor(time * 2) % melody.length;
+        const beatPhase = (time * 2) % 1;
+        const melodyEnvelope = Math.min(1, beatPhase * 8) * Math.max(0, 1 - beatPhase * 0.82);
+        const melodyFrequency = midiToFrequency(melody[beat]);
+        const bassFrequency = midiToFrequency(bass[Math.floor(time / 2) % bass.length]);
+        const panDelay = channel === 0 ? 0 : 0.006;
+        const softLead =
+          Math.sin((time - panDelay) * melodyFrequency * Math.PI * 2) * melodyEnvelope * 0.055;
+        const warmBass = Math.sin(time * bassFrequency * Math.PI * 2) * 0.04;
+        const shimmer =
+          Math.sin(time * melodyFrequency * 2 * Math.PI * 2) * melodyEnvelope * 0.012;
+        const pulsePhase = (time * 4) % 1;
+        const softPulse =
+          Math.sin(time * 82 * Math.PI * 2) * Math.exp(-pulsePhase * 9) * 0.014;
+        data[index] = Math.max(-0.16, Math.min(0.16, softLead + warmBass + shimmer + softPulse));
+      }
+    }
+    return buffer;
   }
 }

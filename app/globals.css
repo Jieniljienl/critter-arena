@@ -385,6 +385,11 @@ textarea:focus-visible {
   isolation: isolate;
 }
 
+.arena-stage.is-portrait-board {
+  width: min(100%, 42vh);
+  margin-inline: auto;
+}
+
 .arena-stage::after {
   position: absolute;
   inset: 0;
@@ -466,10 +471,10 @@ textarea:focus-visible {
   place-content: center;
   padding: 30px;
   background:
-    radial-gradient(circle, rgba(223, 246, 106, 0.16), transparent 42%),
-    rgba(11, 10, 14, 0.66);
+    radial-gradient(circle, rgba(223, 246, 106, 0.13), transparent 42%),
+    rgba(11, 10, 14, 0.48);
   text-align: center;
-  backdrop-filter: blur(7px);
+  backdrop-filter: blur(3px);
 }
 
 .winner-kicker {
@@ -643,6 +648,47 @@ textarea:focus-visible {
 .volume-slider {
   width: 80px;
   accent-color: var(--lime);
+}
+
+.music-controls {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.music-controls .icon-control.is-active {
+  border-color: rgba(223, 246, 106, 0.28);
+  background: var(--lime-soft);
+  color: var(--lime);
+}
+
+.music-volume-slider {
+  width: 62px;
+  accent-color: #83e7ef;
+}
+
+.music-file-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  height: 31px;
+  padding: 0 7px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 8px;
+  cursor: pointer;
+}
+
+.music-controls > span {
+  max-width: 105px;
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .seed-label {
@@ -851,6 +897,17 @@ textarea:focus-visible {
   background: rgba(255, 255, 255, 0.035);
 }
 
+.contestant-team {
+  max-width: 74px;
+  height: 27px;
+  padding: 0 4px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #121117;
+  color: var(--muted);
+  font-size: 9px;
+}
+
 .contestant-row small {
   color: var(--quiet);
   font-size: 9px;
@@ -899,6 +956,115 @@ textarea:focus-visible {
 .add-fighter-grid button:hover {
   border-color: rgba(223, 246, 106, 0.34);
   color: var(--lime);
+}
+
+.name-library-editor {
+  margin-top: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: rgba(255, 255, 255, 0.018);
+}
+
+.name-library-editor summary {
+  padding: 9px 10px;
+  color: var(--muted);
+  font-size: 10px;
+  font-weight: 800;
+  cursor: pointer;
+}
+
+.name-library-editor[open] summary {
+  border-bottom: 1px solid var(--line);
+}
+
+.name-library-kind {
+  display: grid;
+  grid-template-columns: 58px 1fr;
+  align-items: center;
+  gap: 7px;
+  padding: 8px 9px 4px;
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.name-library-kind select,
+.name-library-row input {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #121117;
+  color: var(--text);
+}
+
+.name-library-kind select {
+  height: 28px;
+  padding: 0 7px;
+  font-size: 9px;
+}
+
+.name-library-list {
+  display: grid;
+  max-height: 160px;
+  padding: 5px 7px;
+  overflow: auto;
+}
+
+.name-library-row {
+  display: grid;
+  grid-template-columns: 18px minmax(0, 1fr) 24px 24px 24px;
+  align-items: center;
+  gap: 3px;
+  min-height: 31px;
+  color: var(--quiet);
+}
+
+.name-library-row input {
+  height: 26px;
+  padding: 0 6px;
+  font-size: 9px;
+}
+
+.name-library-row button {
+  display: grid;
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  place-items: center;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--quiet);
+  cursor: pointer;
+}
+
+.name-library-row button:hover:not(:disabled) {
+  border-color: var(--line);
+  color: var(--text);
+}
+
+.name-library-row button:disabled {
+  opacity: 0.25;
+}
+
+.add-name-button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin: 2px 9px 7px;
+  padding: 6px 8px;
+  border: 1px dashed var(--line-strong);
+  border-radius: 7px;
+  background: transparent;
+  color: var(--lime);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.name-library-editor > p {
+  margin: 0;
+  padding: 0 9px 9px;
+  color: var(--quiet);
+  font-size: 8px;
 }
 
 .current-props-section {
@@ -1805,6 +1971,119 @@ textarea:focus-visible {
   cursor: crosshair;
 }
 
+.board-preview:not(.tool-select) .board-prop {
+  pointer-events: none;
+}
+
+.point-draw-guide {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 10px;
+  padding: 9px 11px;
+  border: 1px solid rgba(255, 151, 80, 0.28);
+  border-radius: 11px;
+  background: rgba(255, 95, 60, 0.08);
+  color: #ffd4a6;
+  font-size: 10px;
+}
+
+.point-draw-guide.is-spring {
+  border-color: rgba(130, 236, 245, 0.28);
+  background: rgba(68, 203, 211, 0.08);
+  color: #c9fbff;
+}
+
+.point-draw-guide > span {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+}
+
+.point-draw-guide strong {
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text);
+}
+
+.point-draw-actions {
+  display: flex;
+  gap: 5px;
+}
+
+.point-draw-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 29px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: var(--panel-2);
+  color: var(--muted);
+  font-size: 9px;
+  cursor: pointer;
+}
+
+.point-draw-actions button:disabled {
+  opacity: 0.38;
+  cursor: not-allowed;
+}
+
+.point-draw-actions .finish-drawing {
+  border-color: rgba(223, 246, 106, 0.28);
+  background: var(--lime-soft);
+  color: var(--lime);
+}
+
+.board-drawing-layer {
+  position: absolute;
+  inset: 0;
+  z-index: 8;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}
+
+.draft-region-fill {
+  fill: rgba(255, 92, 50, 0.2);
+}
+
+.board-drawing-layer.is-spring .draft-region-fill {
+  fill: rgba(68, 203, 211, 0.2);
+}
+
+.draft-region-line {
+  fill: none;
+  stroke: #ff9d5c;
+  stroke-dasharray: 12 8;
+  stroke-linecap: round;
+  stroke-linejoin: round;
+  stroke-width: 5;
+}
+
+.board-drawing-layer.is-spring .draft-region-line {
+  stroke: #8cecf2;
+}
+
+.draft-region-point {
+  fill: #fff2d6;
+  stroke: #ff7d43;
+  stroke-width: 4;
+}
+
+.board-drawing-layer.is-spring .draft-region-point {
+  stroke: #38bac6;
+}
+
+.draft-region-index {
+  fill: #1a1110;
+  font: 800 13px Arial, sans-serif;
+}
+
 .safe-corner {
   position: absolute;
   z-index: 1;
@@ -1858,6 +2137,48 @@ textarea:focus-visible {
 .board-prop:active {
   cursor: grabbing;
   filter: brightness(1.2);
+}
+
+.board-prop.is-selected {
+  z-index: 5;
+  filter: brightness(1.14);
+  box-shadow: 0 0 0 3px rgba(255, 255, 255, 0.72), 0 0 22px rgba(223, 246, 106, 0.45);
+}
+
+.board-shape-handle {
+  position: absolute;
+  z-index: 10;
+  display: grid;
+  width: 18px;
+  height: 18px;
+  padding: 0;
+  place-items: center;
+  border: 2px solid #17151c;
+  border-radius: 4px;
+  background: var(--lime);
+  color: #17180e;
+  font-size: 8px;
+  font-weight: 900;
+  cursor: move;
+  box-shadow: 0 0 0 2px rgba(255, 255, 255, 0.75), 0 4px 12px rgba(0, 0, 0, 0.5);
+  transform: translate(-50%, -50%);
+  touch-action: none;
+}
+
+.board-shape-handle.handle-circleCenter {
+  border-radius: 50%;
+  background: #fff;
+}
+
+.board-shape-handle.handle-circleRadius {
+  border-radius: 50%;
+  background: #ffbd59;
+}
+
+.board-shape-handle.handle-polygonPoint {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
 }
 
 .board-prop.bamboo {
@@ -1914,6 +2235,11 @@ textarea:focus-visible {
   border: 1px solid var(--line);
   border-radius: 12px;
   background: var(--panel);
+}
+
+.prop-editor.is-selected {
+  border-color: rgba(223, 246, 106, 0.32);
+  box-shadow: inset 0 0 0 1px rgba(223, 246, 106, 0.08);
 }
 
 .prop-editor-heading {

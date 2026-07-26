@@ -167,7 +167,7 @@ const policeDefinition = (
     id: `police-${star}`,
     name: `${star}星${names[star]}`,
     subtitle: subtitles[star],
-    role: "summon",
+    role: "contestant",
     pluginId: "police",
     policeStar: star,
     ...data,
@@ -391,6 +391,66 @@ export const defaultCharacters: CharacterDefinition[] = [
   }),
 ];
 
+export const defaultNameLibraries: ProjectManifest["nameLibraries"] = [
+  {
+    definitionId: "panda-lazy",
+    names: [
+      "功夫阿宝（今日休假）",
+      "五条滚滚",
+      "竹林躺平王",
+      "成都显眼包",
+      "不想翻身的团子",
+      "吃完再营业",
+      "熊猫村村长",
+      "懒得出招",
+    ],
+  },
+  {
+    definitionId: "panda",
+    names: [
+      "阿宝今天加班",
+      "滚滚大侠",
+      "竹叶青代言熊",
+      "川蜀一巴掌",
+      "黑白闪电",
+      "熊猫头本头",
+    ],
+  },
+  {
+    definitionId: "mole",
+    names: [
+      "鼠鼠我呀",
+      "土行孙隔壁老王",
+      "提莫的地下邻居",
+      "挖穿秋叶原",
+      "洞洞幺",
+      "地底包工头",
+      "别踩我井盖",
+      "钻出来吓你一跳",
+    ],
+  },
+  {
+    definitionId: "police-1",
+    names: ["片警老王", "警棍小李", "正义路人甲", "派出所新星", "下班前一棍"],
+  },
+  {
+    definitionId: "police-2",
+    names: ["神枪阿强", "西部片临时工", "弹无虚发老张", "柯南片场保安", "一枪一个问号"],
+  },
+  {
+    definitionId: "police-3",
+    names: ["三连发老六", "突突突队长", "使命召唤邻居", "步枪班显眼包", "压枪全靠缘分"],
+  },
+  {
+    definitionId: "police-4",
+    names: ["火箭筒刘能", "RPG快递员", "爆破鬼才老赵", "峡谷拆迁办", "一炮泯恩仇"],
+  },
+  {
+    definitionId: "police-5",
+    names: ["加特林菩萨", "五星麦克阿瑟", "火力不足恐惧症", "正义机关枪", "突突五秒钟"],
+  },
+];
+
 const bambooPositions = [
   [250, 170],
   [800, 125],
@@ -407,7 +467,7 @@ export const defaultBoard: BoardDefinition = {
   description: "六处竹子补给、三片持续燃烧岩浆与一处温泉，四角保留安全出生空间。",
   width: BOARD_WIDTH,
   height: BOARD_HEIGHT,
-  unitScale: 1.35,
+  unitScale: 1.72,
   backgroundAssetId: "board-bamboo-lava",
   props: [
     ...bambooPositions.map(([x, y], index) => ({
@@ -473,7 +533,7 @@ export const streamLandscapeBoard: BoardDefinition = {
   description: "为 OBS、直播伴侣和横屏视频设计的 16:9 纯净观战棋盘。",
   width: 1600,
   height: 900,
-  unitScale: 1.45,
+  unitScale: 1.82,
   backgroundAssetId: "board-stream-landscape",
   props: [
     ...[
@@ -534,7 +594,7 @@ export const streamPortraitBoard: BoardDefinition = {
   description: "为抖音等 9:16 手机竖屏直播设计，中央保留清晰战斗通道。",
   width: 900,
   height: 1600,
-  unitScale: 1.42,
+  unitScale: 1.78,
   backgroundAssetId: "board-stream-portrait",
   props: [
     ...[
@@ -626,18 +686,28 @@ export const createDefaultManifest = (): ProjectManifest => ({
   name: "电子斗蛐蛐",
   assets: structuredClone(defaultAssets),
   characters: structuredClone(defaultCharacters),
+  nameLibraries: structuredClone(defaultNameLibraries),
   boards: [
     structuredClone(defaultBoard),
     structuredClone(streamLandscapeBoard),
     structuredClone(streamPortraitBoard),
   ],
   setup: structuredClone(defaultSetup),
+  backgroundMusic: {
+    enabled: true,
+    source: "synth",
+    title: "竹林乱斗曲（原创默认）",
+    volume: 0.28,
+  },
   updatedAt: new Date().toISOString(),
 });
 
 export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
   const upgraded = structuredClone(manifest);
   const defaults = createDefaultManifest();
+
+  upgraded.nameLibraries ??= [];
+  upgraded.backgroundMusic ??= structuredClone(defaults.backgroundMusic);
 
   for (const assetDefinition of defaults.assets) {
     if (!upgraded.assets.some((assetItem) => assetItem.id === assetDefinition.id)) {
@@ -655,6 +725,19 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.animations[clipId] ??= structuredClone(animation);
     }
   }
+  for (const library of defaults.nameLibraries) {
+    if (!upgraded.nameLibraries.some((item) => item.definitionId === library.definitionId)) {
+      upgraded.nameLibraries.push(structuredClone(library));
+    }
+  }
+  for (const character of upgraded.characters) {
+    if (!upgraded.nameLibraries.some((item) => item.definitionId === character.id)) {
+      upgraded.nameLibraries.push({
+        definitionId: character.id,
+        names: [`${character.name}一号`, `${character.name}二号`, `${character.name}三号`],
+      });
+    }
+  }
   for (const defaultBoardDefinition of defaults.boards) {
     const board = upgraded.boards.find((item) => item.id === defaultBoardDefinition.id);
     if (!board) {
@@ -669,6 +752,15 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     }
   }
   for (const board of upgraded.boards) {
+    if (board.id === defaultBoard.id && (board.unitScale ?? 0) <= 1.35) {
+      board.unitScale = defaultBoard.unitScale;
+    }
+    if (board.id === streamLandscapeBoard.id && (board.unitScale ?? 0) <= 1.45) {
+      board.unitScale = streamLandscapeBoard.unitScale;
+    }
+    if (board.id === streamPortraitBoard.id && (board.unitScale ?? 0) <= 1.42) {
+      board.unitScale = streamPortraitBoard.unitScale;
+    }
     board.unitScale ??= 1.35;
     for (const prop of board.props) {
       if (prop.type !== "lava" && prop.type !== "hotSpring") continue;

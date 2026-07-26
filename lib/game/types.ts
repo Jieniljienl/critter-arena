@@ -59,6 +59,14 @@ export type SoundCue = {
   maxVoices?: number;
 };
 
+export type BackgroundMusicConfig = {
+  enabled: boolean;
+  source: "synth" | "asset";
+  assetId?: string;
+  title: string;
+  volume: number;
+};
+
 export type SynthPreset =
   | "swipe"
   | "baton"
@@ -201,6 +209,7 @@ export type MatchContestant = {
   position: Vec2;
   direction: Vec2;
   color: string;
+  teamId?: string;
 };
 
 export type MatchSetup = {
@@ -210,13 +219,20 @@ export type MatchSetup = {
   contestants: MatchContestant[];
 };
 
+export type CharacterNameLibrary = {
+  definitionId: string;
+  names: string[];
+};
+
 export type ProjectManifest = {
   schemaVersion: typeof SCHEMA_VERSION;
   name: string;
   assets: AssetRef[];
   characters: CharacterDefinition[];
+  nameLibraries: CharacterNameLibrary[];
   boards: BoardDefinition[];
   setup: MatchSetup;
+  backgroundMusic: BackgroundMusicConfig;
   updatedAt: string;
 };
 
@@ -229,6 +245,9 @@ export type UnitAction =
   | "digging"
   | "tunneling"
   | "kick"
+  | "merge"
+  | "kill"
+  | "victory"
   | "dead";
 
 export type RuntimeUnit = {
@@ -331,6 +350,7 @@ export type CombatEvent = {
   targetId?: string;
   sound?: SynthPreset;
   amount?: number;
+  announcement?: string;
 };
 
 export type BattleStatus = "ready" | "running" | "paused" | "finished";

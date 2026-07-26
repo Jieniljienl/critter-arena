@@ -15,6 +15,7 @@ import {
   ImagePlus,
   Maximize2,
   Minimize2,
+  Music2,
   Pause,
   Play,
   Plus,
@@ -35,6 +36,7 @@ import { BoardEditor } from "./BoardEditor";
 import { BoardPropsPanel } from "./BoardPropsPanel";
 import { CharacterEditor } from "./CharacterEditor";
 import { FormationEditor } from "./FormationEditor";
+import { NameLibraryEditor } from "./NameLibraryEditor";
 import { createDefaultManifest } from "@/lib/game/defaultContent";
 import {
   exportBundle,
@@ -42,6 +44,7 @@ import {
   importProjectFile,
   loadManifest,
   saveManifest,
+  fileToDataUrl,
 } from "@/lib/game/storage";
 import type {
   BattleSnapshot,
@@ -74,6 +77,15 @@ const colorPalette = [
   "#ff6f91",
   "#78e2f2",
   "#f0a35a",
+];
+
+const teamOptions = [
+  { id: "", label: "独立阵营" },
+  { id: "red", label: "红队" },
+  { id: "blue", label: "蓝队" },
+  { id: "green", label: "绿队" },
+  { id: "purple", label: "紫队" },
+  { id: "gold", label: "金队" },
 ];
 
 const spawnRatios = [
@@ -116,6 +128,7 @@ export function GameApp() {
   const arenaRef = useRef<ArenaHandle>(null);
   const arenaStageRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
+  const musicImportRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     let alive = true;
@@ -201,7 +214,9 @@ export function GameApp() {
   const showNotice = useCallback((message: string) => setNotice(message), []);
 
   const livingMain = useMemo(
-    () => snapshot?.units.filter((unit) => unit.main && unit.targetable).length ?? manifest.setup.contestants.length,
+    () =>
+      snapshot?.units.filter((unit) => unit.main && unit.hp > 0 && unit.action !== "dead").length ??
+      manifest.setup.contestants.length,
     [manifest.setup.contestants.length, snapshot],
   );
   const activeBoard = useMemo(
@@ -306,10 +321,23 @@ export function GameApp() {
       y: ratio.y * (activeBoard?.height ?? 900),
     };
     const angle = (index * 2.3999632297 + 0.65) % (Math.PI * 2);
+    const library =
+      manifest.nameLibraries.find((candidate) => candidate.definitionId === definitionId)?.names
+        .map((name) => name.trim())
+        .filter(Boolean) ?? [];
+    const usedNames = new Set(
+      manifest.setup.contestants
+        .filter((candidate) => candidate.definitionId === definitionId)
+        .map((candidate) => candidate.displayName),
+    );
+    const availableName = library.find((name) => !usedNames.has(name));
+    const fallbackName = library.length
+      ? `${library[index % library.length]}·${usedNames.size + 1}`
+      : `${definition.name}·${index + 1}`;
     const contestant: MatchContestant = {
       id: createContestantId(),
       definitionId,
-      displayName: `${definition.name}·${index + 1}`,
+      displayName: availableName ?? fallbackName,
       position: { ...point },
       direction: { x: Math.cos(angle), y: Math.sin(angle) },
       color: colorPalette[index % colorPalette.length],
@@ -353,6 +381,47 @@ export function GameApp() {
       }),
     });
     setNotice("出生位置与方向已重新打乱");
+  };
+
+  const applyMusicConfig = (
+    backgroundMusic: ProjectManifest["backgroundMusic"],
+    assets = manifest.assets,
+  ) => {
+    const next = {
+      ...manifest,
+      assets,
+      backgroundMusic,
+      updatedAt: new Date().toISOString(),
+    };
+    setManifest(next);
+    arenaRef.current?.setMusic(backgroundMusic, assets);
+  };
+
+  const uploadBackgroundMusic = async (file?: File) => {
+    if (!file || !file.type.startsWith("audio/")) return;
+    const assetId = `background-music-${Date.now()}`;
+    const url = await fileToDataUrl(file);
+    const assets = [
+      ...manifest.assets,
+      {
+        id: assetId,
+        kind: "audio" as const,
+        url,
+        name: file.name,
+        mime: file.type,
+      },
+    ];
+    applyMusicConfig(
+      {
+        enabled: true,
+        source: "asset",
+        assetId,
+        title: file.name.replace(/\.[^.]+$/, ""),
+        volume: manifest.backgroundMusic.volume,
+      },
+      assets,
+    );
+    setNotice(`背景音乐已切换为：${file.name}`);
   };
 
   const importFile = async (file?: File) => {
@@ -463,9 +532,13 @@ export function GameApp() {
 
             <div
               ref={arenaStageRef}
-              className="arena-stage"
+              className={`arena-stage ${
+                currentBoard && currentBoard.height > currentBoard.width
+                  ? "is-portrait-board"
+                  : "is-landscape-board"
+              }`}
               style={{
-                aspectRatio: `${activeBoard?.width ?? 1600} / ${activeBoard?.height ?? 900}`,
+                aspectRatio: `${currentBoard?.width ?? 1600} / ${currentBoard?.height ?? 900}`,
               }}
             >
               <ArenaCanvas
@@ -485,7 +558,13 @@ export function GameApp() {
                 <div className="winner-overlay">
                   <span className="winner-kicker">{snapshot.draw ? "DOUBLE K.O." : "ARENA CHAMPION"}</span>
                   <h2>{snapshot.draw ? "本局平局" : snapshot.winnerName}</h2>
-                  <p>{snapshot.draw ? "所有主角色同时倒下" : "坚持到最后，成为唯一幸存者"}</p>
+                  <p>
+                    {snapshot.draw
+                      ? "所有主角色同时倒下"
+                      : livingMain > 1
+                        ? "同阵营并肩坚持到最后，获得团队胜利"
+                        : "坚持到最后，成为唯一幸存者"}
+                  </p>
                   <button type="button" onClick={() => beginFreshBattle(true)}>
                     <RefreshCcw size={17} /> 换个种子再来一局
                   </button>
@@ -579,6 +658,76 @@ export function GameApp() {
                 value={volume}
                 onChange={(event) => setVolume(Number(event.target.value))}
               />
+              <div className="music-controls">
+                <button
+                  type="button"
+                  className={`icon-control ${manifest.backgroundMusic.enabled ? "is-active" : ""}`}
+                  onClick={() =>
+                    applyMusicConfig({
+                      ...manifest.backgroundMusic,
+                      enabled: !manifest.backgroundMusic.enabled,
+                    })
+                  }
+                  title={manifest.backgroundMusic.enabled ? "关闭背景音乐" : "开启背景音乐"}
+                >
+                  <Music2 size={17} />
+                </button>
+                <input
+                  className="music-volume-slider"
+                  aria-label="背景音乐音量"
+                  type="range"
+                  min={0}
+                  max={0.75}
+                  step={0.01}
+                  value={manifest.backgroundMusic.volume}
+                  onChange={(event) => {
+                    const nextVolume = Number(event.target.value);
+                    setManifest((current) => ({
+                      ...current,
+                      backgroundMusic: { ...current.backgroundMusic, volume: nextVolume },
+                      updatedAt: new Date().toISOString(),
+                    }));
+                    arenaRef.current?.setMusicVolume(nextVolume);
+                  }}
+                />
+                <button
+                  type="button"
+                  className="music-file-button"
+                  onClick={() => musicImportRef.current?.click()}
+                  title="上传 WAV / MP3 / OGG 背景音乐"
+                >
+                  <Upload size={13} /> 换音乐
+                </button>
+                <button
+                  type="button"
+                  className="music-file-button"
+                  onClick={() => {
+                    applyMusicConfig({
+                      enabled: true,
+                      source: "synth",
+                      title: "竹林乱斗曲（原创默认）",
+                      volume: manifest.backgroundMusic.volume,
+                    });
+                    setNotice("已恢复原创默认背景音乐");
+                  }}
+                  title="恢复原创默认音乐"
+                >
+                  默认曲
+                </button>
+                <input
+                  ref={musicImportRef}
+                  hidden
+                  type="file"
+                  accept="audio/wav,audio/mpeg,audio/ogg"
+                  onChange={(event) => {
+                    void uploadBackgroundMusic(event.target.files?.[0]);
+                    event.currentTarget.value = "";
+                  }}
+                />
+                <span title={manifest.backgroundMusic.title}>
+                  {manifest.backgroundMusic.title}
+                </span>
+              </div>
               <span className="seed-label">SEED {battleManifest.setup.seed}</span>
             </div>
           </section>
@@ -626,6 +775,27 @@ export function GameApp() {
                           })
                         }
                       />
+                      <select
+                        className="contestant-team"
+                        aria-label={`${contestant.displayName}阵营`}
+                        value={contestant.teamId ?? ""}
+                        onChange={(event) =>
+                          updateSetup({
+                            ...manifest.setup,
+                            contestants: manifest.setup.contestants.map((candidate) =>
+                              candidate.id === contestant.id
+                                ? { ...candidate, teamId: event.target.value || undefined }
+                                : candidate,
+                            ),
+                          })
+                        }
+                      >
+                        {teamOptions.map((team) => (
+                          <option key={team.id || "solo"} value={team.id}>
+                            {team.label}
+                          </option>
+                        ))}
+                      </select>
                       <small>{definition?.maxHp ?? 0} HP</small>
                       <button type="button" onClick={() => removeContestant(contestant.id)} title="移除">
                         <X size={14} />
@@ -637,13 +807,23 @@ export function GameApp() {
               <div className="add-fighter-grid">
                 {manifest.characters
                   .filter((character) => character.role === "contestant")
-                  .slice(0, 6)
                   .map((character) => (
                     <button type="button" key={character.id} onClick={() => addContestant(character.id)}>
                       <Plus size={14} /> {character.name}
                     </button>
                   ))}
               </div>
+              <NameLibraryEditor
+                characters={manifest.characters}
+                libraries={manifest.nameLibraries}
+                onChange={(nameLibraries) =>
+                  setManifest((current) => ({
+                    ...current,
+                    nameLibraries,
+                    updatedAt: new Date().toISOString(),
+                  }))
+                }
+              />
             </section>
 
             <BoardPropsPanel

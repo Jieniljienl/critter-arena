@@ -9,9 +9,11 @@ import {
 } from "react";
 import type PhaserType from "phaser";
 import { ArenaAudio } from "@/lib/game/audio";
-import { BattleSimulation } from "@/lib/game/simulation";
+import { BattleSimulation, circleOverlapsRegion } from "@/lib/game/simulation";
 import type {
   AnimationClip,
+  AssetRef,
+  BackgroundMusicConfig,
   BattleSnapshot,
   BoardProp,
   ProjectManifest,
@@ -28,6 +30,8 @@ export type ArenaHandle = {
   setSpeed: (speed: number) => void;
   setMuted: (muted: boolean) => void;
   setVolume: (volume: number) => void;
+  setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => void;
+  setMusicVolume: (volume: number) => void;
   getSnapshot: () => BattleSnapshot | undefined;
 };
 
@@ -68,7 +72,7 @@ const actionClipName = (unit: RuntimeUnit): string => {
   if (unit.action === "eating" || unit.action === "digging" || unit.action === "kick") {
     return "skill";
   }
-  if (unit.action === "attack") return "attack";
+  if (unit.action === "attack" || unit.action === "kill") return "attack";
   return "move";
 };
 
@@ -82,11 +86,15 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
     const audioRef = useRef(new ArenaAudio());
     const mutedRef = useRef(muted);
     const volumeRef = useRef(volume);
+    const musicConfigRef = useRef(manifest.backgroundMusic);
+    const musicAssetsRef = useRef(manifest.assets);
     const onSnapshotRef = useRef(onSnapshot);
     const onReadyRef = useRef(onReady);
 
     mutedRef.current = muted;
     volumeRef.current = volume;
+    musicConfigRef.current = manifest.backgroundMusic;
+    musicAssetsRef.current = manifest.assets;
     onSnapshotRef.current = onSnapshot;
     onReadyRef.current = onReady;
 
@@ -94,7 +102,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
       ref,
       () => ({
         start: () => {
-          void audioRef.current.unlock();
+          void audioRef.current.startMusic(musicConfigRef.current, musicAssetsRef.current);
           simulationRef.current?.start();
         },
         pause: () => simulationRef.current?.pause(),
@@ -124,6 +132,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           volumeRef.current = nextVolume;
           audioRef.current.setVolume(nextVolume);
         },
+        setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => {
+          void audioRef.current.setMusic(config, assets);
+        },
+        setMusicVolume: (nextVolume: number) => {
+          audioRef.current.setMusicVolume(nextVolume);
+        },
         getSnapshot: () => snapshotRef.current,
       }),
       [],
@@ -132,13 +146,15 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
     useEffect(() => {
       let disposed = false;
       let game: PhaserType.Game | undefined;
+      const audio = audioRef.current;
       const simulation = new BattleSimulation(manifest);
       const board =
         manifest.boards.find((candidate) => candidate.id === manifest.setup.boardId) ??
         manifest.boards[0];
       simulationRef.current = simulation;
-      audioRef.current.setMuted(mutedRef.current);
-      audioRef.current.setVolume(volumeRef.current);
+      audio.setMuted(mutedRef.current);
+      audio.setVolume(volumeRef.current);
+      void audio.setMusic(manifest.backgroundMusic, manifest.assets);
       let lastSnapshotPush = 0;
       let previousEventIds = new Set<string>();
 
@@ -159,6 +175,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private holeLabels = new Map<string, PhaserType.GameObjects.Text>();
           private eventLabels = new Map<string, PhaserType.GameObjects.Text>();
           private accumulatedMs = 0;
+          private finishedVisualTime = 0;
           private failedTextures = new Set<string>();
 
           constructor() {
@@ -206,7 +223,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             const snapshot = simulation.getSnapshot();
             snapshotRef.current = snapshot;
-            this.renderArena(snapshot);
+            if (snapshot.status === "finished") {
+              this.finishedVisualTime += delta / 1000;
+            } else {
+              this.finishedVisualTime = 0;
+            }
+            this.renderArena(snapshot, this.finishedVisualTime);
 
             if (snapshot.time - lastSnapshotPush >= 0.08 || snapshot.status === "finished") {
               lastSnapshotPush = snapshot.time;
@@ -214,7 +236,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               const freshEvents = snapshot.events.filter((event) => !previousEventIds.has(event.id));
               previousEventIds = new Set(snapshot.events.map((event) => event.id));
               for (const event of freshEvents) {
-                void audioRef.current.playEvent(
+                void audio.playEvent(
                   event,
                   snapshot.units,
                   manifest.characters,
@@ -224,13 +246,13 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
           }
 
-          private renderArena(snapshot: BattleSnapshot) {
+          private renderArena(snapshot: BattleSnapshot, finishedVisualTime: number) {
             this.arenaGraphics.clear();
             this.overlayGraphics.clear();
-            this.drawProps(snapshot.props);
+            this.drawProps(snapshot.props, snapshot.time + finishedVisualTime);
             this.drawHoles(snapshot);
             this.drawProjectiles(snapshot);
-            this.drawEventEffects(snapshot);
+            this.drawEventEffects(snapshot, finishedVisualTime);
 
             const activeIds = new Set(snapshot.units.map((unit) => unit.id));
             const activePropIds = new Set(
@@ -276,7 +298,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             const visibleEventIds = new Set(
               snapshot.events
-                .filter((event) => snapshot.time - event.time <= 0.9 && event.amount !== undefined)
+                .filter(
+                  (event) =>
+                    snapshot.time + finishedVisualTime - event.time <= 0.9 &&
+                    event.amount !== undefined,
+                )
                 .map((event) => event.id),
             );
             for (const [id, label] of this.eventLabels) {
@@ -286,16 +312,20 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               }
             }
 
-            for (const unit of snapshot.units) this.drawUnit(unit, snapshot.time);
+            for (const unit of snapshot.units) {
+              this.drawUnit(unit, snapshot.time + finishedVisualTime);
+            }
           }
 
-          private drawProps(props: BoardProp[]) {
+          private drawProps(props: BoardProp[], time: number) {
             for (const prop of props) {
               if (!prop.active) continue;
               if (prop.type === "lava") {
                 this.drawShape(prop.shape, 0xff5a35, 0.34, 0xffc04a);
+                this.drawAreaTexture(prop, time);
               } else if (prop.type === "hotSpring") {
                 this.drawShape(prop.shape, 0x43cbd3, 0.32, 0xa5fbff);
+                this.drawAreaTexture(prop, time);
               } else {
                 const center = this.shapeCenter(prop.shape);
                 this.drawShape(prop.shape, 0x2d6f4a, 0.18, 0x79cf71);
@@ -315,6 +345,38 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 } else {
                   this.arenaGraphics.fillStyle(0x79cf71, 1);
                   this.arenaGraphics.fillRoundedRect(center.x - 11, center.y - 36, 22, 72, 7);
+                }
+              }
+            }
+          }
+
+          private drawAreaTexture(prop: BoardProp, time: number) {
+            const bounds = this.shapeBounds(prop.shape);
+            const seed = [...prop.id].reduce(
+              (total, character) => (total * 31 + character.charCodeAt(0)) >>> 0,
+              2166136261,
+            );
+            const count = Math.max(5, Math.min(18, Math.round((bounds.width + bounds.height) / 95)));
+            for (let index = 0; index < count; index += 1) {
+              const xRatio = ((seed * (index + 3) * 0.000013 + index * 0.618033) % 1 + 1) % 1;
+              const yRatio = ((seed * (index + 7) * 0.000019 + index * 0.381966) % 1 + 1) % 1;
+              const x = bounds.x + bounds.width * (0.08 + xRatio * 0.84);
+              const y = bounds.y + bounds.height * (0.08 + yRatio * 0.84);
+              if (!circleOverlapsRegion({ x, y }, 0, prop.shape)) continue;
+              const phase = (time * (prop.type === "lava" ? 1.65 : 0.86) + index * 0.37) % 1;
+              if (prop.type === "lava") {
+                const radius = 3 + phase * 8;
+                this.arenaGraphics.fillStyle(index % 2 ? 0xffc247 : 0xff742f, 0.48 * (1 - phase));
+                this.arenaGraphics.fillCircle(x, y - phase * 12, radius);
+                this.arenaGraphics.lineStyle(2, 0xffef8c, 0.24 * (1 - phase));
+                this.arenaGraphics.strokeCircle(x, y - phase * 12, radius + 3);
+              } else {
+                const radius = 5 + phase * 16;
+                this.arenaGraphics.lineStyle(2, 0xd8ffff, 0.36 * (1 - phase));
+                this.arenaGraphics.strokeEllipse(x, y, radius * 2, radius * 0.72);
+                if (index % 3 === 0) {
+                  this.arenaGraphics.fillStyle(0xeaffff, 0.28 * (1 - phase));
+                  this.arenaGraphics.fillCircle(x + 5, y - phase * 16, 3 + phase * 2);
                 }
               }
             }
@@ -351,6 +413,29 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               }),
               { x: 0, y: 0 },
             );
+          }
+
+          private shapeBounds(shape: RegionShape) {
+            if (shape.kind === "circle") {
+              return {
+                x: shape.x - shape.radius,
+                y: shape.y - shape.radius,
+                width: shape.radius * 2,
+                height: shape.radius * 2,
+              };
+            }
+            if (shape.kind === "rectangle") return shape;
+            if (!shape.points.length) return { x: 0, y: 0, width: 1, height: 1 };
+            const xs = shape.points.map((point) => point.x);
+            const ys = shape.points.map((point) => point.y);
+            const x = Math.min(...xs);
+            const y = Math.min(...ys);
+            return {
+              x,
+              y,
+              width: Math.max(1, Math.max(...xs) - x),
+              height: Math.max(1, Math.max(...ys) - y),
+            };
           }
 
           private drawHoles(snapshot: BattleSnapshot) {
@@ -407,10 +492,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
           }
 
-          private drawEventEffects(snapshot: BattleSnapshot) {
+          private drawEventEffects(snapshot: BattleSnapshot, finishedVisualTime: number) {
             for (const event of snapshot.events) {
-              const age = snapshot.time - event.time;
-              if (age < 0 || age > 0.9 || event.x === undefined || event.y === undefined) continue;
+              const age = snapshot.time + finishedVisualTime - event.time;
+              const maxAge = event.type === "victory" ? 2.8 : event.type === "merge" ? 1.25 : 0.9;
+              if (age < 0 || age > maxAge || event.x === undefined || event.y === undefined) continue;
               const progress = Math.min(1, age / 0.55);
               const color =
                 event.sound === "explosion"
@@ -423,6 +509,53 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (age <= 0.55) {
                 this.overlayGraphics.lineStyle(5 * (1 - progress), color, 0.8 * (1 - progress));
                 this.overlayGraphics.strokeCircle(event.x, event.y, 18 + progress * 95);
+              }
+              if (event.type === "merge" && age <= 1.1) {
+                const fade = Math.max(0, 1 - age / 1.1);
+                this.overlayGraphics.lineStyle(4, 0xffe783, fade);
+                for (let ray = 0; ray < 10; ray += 1) {
+                  const angle = ray * (Math.PI * 2 / 10) + age * 2.4;
+                  const inner = 34 + age * 22;
+                  const outer = 72 + age * 56;
+                  this.overlayGraphics.lineBetween(
+                    event.x + Math.cos(angle) * inner,
+                    event.y + Math.sin(angle) * inner,
+                    event.x + Math.cos(angle) * outer,
+                    event.y + Math.sin(angle) * outer,
+                  );
+                }
+              } else if (event.type === "death" && age <= 0.75) {
+                const fade = Math.max(0, 1 - age / 0.75);
+                this.overlayGraphics.lineStyle(6, 0xff5968, fade);
+                const reach = 35 + age * 95;
+                this.overlayGraphics.lineBetween(
+                  event.x - reach,
+                  event.y - reach,
+                  event.x + reach,
+                  event.y + reach,
+                );
+                this.overlayGraphics.lineBetween(
+                  event.x + reach,
+                  event.y - reach,
+                  event.x - reach,
+                  event.y + reach,
+                );
+              } else if (event.type === "victory") {
+                const pulse = 0.5 + Math.sin(age * 7) * 0.5;
+                this.overlayGraphics.lineStyle(5, 0xffdf70, 0.72 - pulse * 0.2);
+                this.overlayGraphics.strokeCircle(event.x, event.y, 70 + pulse * 35);
+                this.overlayGraphics.lineStyle(3, 0xffffff, 0.45);
+                this.overlayGraphics.strokeCircle(event.x, event.y, 112 + (1 - pulse) * 42);
+                for (let ray = 0; ray < 14; ray += 1) {
+                  const angle = ray * (Math.PI * 2 / 14) - age * 0.8;
+                  const radius = 125 + (ray % 3) * 18;
+                  this.overlayGraphics.fillStyle(ray % 2 ? 0xffdf70 : 0x83e7ef, 0.75);
+                  this.overlayGraphics.fillCircle(
+                    event.x + Math.cos(angle) * radius,
+                    event.y + Math.sin(angle) * radius,
+                    4 + (ray % 3),
+                  );
+                }
               }
               if (event.amount !== undefined && Math.abs(event.amount) > 0.01) {
                 let label = this.eventLabels.get(event.id);
@@ -463,34 +596,110 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               definition.portraitAssetId;
             const textureKey = `asset:${frameId}`;
             const hasTexture = this.textures.exists(textureKey) && !this.failedTextures.has(textureKey);
-            const bob = Math.sin(time * 8 + unit.bornAt * 2) * 3;
-            const alpha = unit.action === "dead" ? Math.max(0, (unit.actionUntil - time) / 0.45) : unit.targetable ? 1 : 0.16;
+            let visualX = unit.x;
+            let visualY = unit.y;
+            let tunnelAlpha = 1;
+            let tunnelScale = 1;
+            if (unit.action === "tunneling" && unit.tunnelData) {
+              const duration = Math.max(0.001, unit.actionUntil - unit.actionStartedAt);
+              const progress = Math.max(0, Math.min(1, (time - unit.actionStartedAt) / duration));
+              const origin = unit.tunnelData.origin;
+              const destination = unit.tunnelData.destination;
+              if (unit.tunnelData.mode === "travel") {
+                if (progress < 0.24) {
+                  visualX = origin.x;
+                  visualY = origin.y;
+                  tunnelAlpha = 1 - progress / 0.24;
+                  tunnelScale = Math.max(0.18, 1 - progress / 0.3);
+                } else if (progress < 0.62) {
+                  visualX = origin.x;
+                  visualY = origin.y;
+                  tunnelAlpha = 0;
+                } else {
+                  visualX = destination.x;
+                  visualY = destination.y;
+                  tunnelAlpha = Math.min(1, (progress - 0.62) / 0.22);
+                  tunnelScale = 0.38 + tunnelAlpha * 0.62;
+                }
+              } else if (progress < 0.2) {
+                visualX = origin.x;
+                visualY = origin.y;
+                tunnelAlpha = 1 - progress / 0.2;
+                tunnelScale = Math.max(0.2, 1 - progress / 0.26);
+              } else if (progress < 0.34) {
+                visualX = origin.x;
+                visualY = origin.y;
+                tunnelAlpha = 0;
+              } else if (progress < 0.64) {
+                visualX = destination.x;
+                visualY = destination.y;
+                const emerge = Math.min(1, (progress - 0.34) / 0.1);
+                const leave = progress > 0.56 ? Math.max(0, 1 - (progress - 0.56) / 0.08) : 1;
+                tunnelAlpha = Math.min(emerge, leave);
+                tunnelScale = 0.35 + tunnelAlpha * 0.78;
+              } else if (progress < 0.84) {
+                visualX = destination.x;
+                visualY = destination.y;
+                tunnelAlpha = 0;
+              } else {
+                visualX = origin.x;
+                visualY = origin.y;
+                tunnelAlpha = Math.min(1, (progress - 0.84) / 0.13);
+                tunnelScale = 0.35 + tunnelAlpha * 0.65;
+              }
+            }
+            const bob =
+              Math.sin(time * (unit.action === "victory" ? 12 : 8) + unit.bornAt * 2) *
+              (unit.action === "victory" ? 9 : 3);
+            const alpha =
+              unit.action === "dead"
+                ? Math.max(0, (unit.actionUntil - time) / 0.45)
+                : unit.action === "tunneling"
+                  ? tunnelAlpha
+                  : unit.targetable
+                    ? 1
+                    : 0.16;
             const scaleBump =
               unit.action === "attack" || unit.action === "kick"
                 ? 1.12
+                : unit.action === "kill"
+                  ? 1.22
+                  : unit.action === "merge"
+                    ? 1.12 + Math.sin((time - unit.actionStartedAt) * 20) * 0.12
+                    : unit.action === "victory"
+                      ? 1.18 + Math.sin(time * 10) * 0.08
                 : unit.action === "eating" || unit.action === "digging"
                   ? 1.06
                   : 1;
+            const displayScale = scaleBump * tunnelScale;
 
             if (hasTexture) {
               let image = this.unitImages.get(unit.id);
               if (!image) {
-                image = this.add.image(unit.x, unit.y, textureKey).setDepth(5);
+                image = this.add.image(visualX, visualY, textureKey).setDepth(5);
                 this.unitImages.set(unit.id, image);
               }
               if (image.texture.key !== textureKey) image.setTexture(textureKey);
               image
-                .setPosition(unit.x, unit.y + bob)
-                .setDisplaySize(unit.radius * 3 * scaleBump, unit.radius * 3 * scaleBump)
+                .setPosition(visualX, visualY + bob)
+                .setDisplaySize(unit.radius * 3 * displayScale, unit.radius * 3 * displayScale)
                 .setFlipX(unit.vx < 0)
                 .setAlpha(alpha)
-                .setAngle(unit.action === "kick" ? (unit.vx < 0 ? -12 : 12) : 0);
+                .setAngle(
+                  unit.action === "kick"
+                    ? unit.vx < 0
+                      ? -12
+                      : 12
+                    : unit.action === "victory"
+                      ? Math.sin(time * 6) * 7
+                      : 0,
+                );
               this.unitFallbacks.get(unit.id)?.setVisible(false);
             } else {
               let fallback = this.unitFallbacks.get(unit.id);
               if (!fallback) {
                 fallback = this.add
-                  .text(unit.x, unit.y, fallbackGlyph(unit.definitionId), {
+                  .text(visualX, visualY, fallbackGlyph(unit.definitionId), {
                     fontSize: `${Math.round(unit.radius * 1.7)}px`,
                     fontFamily: "Arial",
                   })
@@ -500,29 +709,33 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               }
               fallback
                 .setVisible(true)
-                .setPosition(unit.x, unit.y + bob)
-                .setScale(scaleBump)
+                .setPosition(visualX, visualY + bob)
+                .setScale(displayScale)
                 .setAlpha(alpha);
             }
 
             const ownerColor =
-              manifest.setup.contestants.find((contestant) => contestant.id === unit.ownerId)
-                ?.color ?? definition.accent;
+              manifest.setup.contestants.find((contestant) => {
+                const factionId = contestant.teamId
+                  ? `team:${contestant.teamId}`
+                  : contestant.id;
+                return contestant.id === unit.ownerId || factionId === unit.factionId;
+              })?.color ?? definition.accent;
             const color = Phaser.Display.Color.HexStringToColor(ownerColor).color;
             const healthWidth = Math.max(76, unit.radius * 2.6);
             const healthRatio = Math.max(0, unit.hp / unit.maxHp);
-            const healthY = unit.y - unit.radius - 31;
+            const healthY = visualY - unit.radius - 31;
             this.overlayGraphics.fillStyle(0x100e13, 0.82);
             this.overlayGraphics.lineStyle(2, color, unit.targetable ? 0.95 : 0.3);
             this.overlayGraphics.fillRoundedRect(
-              unit.x - healthWidth / 2,
+              visualX - healthWidth / 2,
               healthY,
               healthWidth,
               18,
               7,
             );
             this.overlayGraphics.strokeRoundedRect(
-              unit.x - healthWidth / 2,
+              visualX - healthWidth / 2,
               healthY,
               healthWidth,
               18,
@@ -533,7 +746,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               1,
             );
             this.overlayGraphics.fillRoundedRect(
-              unit.x - healthWidth / 2 + 3,
+              visualX - healthWidth / 2 + 3,
               healthY + 3,
               Math.max(0, (healthWidth - 6) * healthRatio),
               12,
@@ -542,7 +755,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             let healthLabel = this.healthLabels.get(unit.id);
             if (!healthLabel) {
               healthLabel = this.add
-                .text(unit.x, healthY, "", {
+                .text(visualX, healthY, "", {
                   fontSize: "12px",
                   fontFamily: "Arial",
                   fontStyle: "bold",
@@ -558,13 +771,13 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               time < unit.burnUntil ? "🔥 " : time < unit.springUntil ? "♨ " : "";
             healthLabel
               .setText(`${status}${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`)
-              .setPosition(unit.x, healthY + 9)
+              .setPosition(visualX, healthY + 9)
               .setAlpha(alpha);
 
             let label = this.unitLabels.get(unit.id);
             if (!label) {
               label = this.add
-                .text(unit.x, unit.y, unit.name, {
+                .text(visualX, visualY, unit.name, {
                   fontSize: unit.main ? "19px" : "14px",
                   fontFamily: "Arial",
                   color: "#fff7df",
@@ -577,7 +790,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             label
               .setText(unit.name)
-              .setPosition(unit.x, unit.y + unit.radius + 21)
+              .setPosition(visualX, visualY + unit.radius + 21)
               .setColor(ownerColor)
               .setAlpha(alpha);
           }
@@ -609,6 +822,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
         game?.destroy(true);
         gameRef.current = undefined;
         simulationRef.current = undefined;
+        audio.dispose();
       };
     }, [containerId, manifest]);
 

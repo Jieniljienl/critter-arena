@@ -61,6 +61,14 @@ const manifestSchema = z
         })
         .passthrough(),
     ),
+    nameLibraries: z
+      .array(
+        z.object({
+          definitionId: z.string().min(1),
+          names: z.array(z.string()),
+        }),
+      )
+      .optional(),
     boards: z.array(
       z
         .object({
@@ -89,6 +97,15 @@ const manifestSchema = z
         ),
       })
       .passthrough(),
+    backgroundMusic: z
+      .object({
+        enabled: z.boolean(),
+        source: z.enum(["synth", "asset"]),
+        assetId: z.string().optional(),
+        title: z.string(),
+        volume: z.number().min(0).max(1),
+      })
+      .optional(),
     updatedAt: z.string(),
   })
   .passthrough();
@@ -114,6 +131,17 @@ export const validateManifest = (value: unknown): ProjectManifest => {
   for (const board of parsed.boards) {
     if (!assetIds.has(board.backgroundAssetId)) {
       errors.push(`棋盘 ${board.name} 缺少背景图片资源`);
+    }
+  }
+  if (
+    parsed.backgroundMusic.source === "asset" &&
+    (!parsed.backgroundMusic.assetId || !assetIds.has(parsed.backgroundMusic.assetId))
+  ) {
+    errors.push("背景音乐引用了不存在的音频资源");
+  }
+  for (const library of parsed.nameLibraries) {
+    if (!characterIds.has(library.definitionId)) {
+      errors.push(`名字库引用了不存在的角色：${library.definitionId}`);
     }
   }
   if (errors.length) throw new Error(errors.join("\n"));

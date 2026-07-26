@@ -748,7 +748,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   }
                   image
                     .setPosition(projectile.x, projectile.y)
-                    .setDisplaySize(projectile.radius * 8.2, projectile.radius * 3.2)
+                    .setDisplaySize(projectile.radius * 8.2, projectile.radius * 4.2)
                     .setRotation(Math.atan2(projectile.vy, projectile.vx));
                 } else {
                   const angle = Math.atan2(projectile.vy, projectile.vx);
@@ -799,7 +799,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     : event.type === "merge"
                       ? 0xffdf70
                       : 0xffffff;
-              if (age <= 0.55) {
+              if (age <= 0.55 && event.type !== "attack") {
                 this.overlayGraphics.lineStyle(5 * (1 - progress), color, 0.8 * (1 - progress));
                 this.overlayGraphics.strokeCircle(event.x, event.y, 18 + progress * 95);
               }

@@ -155,6 +155,7 @@ const moleSkillParameters = {
 };
 
 const policeSkillParameters = {
+  killsPerPromotion: 2,
   kickRange: 160,
   kickDistance: 140,
   kickCooldown: 0.5,
@@ -925,6 +926,14 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.subtitle = defaultCharacter.subtitle;
     }
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
+    if (defaultCharacter.skillParameters?.police) {
+      character.skillParameters ??= {};
+      character.skillParameters.police ??= structuredClone(
+        defaultCharacter.skillParameters.police,
+      );
+      character.skillParameters.police.killsPerPromotion ??=
+        defaultCharacter.skillParameters.police.killsPerPromotion;
+    }
     character.victoryStyle ??= defaultCharacter.victoryStyle ?? "spotlight";
     character.attack.spreadDegrees ??= defaultCharacter.attack.spreadDegrees ?? 0;
     if (defaultCharacter.id === "mole" && character.radius === 32) {

@@ -998,6 +998,80 @@ test("allied selectable police merge on contact and play a star-up action", () =
   assert.ok(snapshot.events.some((event) => event.type === "merge" && event.announcement));
 });
 
+test("a police officer promotes after every two personal kills and stops at five stars", () => {
+  const manifest = createDefaultManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.unitScale = 1;
+
+  for (let star = 1; star <= 5; star += 1) {
+    const police = definition(manifest, `police-${star}`);
+    police.speed = 0;
+    police.attack = {
+      range: 2_000,
+      damage: 100,
+      cooldown: 0.05,
+      windup: 0,
+      mode: "melee",
+    };
+    police.skillParameters!.police!.killsPerPromotion = 2;
+  }
+  const target = definition(manifest, "mole");
+  target.pluginId = undefined;
+  target.maxHp = 1;
+  target.speed = 0;
+  target.attack.range = 0;
+  target.attack.damage = 0;
+  target.abilities = [];
+
+  manifest.setup.contestants = [
+    {
+      id: "decorated-officer",
+      definitionId: "police-1",
+      displayName: "战功警员",
+      position: { x: 800, y: 450 },
+      direction: { x: 1, y: 0 },
+      color: "#ffd55e",
+      teamId: "red",
+    },
+    ...Array.from({ length: 10 }, (_, index) => ({
+      id: `promotion-target-${index}`,
+      definitionId: "mole",
+      displayName: `训练目标${index + 1}`,
+      position: {
+        x: 620 + (index % 5) * 90,
+        y: 330 + Math.floor(index / 5) * 180,
+      },
+      direction: { x: -1, y: 0 },
+      color: "#69a7ff",
+      teamId: "blue",
+    })),
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 900);
+  const snapshot = simulation.getSnapshot();
+  const officer = snapshot.units.find((unit) => unit.id === "decorated-officer");
+  assert.ok(officer);
+  assert.equal(officer.policeStar, 5);
+  assert.equal(officer.definitionId, "police-5");
+  assert.equal(officer.policeKillProgress, 0);
+  assert.equal(officer.factionId, "team:red");
+  assert.equal(officer.main, true);
+  const promotions = snapshot.events.filter(
+    (event) =>
+      event.type === "merge" &&
+      event.unitId === officer.id &&
+      event.message.includes("战功升为"),
+  );
+  assert.equal(promotions.length, 4);
+  assert.deepEqual(
+    promotions.map((event) => event.unitDefinitionId),
+    ["police-2", "police-3", "police-4", "police-5"],
+  );
+});
+
 test("default character name libraries provide ordered, playful names for every selectable type", () => {
   const manifest = createDefaultManifest();
   for (const character of manifest.characters.filter((candidate) => candidate.role === "contestant")) {

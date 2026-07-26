@@ -149,6 +149,7 @@ export type MoleSkillParameters = {
 };
 
 export type PoliceSkillParameters = {
+  killsPerPromotion: number;
   kickRange: number;
   kickDistance: number;
   kickCooldown: number;
@@ -266,6 +267,7 @@ export type RuntimeUnit = {
   factionId: string;
   main: boolean;
   policeStar?: 1 | 2 | 3 | 4 | 5;
+  policeKillProgress: number;
   hp: number;
   maxHp: number;
   x: number;

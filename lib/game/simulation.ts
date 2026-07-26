@@ -344,6 +344,7 @@ export class BattleSimulation {
       factionId: options.factionId,
       main: options.main,
       policeStar: definition.policeStar,
+      policeKillProgress: 0,
       hp: definition.maxHp,
       maxHp: definition.maxHp,
       x: Math.max(radius, Math.min(this.board.width - radius, options.x)),
@@ -1375,6 +1376,11 @@ export class BattleSimulation {
       merged.actionStartedAt = this.time;
       merged.actionUntil = this.time + 0.62;
       this.addUnit(merged);
+      for (const projectile of this.projectiles.values()) {
+        if (projectile.sourceUnitId === left.id || projectile.sourceUnitId === right.id) {
+          projectile.sourceUnitId = merged.id;
+        }
+      }
       if (main) {
         const formerOwnerIds = new Set([left.id, right.id, left.ownerId, right.ownerId]);
         for (const unit of this.units.values()) {
@@ -1483,6 +1489,9 @@ export class BattleSimulation {
       undefined,
       announcement,
     );
+    if (source && source.id !== target.id && source.factionId !== target.factionId) {
+      this.recordPoliceKill(source);
+    }
     this.runModules(target, "onDeath");
 
     if (target.main) {
@@ -1511,6 +1520,84 @@ export class BattleSimulation {
       previous && this.time - previous.lastKillAt <= 8 + EPSILON ? previous.count + 1 : 1;
     this.killChains.set(source.id, { count, lastKillAt: this.time });
     return count;
+  }
+
+  private recordPoliceKill(source: RuntimeUnit): void {
+    const currentStar = source.policeStar;
+    if (
+      !currentStar ||
+      currentStar >= 5 ||
+      source.hp <= 0 ||
+      source.action === "dead"
+    ) {
+      return;
+    }
+    const definition = this.definitions.get(source.definitionId);
+    const killsRequired = Math.max(
+      1,
+      Math.round(definition?.skillParameters?.police?.killsPerPromotion ?? 2),
+    );
+    source.policeKillProgress += 1;
+    if (source.policeKillProgress < killsRequired) return;
+    this.promotePoliceAfterKills(source, killsRequired);
+  }
+
+  private promotePoliceAfterKills(source: RuntimeUnit, killsRequired: number): void {
+    const currentStar = source.policeStar;
+    if (!currentStar || currentStar >= 5) return;
+    const nextStar = (currentStar + 1) as 2 | 3 | 4 | 5;
+    const definition = this.definitions.get(`police-${nextStar}`);
+    if (!definition) return;
+
+    const direction = normalize({ x: source.vx, y: source.vy });
+    const nextRadius = definition.radius * (this.board.unitScale ?? 1);
+    this.purgeScheduledShots(new Set([source.id]));
+    source.definitionId = definition.id;
+    source.policeStar = nextStar;
+    source.policeKillProgress = 0;
+    source.maxHp = definition.maxHp;
+    source.hp = definition.maxHp;
+    source.radius = nextRadius;
+    source.x = Math.max(nextRadius, Math.min(this.board.width - nextRadius, source.x));
+    source.y = Math.max(nextRadius, Math.min(this.board.height - nextRadius, source.y));
+    source.vx = direction.x * definition.speed;
+    source.vy = direction.y * definition.speed;
+    source.nextAttackAt = this.time + 0.4;
+    source.action = "merge";
+    source.actionStartedAt = this.time;
+    source.actionUntil = this.time + 0.62;
+    source.burnUntil = 0;
+    source.burnDamagePerSecond = 0;
+    source.springUntil = 0;
+    source.springHealPerSecond = 0;
+    source.moduleCooldowns = Object.fromEntries(
+      definition.abilities.map((ability) => [
+        ability.id,
+        this.time + (ability.trigger === "interval" ? ability.interval ?? ability.cooldown : 0),
+      ]),
+    );
+    source.gatling =
+      nextStar === 5
+        ? {
+            nextRoundIn: 0.08,
+            shotsRemaining: 0,
+            nextShotIn: 0,
+            nextKickAt: 0,
+          }
+        : undefined;
+    if (!source.main) {
+      const renamed = source.name.replace(/[1-4]星警察$/, `${nextStar}星警察`);
+      source.name = renamed === source.name ? `${nextStar}星战功警察` : renamed;
+    }
+    this.emit(
+      "merge",
+      `${source.name}累计击杀${killsRequired}名敌人，战功升为${nextStar}星`,
+      source,
+      undefined,
+      "merge",
+      undefined,
+      `${source.name}完成战功升星，晋升为${nextStar}星警察`,
+    );
   }
 
   private killChainLabel(count: number): string | undefined {

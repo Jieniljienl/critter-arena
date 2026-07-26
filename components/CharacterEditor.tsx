@@ -126,6 +126,14 @@ const skillFields: Record<
     { key: "tunnelChance", label: "随机钻洞概率", fallback: 0.2, min: 0, max: 1, step: 0.05 },
   ],
   police: [
+    {
+      key: "killsPerPromotion",
+      label: "升星所需击杀数",
+      fallback: 2,
+      min: 1,
+      max: 99,
+      step: 1,
+    },
     { key: "kickRange", label: "五星踹击范围", fallback: 160, min: 0 },
     { key: "kickDistance", label: "五星踹飞距离", fallback: 140, min: 0 },
     { key: "kickCooldown", label: "踹击冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
@@ -821,7 +829,7 @@ export function CharacterEditor({
                     ? "熊猫内置技能参数"
                     : selected.pluginId === "mole"
                       ? "地鼠内置技能参数"
-                      : "警察近身反制（五星生效）"}
+                      : "警察击杀升星与近身反制"}
                 </span>
               </div>
               <p className="editor-card-note">

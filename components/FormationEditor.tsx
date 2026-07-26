@@ -18,6 +18,15 @@ type FormationEditorProps = {
   battleStatus?: BattleStatus;
 };
 
+type FormationDrag = {
+  id: string;
+  pointerId: number;
+  pointerType: string;
+  startX: number;
+  startY: number;
+  moved: boolean;
+};
+
 export function FormationEditor({
   setup,
   characters,
@@ -27,15 +36,23 @@ export function FormationEditor({
   battleStatus,
 }: FormationEditorProps) {
   const boardRef = useRef<HTMLDivElement>(null);
+  const dragRef = useRef<FormationDrag | undefined>(undefined);
   const [draggingId, setDraggingId] = useState<string>();
+  const [touchDragging, setTouchDragging] = useState(false);
+  const [selectedId, setSelectedId] = useState<string>();
   const isLive =
     battleStatus === "running" || battleStatus === "paused" || battleStatus === "finished";
   const liveMainById = new Map(
     (liveUnits ?? []).filter((unit) => unit.main).map((unit) => [unit.id, unit]),
   );
 
-  const moveContestant = (clientX: number, clientY: number) => {
-    if (isLive || !draggingId || !boardRef.current) return;
+  const moveContestant = (
+    contestantId: string,
+    clientX: number,
+    clientY: number,
+    liftPixels = 0,
+  ) => {
+    if (isLive || !boardRef.current) return;
     const rect = boardRef.current.getBoundingClientRect();
     const margin = 50 * (board.unitScale ?? 1);
     const x = Math.max(
@@ -44,16 +61,48 @@ export function FormationEditor({
     );
     const y = Math.max(
       margin,
-      Math.min(board.height - margin, ((clientY - rect.top) / rect.height) * board.height),
+      Math.min(
+        board.height - margin,
+        ((clientY - liftPixels - rect.top) / rect.height) * board.height,
+      ),
     );
+    const nextPosition = { x: Math.round(x), y: Math.round(y) };
+    const current = setup.contestants.find((contestant) => contestant.id === contestantId);
+    if (
+      !current ||
+      (current.position.x === nextPosition.x && current.position.y === nextPosition.y)
+    ) {
+      return;
+    }
     onChange({
       ...setup,
       contestants: setup.contestants.map((contestant) =>
-        contestant.id === draggingId
-          ? { ...contestant, position: { x: Math.round(x), y: Math.round(y) } }
+        contestant.id === contestantId
+          ? { ...contestant, position: nextPosition }
           : contestant,
       ),
     });
+  };
+
+  const finishDrag = (
+    pointerId: number,
+    clientX: number,
+    clientY: number,
+    cancelled = false,
+  ) => {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== pointerId) return;
+    if (!cancelled && drag.moved) {
+      moveContestant(
+        drag.id,
+        clientX,
+        clientY,
+        drag.pointerType === "touch" ? 36 : 0,
+      );
+    }
+    dragRef.current = undefined;
+    setDraggingId(undefined);
+    setTouchDragging(false);
   };
 
   return (
@@ -63,13 +112,49 @@ export function FormationEditor({
         board.height > board.width ? "is-portrait-board" : "is-landscape-board"
       }`}
       style={{ aspectRatio: `${board.width} / ${board.height}` }}
-      onPointerMove={(event) => moveContestant(event.clientX, event.clientY)}
-      onPointerUp={() => setDraggingId(undefined)}
-      onPointerCancel={() => setDraggingId(undefined)}
-      onPointerLeave={() => setDraggingId(undefined)}
+      onPointerDown={(event) => {
+        if (
+          isLive ||
+          !selectedId ||
+          (event.target as HTMLElement).closest(".formation-token")
+        ) {
+          return;
+        }
+        event.preventDefault();
+        moveContestant(selectedId, event.clientX, event.clientY);
+        setSelectedId(undefined);
+      }}
+      onPointerMove={(event) => {
+        const drag = dragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) return;
+        event.preventDefault();
+        if (
+          !drag.moved &&
+          Math.hypot(event.clientX - drag.startX, event.clientY - drag.startY) < 4
+        ) {
+          return;
+        }
+        drag.moved = true;
+        moveContestant(
+          drag.id,
+          event.clientX,
+          event.clientY,
+          drag.pointerType === "touch" ? 36 : 0,
+        );
+      }}
+      onPointerUp={(event) =>
+        finishDrag(event.pointerId, event.clientX, event.clientY)
+      }
+      onPointerCancel={(event) =>
+        finishDrag(event.pointerId, event.clientX, event.clientY, true)
+      }
     >
       <span className="formation-grid-label">
-        {isLive ? "战斗位置 · 约 12 FPS 同步" : "赛前拖动布阵 · 左右实时同步"}
+        {isLive
+          ? "战斗位置 · 约 12 FPS 同步"
+          : selectedId
+            ? "已选中 · 轻触空白处放置"
+            : "按住拖动 · 或点选角色后轻触落点"}
       </span>
       {setup.contestants.map((contestant, index) => {
         const setupDefinition = characters.find(
@@ -105,9 +190,11 @@ export function FormationEditor({
           <button
             key={contestant.id}
             type="button"
-            className={`formation-token ${eliminated ? "is-eliminated" : ""} ${
-              missing ? "is-missing" : ""
-            }`}
+            className={`formation-token ${
+              !isLive && selectedId === contestant.id ? "is-selected" : ""
+            } ${draggingId === contestant.id ? "is-dragging" : ""} ${
+              draggingId === contestant.id && touchDragging ? "is-touch-dragging" : ""
+            } ${eliminated ? "is-eliminated" : ""} ${missing ? "is-missing" : ""}`}
             style={{
               left: `${(displayPosition.x / board.width) * 100}%`,
               top: `${(displayPosition.y / board.height) * 100}%`,
@@ -116,13 +203,37 @@ export function FormationEditor({
             }}
             onPointerDown={(event) => {
               if (isLive) return;
-              event.currentTarget.setPointerCapture(event.pointerId);
+              event.preventDefault();
+              event.stopPropagation();
+              try {
+                event.currentTarget.setPointerCapture(event.pointerId);
+              } catch {
+                // Older mobile browsers may still deliver the pointer sequence normally.
+              }
+              dragRef.current = {
+                id: contestant.id,
+                pointerId: event.pointerId,
+                pointerType: event.pointerType,
+                startX: event.clientX,
+                startY: event.clientY,
+                moved: false,
+              };
+              setSelectedId(contestant.id);
               setDraggingId(contestant.id);
+              setTouchDragging(event.pointerType === "touch");
             }}
+            onLostPointerCapture={(event) => {
+              const drag = dragRef.current;
+              if (drag?.pointerId !== event.pointerId) return;
+              dragRef.current = undefined;
+              setDraggingId(undefined);
+              setTouchDragging(false);
+            }}
+            aria-pressed={!isLive && selectedId === contestant.id}
             aria-label={
               isLive
                 ? `${contestant.displayName}（${definition?.name ?? "未知角色"}）战斗位置`
-                : `拖动 ${contestant.displayName}（${definition?.name ?? "未知角色"}）`
+                : `拖动或点选 ${contestant.displayName}（${definition?.name ?? "未知角色"}）`
             }
             title={`${contestant.displayName} · ${definition?.name ?? "未知角色"} · ${Math.round(displayPosition.x)}, ${Math.round(displayPosition.y)}`}
           >

@@ -925,6 +925,9 @@ textarea:focus-visible {
     repeating-linear-gradient(90deg, transparent 0 20px, rgba(255, 255, 255, 0.035) 20px 21px),
     #18241e;
   touch-action: none;
+  overscroll-behavior: contain;
+  user-select: none;
+  -webkit-touch-callout: none;
 }
 
 .formation-board.is-portrait-board {
@@ -936,9 +939,11 @@ textarea:focus-visible {
   position: absolute;
   top: 7px;
   left: 9px;
+  z-index: 2;
   color: rgba(255, 255, 255, 0.3);
   font-size: 9px;
   letter-spacing: 0.08em;
+  pointer-events: none;
 }
 
 .formation-token {
@@ -956,6 +961,44 @@ textarea:focus-visible {
   transform: translate(-50%, -50%);
   touch-action: none;
   box-shadow: 0 7px 14px rgba(0, 0, 0, 0.28);
+  user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.formation-token::before {
+  position: absolute;
+  inset: -8px;
+  border-radius: 50%;
+  content: "";
+}
+
+.formation-token.is-selected {
+  z-index: 12;
+  outline: 3px solid rgba(255, 255, 255, 0.88);
+  outline-offset: 3px;
+}
+
+.formation-token.is-dragging {
+  z-index: 24;
+  outline-color: var(--lime);
+  cursor: grabbing;
+  scale: 1.14;
+  box-shadow:
+    0 0 0 5px rgba(223, 246, 106, 0.12),
+    0 14px 28px rgba(0, 0, 0, 0.46);
+}
+
+.formation-token.is-touch-dragging::after {
+  position: absolute;
+  top: calc(100% + 5px);
+  left: 50%;
+  width: 2px;
+  height: 25px;
+  border-radius: 999px;
+  background: linear-gradient(rgba(223, 246, 106, 0.9), rgba(223, 246, 106, 0.08));
+  content: "";
+  pointer-events: none;
+  transform: translateX(-50%);
 }
 
 .formation-token-icon {
@@ -3014,12 +3057,21 @@ textarea:focus-visible {
   }
 
   .formation-token {
-    width: 44px;
-    height: 44px;
+    width: 48px;
+    height: 48px;
   }
 
   .formation-token-icon {
-    font-size: 17px;
+    font-size: 18px;
+  }
+
+  .formation-grid-label {
+    top: 8px;
+    right: 8px;
+    left: 8px;
+    font-size: 8px;
+    line-height: 1.3;
+    text-align: center;
   }
 
   .contestant-row button,

@@ -96,6 +96,8 @@ export type AttackDefinition = {
   mode: "melee" | "projectile" | "burst" | "gatling";
   projectileSpeed?: number;
   projectileKind?: "bullet" | "rocket";
+  /** 每颗弹丸围绕锁定方向产生的最大随机偏角。 */
+  spreadDegrees?: number;
   burstCount?: number;
   burstGap?: number;
   splashDamage?: number;
@@ -172,6 +174,7 @@ export type CharacterDefinition = {
   radius: number;
   accent: string;
   portraitAssetId: string;
+  victoryStyle?: "dance" | "cool" | "taunt" | "spotlight";
   attack: AttackDefinition;
   skillParameters?: {
     panda?: PandaSkillParameters;
@@ -213,7 +216,6 @@ export type MatchContestant = {
   direction: Vec2;
   color: string;
   nameColor?: string;
-  namePlacement?: "above" | "inside";
   teamId?: string;
 };
 
@@ -293,7 +295,11 @@ export type RuntimeUnit = {
     mode: "ambush" | "travel";
     origin: Vec2;
     destination: Vec2;
+    destinationHoleId?: string;
     targetId?: string;
+    hitSucceeded?: boolean;
+    returnDestination?: Vec2;
+    returnHoleId?: string;
   };
   digPosition?: Vec2;
   gatling?: {

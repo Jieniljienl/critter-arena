@@ -610,9 +610,15 @@ export function BoardEditor({
 
         <div
           ref={previewRef}
-          className={`board-preview tool-${tool}`}
+          className={`board-preview tool-${tool} ${
+            selected.height > selected.width ? "is-portrait-board" : "is-landscape-board"
+          }`}
           style={{
             aspectRatio: `${selected.width} / ${selected.height}`,
+            width:
+              selected.height > selected.width
+                ? `min(100%, ${(selected.width / selected.height) * 72}vh)`
+                : "100%",
             ...(background
               ? {
                   backgroundImage: `linear-gradient(rgba(10, 15, 13, .06), rgba(10, 15, 13, .18)), url("${background.url}")`,

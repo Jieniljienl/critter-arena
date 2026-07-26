@@ -74,30 +74,32 @@ export const defaultAssets: AssetRef[] = [
   asset("panda-lazy-skill-2", "/assets/panda-lazy-skill-2.png", "懒洋洋熊猫躺吃一"),
   asset("panda-lazy-skill-3", "/assets/panda-lazy-skill-3.png", "懒洋洋熊猫躺吃二"),
   asset("panda-lazy-skill-4", "/assets/panda-lazy-skill-4.png", "懒洋洋熊猫揉肚子"),
-  asset("mole-idle", "/assets/mole-idle.png", "地鼠待机"),
-  asset("mole-attack-1", "/assets/mole-attack-1.png", "地鼠攻击蓄力"),
-  asset("mole-attack-2", "/assets/mole-attack-2.png", "地鼠攻击命中"),
-  asset("mole-attack-3", "/assets/mole-attack-3.png", "地鼠攻击收势"),
-  asset("mole-skill-1", "/assets/mole-skill-1.png", "地鼠挖洞一"),
-  asset("mole-skill-2", "/assets/mole-skill-2.png", "地鼠挖洞二"),
-  asset("mole-skill-3", "/assets/mole-skill-3.png", "地鼠钻地"),
-  asset("mole-skill-4", "/assets/mole-skill-4.png", "地鼠偷袭"),
-  asset("mole-tunnel-1", "/assets/mole-tunnel-1.png", "地鼠钻洞起手"),
-  asset("mole-tunnel-2", "/assets/mole-tunnel-2.png", "地鼠地下突进"),
-  asset("mole-tunnel-3", "/assets/mole-tunnel-3.png", "地鼠出洞攻击"),
-  asset("mole-tunnel-4", "/assets/mole-tunnel-4.png", "地鼠返回洞口"),
+  asset("mole-idle", "/assets/mole-idle.png?v=20260726b", "地鼠待机"),
+  asset("mole-attack-1", "/assets/mole-attack-1.png?v=20260726b", "地鼠攻击蓄力"),
+  asset("mole-attack-2", "/assets/mole-attack-2.png?v=20260726b", "地鼠攻击命中"),
+  asset("mole-attack-3", "/assets/mole-attack-3.png?v=20260726b", "地鼠攻击收势"),
+  asset("mole-skill-1", "/assets/mole-skill-1.png?v=20260726b", "地鼠挖洞一"),
+  asset("mole-skill-2", "/assets/mole-skill-2.png?v=20260726b", "地鼠挖洞二"),
+  asset("mole-skill-3", "/assets/mole-skill-3.png?v=20260726b", "地鼠钻地"),
+  asset("mole-skill-4", "/assets/mole-skill-4.png?v=20260726b", "地鼠偷袭"),
+  asset("mole-tunnel-1", "/assets/mole-tunnel-1.png?v=20260726b", "地鼠钻洞起手"),
+  asset("mole-tunnel-2", "/assets/mole-tunnel-2.png?v=20260726b", "地鼠地下突进"),
+  asset("mole-tunnel-3", "/assets/mole-tunnel-3.png?v=20260726b", "地鼠出洞攻击"),
+  asset("mole-tunnel-4", "/assets/mole-tunnel-4.png?v=20260726b", "地鼠返回洞口"),
+  asset("mole-victory", "/assets/mole-victory.png?v=20260726b", "地鼠胜利挑衅"),
   asset("bamboo", "/assets/bamboo.png", "竹子"),
-  asset("hole", "/assets/hole.png", "洞"),
-  asset("rocket", "/assets/rocket.png", "火箭"),
+  asset("hole", "/assets/hole.png?v=20260726b", "洞"),
+  asset("rocket", "/assets/rocket.png?v=20260726b", "火箭"),
   asset("explosion", "/assets/explosion.png", "爆炸"),
 ];
 
 for (let star = 1; star <= 5; star += 1) {
+  const version = star === 4 ? "?v=20260726b" : "";
   defaultAssets.push(
-    asset(`police-${star}-idle`, `/assets/police-${star}-idle.png`, `${star}星警察待机`),
-    asset(`police-${star}-attack-1`, `/assets/police-${star}-attack-1.png`, `${star}星警察攻击一`),
-    asset(`police-${star}-attack-2`, `/assets/police-${star}-attack-2.png`, `${star}星警察攻击二`),
-    asset(`police-${star}-attack-3`, `/assets/police-${star}-attack-3.png`, `${star}星警察攻击三`),
+    asset(`police-${star}-idle`, `/assets/police-${star}-idle.png${version}`, `${star}星警察待机`),
+    asset(`police-${star}-attack-1`, `/assets/police-${star}-attack-1.png${version}`, `${star}星警察攻击一`),
+    asset(`police-${star}-attack-2`, `/assets/police-${star}-attack-2.png${version}`, `${star}星警察攻击二`),
+    asset(`police-${star}-attack-3`, `/assets/police-${star}-attack-3.png${version}`, `${star}星警察攻击三`),
   );
 }
 defaultAssets.push(
@@ -171,8 +173,15 @@ const policeDefinition = (
     skillParameters: { police: structuredClone(policeSkillParameters) },
     accent: ["", "#83c96f", "#5eb8ff", "#a58aff", "#ff9f58", "#ffd55e"][star],
     portraitAssetId: `police-${star}-idle`,
+    victoryStyle: star === 5 ? "spotlight" : "cool",
     animations: {
       ...baseAnimations(`police-${star}`),
+      victory: clip(
+        "victory",
+        [star === 5 ? "police-5-skill-3" : `police-${star}-attack-3`],
+        true,
+        520,
+      ),
       ...(star === 5
         ? {
             skill: clip("skill", [
@@ -207,6 +216,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     radius: 42,
     accent: "#f4d35e",
     portraitAssetId: "panda-lazy-idle",
+    victoryStyle: "taunt",
     attack: {
       range: 150,
       damage: 30,
@@ -217,6 +227,11 @@ export const defaultCharacters: CharacterDefinition[] = [
     skillParameters: { panda: structuredClone(pandaSkillParameters) },
     animations: {
       ...baseAnimations("panda-lazy"),
+      attack: clip("attack", [
+        "panda-lazy-attack-1",
+        "panda-lazy-attack-2",
+        "panda-lazy-idle",
+      ]),
       skill: clip(
         "skill",
         [
@@ -234,6 +249,7 @@ export const defaultCharacters: CharacterDefinition[] = [
         220,
       ),
       eatComplete: clip("eatComplete", ["panda-lazy-skill-4"], false, 650),
+      victory: clip("victory", ["panda-lazy-skill-4"], true, 520),
     },
     sounds: {
       attack: speech("panda-lazy-attack", ["别催，我打了。", "躺着也能拍到你。"]),
@@ -256,6 +272,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     radius: 26,
     accent: "#ed8f63",
     portraitAssetId: "mole-idle",
+    victoryStyle: "dance",
     attack: {
       range: 150,
       damage: 15,
@@ -278,6 +295,7 @@ export const defaultCharacters: CharacterDefinition[] = [
         false,
         180,
       ),
+      victory: clip("victory", ["mole-victory"], true, 500),
     },
     sounds: {
       attack: synth("mole-attack", "moleSqueak", 0.65),
@@ -306,6 +324,7 @@ export const defaultCharacters: CharacterDefinition[] = [
       mode: "projectile",
       projectileKind: "bullet",
       projectileSpeed: 650,
+      spreadDegrees: 1.5,
     },
   }),
   policeDefinition(3, {
@@ -320,6 +339,7 @@ export const defaultCharacters: CharacterDefinition[] = [
       mode: "burst",
       projectileKind: "bullet",
       projectileSpeed: 650,
+      spreadDegrees: 2.5,
       burstCount: 3,
       burstGap: 0.3,
     },
@@ -336,6 +356,7 @@ export const defaultCharacters: CharacterDefinition[] = [
       mode: "projectile",
       projectileKind: "rocket",
       projectileSpeed: 300,
+      spreadDegrees: 1,
       splashDamage: 50,
       splashRadius: 150,
     },
@@ -352,6 +373,7 @@ export const defaultCharacters: CharacterDefinition[] = [
       mode: "gatling",
       projectileKind: "bullet",
       projectileSpeed: 800,
+      spreadDegrees: 8,
       burstCount: 15,
       burstGap: 0.33,
     },
@@ -673,21 +695,52 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
   };
   for (const contestant of upgraded.setup.contestants) {
     if (contestant.definitionId === "panda") contestant.definitionId = "panda-lazy";
-    const needsHudMigration = !contestant.nameColor && !contestant.namePlacement;
+    const needsHudMigration = !contestant.nameColor;
     if (needsHudMigration && contestant.teamId && teamColors[contestant.teamId]) {
       contestant.color = teamColors[contestant.teamId];
     }
     contestant.nameColor ??= contestant.color;
-    contestant.namePlacement ??= "above";
+    delete (contestant as typeof contestant & { namePlacement?: unknown }).namePlacement;
   }
   upgraded.characters = upgraded.characters.filter((character) => character.id !== "panda");
   upgraded.nameLibraries = upgraded.nameLibraries.filter(
     (library) => library.definitionId !== "panda",
   );
 
+  const refreshedBuiltInAssets = new Set([
+    "mole-idle",
+    "mole-attack-1",
+    "mole-attack-2",
+    "mole-attack-3",
+    "mole-skill-1",
+    "mole-skill-2",
+    "mole-skill-3",
+    "mole-skill-4",
+    "mole-tunnel-1",
+    "mole-tunnel-2",
+    "mole-tunnel-3",
+    "mole-tunnel-4",
+    "mole-victory",
+    "hole",
+    "rocket",
+    "police-4-idle",
+    "police-4-attack-1",
+    "police-4-attack-2",
+    "police-4-attack-3",
+  ]);
   for (const assetDefinition of defaults.assets) {
-    if (!upgraded.assets.some((assetItem) => assetItem.id === assetDefinition.id)) {
+    const existingAsset = upgraded.assets.find(
+      (assetItem) => assetItem.id === assetDefinition.id,
+    );
+    if (!existingAsset) {
       upgraded.assets.push(structuredClone(assetDefinition));
+    } else if (
+      refreshedBuiltInAssets.has(assetDefinition.id) &&
+      existingAsset.url.startsWith("/assets/")
+    ) {
+      existingAsset.url = assetDefinition.url;
+      existingAsset.name = assetDefinition.name;
+      existingAsset.mime = assetDefinition.mime;
     }
   }
   for (const defaultCharacter of defaults.characters) {
@@ -712,8 +765,18 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.subtitle = defaultCharacter.subtitle;
     }
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
+    character.victoryStyle ??= defaultCharacter.victoryStyle ?? "spotlight";
+    character.attack.spreadDegrees ??= defaultCharacter.attack.spreadDegrees ?? 0;
     if (defaultCharacter.id === "mole" && character.radius === 32) {
       character.radius = defaultCharacter.radius;
+    }
+    if (
+      defaultCharacter.id === "panda-lazy" &&
+      character.animations.attack?.frames.some(
+        (frame) => frame.assetId === "panda-lazy-attack-3",
+      )
+    ) {
+      character.animations.attack = structuredClone(defaultCharacter.animations.attack);
     }
     if (defaultCharacter.id === "police-5") {
       const legacyPolice = character.skillParameters?.police;

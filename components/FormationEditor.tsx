@@ -59,7 +59,9 @@ export function FormationEditor({
   return (
     <div
       ref={boardRef}
-      className={`formation-board ${isLive ? "is-live" : "is-editing"}`}
+      className={`formation-board ${isLive ? "is-live" : "is-editing"} ${
+        board.height > board.width ? "is-portrait-board" : "is-landscape-board"
+      }`}
       style={{ aspectRatio: `${board.width} / ${board.height}` }}
       onPointerMove={(event) => moveContestant(event.clientX, event.clientY)}
       onPointerUp={() => setDraggingId(undefined)}

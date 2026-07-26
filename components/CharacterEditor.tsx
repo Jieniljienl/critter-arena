@@ -184,6 +184,42 @@ export function CharacterEditor({
     onNotice("已创建可编辑角色副本");
   };
 
+  const deleteCharacter = () => {
+    if (manifest.characters.length <= 1) {
+      onNotice("角色库至少需要保留一个角色");
+      return;
+    }
+    const password = window.prompt(`删除“${selected.name}”需要输入密码`);
+    if (password === null) return;
+    if (password !== "123") {
+      onNotice("密码错误，角色未删除");
+      return;
+    }
+    const next = structuredClone(manifest);
+    next.characters = next.characters.filter((character) => character.id !== selected.id);
+    next.nameLibraries = next.nameLibraries.filter(
+      (library) => library.definitionId !== selected.id,
+    );
+    next.setup.contestants = next.setup.contestants.filter(
+      (contestant) => contestant.definitionId !== selected.id,
+    );
+    for (const character of next.characters) {
+      character.abilities = character.abilities
+        .map((ability) => ({
+          ...ability,
+          actions: ability.actions.filter(
+            (action) =>
+              action.kind !== "spawnUnit" || action.definitionId !== selected.id,
+          ),
+        }))
+        .filter((ability) => ability.actions.length > 0);
+    }
+    next.updatedAt = new Date().toISOString();
+    onChange(next);
+    onSelect(next.characters[0].id);
+    onNotice(`已删除角色“${selected.name}”及其当前参赛实例`);
+  };
+
   const uploadAnimation = async (
     files: File[],
     clipName: "idle" | "attack" | "skill" | "tunnelAttack",
@@ -415,9 +451,19 @@ export function CharacterEditor({
             <h1>{selected.name}</h1>
             <p>{selected.subtitle}</p>
           </div>
-          <button className="secondary-button" type="button" onClick={createCharacter}>
-            <Plus size={16} /> 复制并扩展
-          </button>
+          <div className="editor-title-actions">
+            <button className="secondary-button" type="button" onClick={createCharacter}>
+              <Plus size={16} /> 复制并扩展
+            </button>
+            <button
+              className="secondary-button danger"
+              type="button"
+              onClick={deleteCharacter}
+              title="输入密码 123 后删除"
+            >
+              <Trash2 size={16} /> 删除角色
+            </button>
+          </div>
         </div>
 
         <div className="editor-grid">
@@ -483,6 +529,27 @@ export function CharacterEditor({
                     updateCharacter((character) => (character.accent = event.target.value))
                   }
                 />
+              </label>
+              <label>
+                获胜姿势
+                <select
+                  value={selected.victoryStyle ?? "spotlight"}
+                  onChange={(event) =>
+                    updateCharacter(
+                      (character) =>
+                        (character.victoryStyle = event.target.value as
+                          | "dance"
+                          | "cool"
+                          | "taunt"
+                          | "spotlight"),
+                    )
+                  }
+                >
+                  <option value="spotlight">聚光灯</option>
+                  <option value="dance">跳舞</option>
+                  <option value="cool">装酷</option>
+                  <option value="taunt">嘲讽</option>
+                </select>
               </label>
             </div>
           </div>
@@ -602,6 +669,28 @@ export function CharacterEditor({
                             (character.attack.projectileSpeed = numeric(
                               event.target.value,
                               character.attack.projectileSpeed ?? 650,
+                            )),
+                        )
+                      }
+                    />
+                  </label>
+                  <label>
+                    子弹散布（±角度）
+                    <input
+                      type="number"
+                      min={0}
+                      max={90}
+                      step={0.1}
+                      value={selected.attack.spreadDegrees ?? 0}
+                      onChange={(event) =>
+                        updateCharacter(
+                          (character) =>
+                            (character.attack.spreadDegrees = Math.max(
+                              0,
+                              numeric(
+                                event.target.value,
+                                character.attack.spreadDegrees ?? 0,
+                              ),
                             )),
                         )
                       }

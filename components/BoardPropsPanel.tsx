@@ -1,10 +1,16 @@
-import { Boxes } from "lucide-react";
+import { Boxes, Eraser, Trash2 } from "lucide-react";
 import type { BoardProp, RegionShape, RuntimeHole } from "@/lib/game/types";
 
 type BoardPropsPanelProps = {
   boardName: string;
   props: BoardProp[];
   holes: RuntimeHole[];
+  onUpdateProp?: (
+    propId: string,
+    changes: Partial<Pick<BoardProp, "active" | "buffDuration" | "effectPerSecond">>,
+  ) => void;
+  onRemoveProp?: (propId: string) => void;
+  onClearProps?: () => void;
 };
 
 const propMeta: Record<
@@ -66,6 +72,9 @@ export function BoardPropsPanel({
   boardName,
   props,
   holes,
+  onUpdateProp,
+  onRemoveProp,
+  onClearProps,
 }: BoardPropsPanelProps) {
   const counts = {
     bamboo: props.filter((prop) => prop.type === "bamboo"),
@@ -82,10 +91,23 @@ export function BoardPropsPanel({
           <span className="eyebrow">CURRENT BOARD</span>
           <h2>当前棋盘道具</h2>
         </div>
-        <span className="current-props-total" title="当前仍在棋盘上生效的道具数量">
-          <Boxes size={15} />
-          <strong>{currentCount}</strong>
-        </span>
+        <div className="sidebar-heading-actions">
+          <span className="current-props-total" title="当前仍在棋盘上生效的道具数量">
+            <Boxes size={15} />
+            <strong>{currentCount}</strong>
+          </span>
+          {onClearProps && (
+            <button
+              type="button"
+              className="sidebar-danger-button"
+              onClick={onClearProps}
+              disabled={!props.length && !holes.length}
+              title="清空当前棋盘的全部初始道具，并重置本局运行时洞口"
+            >
+              <Eraser size={13} /> 清空
+            </button>
+          )}
+        </div>
       </div>
 
       <p className="current-board-name" title={boardName}>
@@ -129,6 +151,63 @@ export function BoardPropsPanel({
                 </div>
                 <p>{describeEffect(prop)}</p>
                 <small>{describeShape(prop.shape)}</small>
+                {(onUpdateProp || onRemoveProp) && (
+                  <div className="current-prop-controls">
+                    {onUpdateProp && (
+                      <label>
+                        <input
+                          type="checkbox"
+                          checked={prop.active}
+                          onChange={(event) =>
+                            onUpdateProp(prop.id, { active: event.target.checked })
+                          }
+                        />
+                        启用
+                      </label>
+                    )}
+                    {onUpdateProp && prop.type !== "bamboo" && (
+                      <>
+                        <label>
+                          每秒
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.5}
+                            value={prop.effectPerSecond ?? 5}
+                            onChange={(event) =>
+                              onUpdateProp(prop.id, {
+                                effectPerSecond: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          离场
+                          <input
+                            type="number"
+                            min={0}
+                            step={0.1}
+                            value={prop.buffDuration ?? 3}
+                            onChange={(event) =>
+                              onUpdateProp(prop.id, {
+                                buffDuration: Number(event.target.value),
+                              })
+                            }
+                          />
+                        </label>
+                      </>
+                    )}
+                    {onRemoveProp && (
+                      <button
+                        type="button"
+                        onClick={() => onRemoveProp(prop.id)}
+                        title={`移除${prop.label || meta.name}`}
+                      >
+                        <Trash2 size={12} />
+                      </button>
+                    )}
+                  </div>
+                )}
               </div>
             </article>
           );

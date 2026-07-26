@@ -22,6 +22,8 @@ import {
   Gauge,
   ImagePlus,
   Maximize2,
+  Mic,
+  MicOff,
   Minimize2,
   Music2,
   Pause,
@@ -33,6 +35,7 @@ import {
   SkipForward,
   Sparkles,
   Swords,
+  Trash2,
   Upload,
   UsersRound,
   Volume2,
@@ -133,6 +136,8 @@ export function GameApp() {
   const [speed, setSpeed] = useState(1);
   const [muted, setMuted] = useState(false);
   const [volume, setVolume] = useState(0.72);
+  const [announcementsEnabled, setAnnouncementsEnabled] = useState(true);
+  const [announcementVolume, setAnnouncementVolume] = useState(0.78);
   const [hydrated, setHydrated] = useState(false);
   const [savedAt, setSavedAt] = useState<string>();
   const [notice, setNotice] = useState<string>();
@@ -197,6 +202,25 @@ export function GameApp() {
     arenaRef.current?.setVolume(volume);
   }, [volume]);
 
+  useEffect(() => {
+    arenaRef.current?.setAnnouncementsEnabled(announcementsEnabled);
+  }, [announcementsEnabled]);
+
+  useEffect(() => {
+    arenaRef.current?.setAnnouncementVolume(announcementVolume);
+  }, [announcementVolume]);
+
+  useEffect(() => {
+    const syncFullscreenState = () => {
+      if (!document.fullscreenElement) {
+        setCleanView(false);
+        setFullscreenControlsVisible(false);
+      }
+    };
+    document.addEventListener("fullscreenchange", syncFullscreenState);
+    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+  }, []);
+
   useEffect(
     () => () => {
       if (previewSyncFrameRef.current !== undefined) {
@@ -212,23 +236,25 @@ export function GameApp() {
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
-      if (event.key === "Escape" && cleanView) {
-        event.preventDefault();
-        setCleanView(false);
-        setFullscreenControlsVisible(false);
-        return;
-      }
       if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === "." && view === "battle") arenaRef.current?.step();
       if (event.key.toLowerCase() === "f" && view === "battle") {
         event.preventDefault();
-        setCleanView((current) => !current);
         setFullscreenControlsVisible(false);
+        if (document.fullscreenElement) {
+          void document.exitFullscreen();
+        } else {
+          setCleanView(true);
+          void document.documentElement.requestFullscreen().catch(() => {
+            setCleanView(false);
+            setNotice("浏览器未允许进入全屏，请再点击一次“纯净全屏”");
+          });
+        }
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [cleanView, view]);
+  }, [view]);
 
   const showNotice = useCallback((message: string) => setNotice(message), []);
 
@@ -305,6 +331,8 @@ export function GameApp() {
     arenaRef.current?.setSpeed(speed);
     arenaRef.current?.setMuted(muted);
     arenaRef.current?.setVolume(volume);
+    arenaRef.current?.setAnnouncementsEnabled(announcementsEnabled);
+    arenaRef.current?.setAnnouncementVolume(announcementVolume);
     if (!pendingAutoStart) arenaRef.current?.syncReadySetup(manifest.setup);
     if (pendingAutoStart) {
       arenaRef.current?.start();
@@ -370,14 +398,24 @@ export function GameApp() {
     setNotice(`已切换为${nextBoard.name}`);
   };
 
-  const enterCleanView = () => {
+  const enterCleanView = async () => {
     setCleanView(true);
     setFullscreenControlsVisible(false);
+    if (document.fullscreenElement) return;
+    try {
+      await document.documentElement.requestFullscreen();
+    } catch {
+      setCleanView(false);
+      setNotice("浏览器未允许进入全屏，请检查全屏权限后重试");
+    }
   };
 
-  const exitCleanView = () => {
+  const exitCleanView = async () => {
     setCleanView(false);
     setFullscreenControlsVisible(false);
+    if (document.fullscreenElement) {
+      await document.exitFullscreen().catch(() => undefined);
+    }
   };
 
   const revealFullscreenControls = () => {
@@ -430,7 +468,6 @@ export function GameApp() {
       direction: { x: Math.cos(angle), y: Math.sin(angle) },
       color: fighterColor,
       nameColor: fighterColor,
-      namePlacement: "above",
     };
     updateSetup({
       ...manifest.setup,
@@ -445,9 +482,74 @@ export function GameApp() {
     });
   };
 
+  const replaceManifestAndResetPreview = (
+    next: ProjectManifest,
+    message: string,
+  ) => {
+    next.updatedAt = new Date().toISOString();
+    setManifest(next);
+    setBattleManifest(structuredClone(next));
+    setSnapshot(undefined);
+    setPendingAutoStart(false);
+    setBattleKey((key) => key + 1);
+    setNotice(message);
+  };
+
+  const clearContestants = () => {
+    if (!manifest.setup.contestants.length) return;
+    if (!window.confirm("确定清空当前全部角色实例吗？角色模板和名字库不会被删除。")) {
+      return;
+    }
+    const next = structuredClone(manifest);
+    next.setup.contestants = [];
+    replaceManifestAndResetPreview(next, "已清空当前参赛角色实例");
+  };
+
+  const updateCurrentBoardProp = (
+    propId: string,
+    changes: Partial<
+      Pick<
+        NonNullable<typeof activeBoard>["props"][number],
+        "active" | "buffDuration" | "effectPerSecond"
+      >
+    >,
+  ) => {
+    const next = structuredClone(manifest);
+    const board = next.boards.find((candidate) => candidate.id === next.setup.boardId);
+    const prop = board?.props.find((candidate) => candidate.id === propId);
+    if (!prop) return;
+    Object.assign(prop, changes);
+    replaceManifestAndResetPreview(next, "道具实例设置已更新");
+  };
+
+  const removeCurrentBoardProp = (propId: string) => {
+    const next = structuredClone(manifest);
+    const board = next.boards.find((candidate) => candidate.id === next.setup.boardId);
+    if (!board) return;
+    board.props = board.props.filter((prop) => prop.id !== propId);
+    replaceManifestAndResetPreview(next, "已移除当前道具实例");
+  };
+
+  const clearCurrentBoardProps = () => {
+    const board = manifest.boards.find((candidate) => candidate.id === manifest.setup.boardId);
+    if (!board || (!board.props.length && !currentBoardHoles.length)) return;
+    if (
+      !window.confirm(
+        `确定清空“${board.name}”的全部道具吗？当前运行时洞口也会随比赛重置清除。`,
+      )
+    ) {
+      return;
+    }
+    const next = structuredClone(manifest);
+    const nextBoard = next.boards.find((candidate) => candidate.id === next.setup.boardId);
+    if (!nextBoard) return;
+    nextBoard.props = [];
+    replaceManifestAndResetPreview(next, "已清空当前棋盘全部道具");
+  };
+
   const updateContestantHud = (
     id: string,
-    changes: Partial<Pick<MatchContestant, "color" | "nameColor" | "namePlacement">>,
+    changes: Partial<Pick<MatchContestant, "color" | "nameColor">>,
     syncTeam = false,
   ) => {
     const source = manifest.setup.contestants.find((contestant) => contestant.id === id);
@@ -735,7 +837,7 @@ export function GameApp() {
               <button
                 type="button"
                 className="clean-view-control"
-                onClick={cleanView ? exitCleanView : enterCleanView}
+                onClick={() => void (cleanView ? exitCleanView() : enterCleanView())}
                 title="隐藏全部界面，只保留对战画面（快捷键 F）"
               >
                 {cleanView ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
@@ -760,6 +862,26 @@ export function GameApp() {
                 value={volume}
                 onChange={(event) => setVolume(Number(event.target.value))}
               />
+              <div className="announcer-controls" title="击杀与获胜语音播报">
+                <button
+                  type="button"
+                  className={`icon-control ${announcementsEnabled ? "is-active" : ""}`}
+                  onClick={() => setAnnouncementsEnabled((enabled) => !enabled)}
+                  aria-label={announcementsEnabled ? "关闭语音播报" : "开启语音播报"}
+                >
+                  {announcementsEnabled ? <Mic size={17} /> : <MicOff size={17} />}
+                </button>
+                <input
+                  aria-label="语音播报音量"
+                  type="range"
+                  min={0}
+                  max={1}
+                  step={0.01}
+                  value={announcementVolume}
+                  disabled={!announcementsEnabled}
+                  onChange={(event) => setAnnouncementVolume(Number(event.target.value))}
+                />
+              </div>
               <div className="music-controls">
                 <button
                   type="button"
@@ -855,9 +977,20 @@ export function GameApp() {
                   <span className="eyebrow">PRE-MATCH</span>
                   <h2>参赛阵容</h2>
                 </div>
-                <button type="button" className="text-button" onClick={randomizeFormation}>
-                  <Sparkles size={14} /> 打乱
-                </button>
+                <div className="sidebar-heading-actions">
+                  <button type="button" className="text-button" onClick={randomizeFormation}>
+                    <Sparkles size={14} /> 打乱
+                  </button>
+                  <button
+                    type="button"
+                    className="sidebar-danger-button"
+                    onClick={clearContestants}
+                    disabled={!manifest.setup.contestants.length}
+                    title="一键清空当前全部角色实例"
+                  >
+                    <Trash2 size={13} /> 清空
+                  </button>
+                </div>
               </div>
               <FormationEditor
                 setup={manifest.setup}
@@ -963,20 +1096,97 @@ export function GameApp() {
                             }
                           />
                         </label>
+                      </div>
+                      <div className="contestant-instance-controls">
                         <label>
-                          <span>位置</span>
-                          <select
-                            value={contestant.namePlacement ?? "above"}
-                            aria-label={`${contestant.displayName}名字位置`}
-                            onChange={(event) =>
-                              updateContestantHud(contestant.id, {
-                                namePlacement: event.target.value as "above" | "inside",
-                              })
-                            }
-                          >
-                            <option value="above">血条上方</option>
-                            <option value="inside">血条内</option>
-                          </select>
+                          X
+                          <input
+                            type="number"
+                            min={0}
+                            max={activeBoard?.width ?? 1600}
+                            value={Math.round(contestant.position.x)}
+                            onChange={(event) => {
+                              const x = Math.max(
+                                0,
+                                Math.min(
+                                  activeBoard?.width ?? 1600,
+                                  Number(event.target.value),
+                                ),
+                              );
+                              updateSetup({
+                                ...manifest.setup,
+                                contestants: manifest.setup.contestants.map((candidate) =>
+                                  candidate.id === contestant.id
+                                    ? {
+                                        ...candidate,
+                                        position: { ...candidate.position, x },
+                                      }
+                                    : candidate,
+                                ),
+                              });
+                            }}
+                          />
+                        </label>
+                        <label>
+                          Y
+                          <input
+                            type="number"
+                            min={0}
+                            max={activeBoard?.height ?? 900}
+                            value={Math.round(contestant.position.y)}
+                            onChange={(event) => {
+                              const y = Math.max(
+                                0,
+                                Math.min(
+                                  activeBoard?.height ?? 900,
+                                  Number(event.target.value),
+                                ),
+                              );
+                              updateSetup({
+                                ...manifest.setup,
+                                contestants: manifest.setup.contestants.map((candidate) =>
+                                  candidate.id === contestant.id
+                                    ? {
+                                        ...candidate,
+                                        position: { ...candidate.position, y },
+                                      }
+                                    : candidate,
+                                ),
+                              });
+                            }}
+                          />
+                        </label>
+                        <label>
+                          朝向°
+                          <input
+                            type="number"
+                            min={0}
+                            max={359}
+                            value={Math.round(
+                              ((Math.atan2(contestant.direction.y, contestant.direction.x) *
+                                180) /
+                                Math.PI +
+                                360) %
+                                360,
+                            )}
+                            onChange={(event) => {
+                              const radians = (Number(event.target.value) * Math.PI) / 180;
+                              updateSetup({
+                                ...manifest.setup,
+                                contestants: manifest.setup.contestants.map((candidate) =>
+                                  candidate.id === contestant.id
+                                    ? {
+                                        ...candidate,
+                                        direction: {
+                                          x: Math.cos(radians),
+                                          y: Math.sin(radians),
+                                        },
+                                      }
+                                    : candidate,
+                                ),
+                              });
+                            }}
+                          />
                         </label>
                       </div>
                     </div>
@@ -1008,6 +1218,9 @@ export function GameApp() {
               boardName={currentBoard?.name ?? "未选择棋盘"}
               props={currentBoardProps}
               holes={currentBoardHoles}
+              onUpdateProp={updateCurrentBoardProp}
+              onRemoveProp={removeCurrentBoardProp}
+              onClearProps={clearCurrentBoardProps}
             />
 
             <section className="sidebar-section event-section">

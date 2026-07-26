@@ -265,6 +265,9 @@ export class BattleSimulation {
               ...unit.tunnelData,
               origin: { ...unit.tunnelData.origin },
               destination: { ...unit.tunnelData.destination },
+              returnDestination: unit.tunnelData.returnDestination
+                ? { ...unit.tunnelData.returnDestination }
+                : undefined,
             }
           : undefined,
         gatling: unit.gatling
@@ -547,7 +550,11 @@ export class BattleSimulation {
     } else {
       unit.lastHoleId = currentHole.id;
       if (this.time >= unit.nextAmbushAt) {
-        const candidates = availableHoles
+        const ambushHoles =
+          availableHoles.length > 1
+            ? availableHoles.filter((hole) => hole.id !== currentHole.id)
+            : [currentHole];
+        const candidates = ambushHoles
           .flatMap((hole) =>
             this.validTargets(unit, parameters?.ambushRange ?? definition.attack.range, hole).map((target) => ({
               hole,
@@ -566,11 +573,13 @@ export class BattleSimulation {
             mode: "ambush",
             origin: { x: unit.x, y: unit.y },
             destination: { x: selection.hole.x, y: selection.hole.y },
+            destinationHoleId: selection.hole.id,
             targetId: selection.target.id,
+            hitSucceeded: false,
           };
           this.enqueueShot({
             id: this.nextId("ambush"),
-            at: this.time + tunnelDuration * 0.5,
+            at: this.time + tunnelDuration * 0.54,
             sourceId: unit.id,
             targetId: selection.target.id,
             from: { x: selection.hole.x, y: selection.hole.y },
@@ -608,6 +617,7 @@ export class BattleSimulation {
             mode: "travel",
             origin: { x: unit.x, y: unit.y },
             destination: { x: destination.x, y: destination.y },
+            destinationHoleId: destination.id,
           };
           this.emit("skill", `${unit.name} 随机钻向另一处洞口`, unit, undefined, "tunnel");
           return;
@@ -639,9 +649,22 @@ export class BattleSimulation {
       unit.y = position.y;
       return;
     }
-    const position = progress >= 0.34 && progress < 0.78 ? tunnel.destination : tunnel.origin;
-    unit.x = position.x;
-    unit.y = position.y;
+    if (progress < 0.34) {
+      unit.x = tunnel.origin.x;
+      unit.y = tunnel.origin.y;
+      return;
+    }
+    if (
+      tunnel.hitSucceeded &&
+      tunnel.returnDestination &&
+      progress >= 0.72
+    ) {
+      unit.x = tunnel.returnDestination.x;
+      unit.y = tunnel.returnDestination.y;
+      return;
+    }
+    unit.x = tunnel.destination.x;
+    unit.y = tunnel.destination.y;
   }
 
   private updateGatling(
@@ -782,16 +805,15 @@ export class BattleSimulation {
           if (tunnel.mode === "travel") {
             unit.x = tunnel.destination.x;
             unit.y = tunnel.destination.y;
-            unit.lastHoleId = undefined;
-            for (const hole of this.holes.values()) {
-              if (distance(hole, tunnel.destination) < 1) {
-                unit.lastHoleId = hole.id;
-                break;
-              }
-            }
+            unit.lastHoleId = tunnel.destinationHoleId;
+          } else if (tunnel.hitSucceeded && tunnel.returnDestination) {
+            unit.x = tunnel.returnDestination.x;
+            unit.y = tunnel.returnDestination.y;
+            unit.lastHoleId = tunnel.returnHoleId;
           } else {
-            unit.x = tunnel.origin.x;
-            unit.y = tunnel.origin.y;
+            unit.x = tunnel.destination.x;
+            unit.y = tunnel.destination.y;
+            unit.lastHoleId = tunnel.destinationHoleId;
           }
         }
         unit.targetable = true;
@@ -890,11 +912,25 @@ export class BattleSimulation {
       processed += 1;
       const source = this.units.get(shot.sourceId);
       const target = this.units.get(shot.targetId);
-      if (!source || source.action === "dead" || !target || !target.targetable) continue;
+      if (!source || source.action === "dead") continue;
       const definition = this.definitions.get(source.definitionId);
       if (!definition) continue;
 
       if (shot.ambush) {
+        const tunnel = source.tunnelData;
+        if (
+          !target ||
+          !target.targetable ||
+          source.action !== "tunneling" ||
+          tunnel?.mode !== "ambush"
+        ) {
+          if (tunnel?.mode === "ambush") {
+            tunnel.hitSucceeded = false;
+            source.targetable = true;
+            source.actionUntil = Math.min(source.actionUntil, this.time + 0.18);
+          }
+          continue;
+        }
         const origin = shot.from ?? source;
         if (distance(origin, target) <= (shot.range ?? definition.attack.range) + target.radius) {
           this.damageUnit(
@@ -905,10 +941,21 @@ export class BattleSimulation {
           );
           this.emit("attack", `${source.name} 从洞口偷袭 ${target.name}`, source, target, "swipe");
           this.runModules(source, "onAttack");
+          tunnel.hitSucceeded = true;
+          const returnHole = this.random.pick([...this.holes.values()]);
+          if (returnHole) {
+            tunnel.returnDestination = { x: returnHole.x, y: returnHole.y };
+            tunnel.returnHoleId = returnHole.id;
+          }
+        } else {
+          tunnel.hitSucceeded = false;
+          source.targetable = true;
+          source.actionUntil = Math.min(source.actionUntil, this.time + 0.18);
         }
         continue;
       }
 
+      if (!target || !target.targetable) continue;
       if (definition.attack.mode === "melee") {
         if (distance(source, target) <= definition.attack.range + target.radius) {
           this.damageUnit(target.id, definition.attack.damage, source.id, "directAttack");
@@ -1014,16 +1061,25 @@ export class BattleSimulation {
     const attack = definition.attack;
     const speed = attack.projectileSpeed ?? 650;
     const kind = attack.projectileKind ?? "bullet";
+    const spreadRadians =
+      Math.max(0, attack.spreadDegrees ?? 0) * (Math.PI / 180);
+    const spreadOffset =
+      spreadRadians > 0 ? (this.random.next() * 2 - 1) * spreadRadians : 0;
+    const directionAngle = Math.atan2(direction.y, direction.x) + spreadOffset;
+    const shotDirection = {
+      x: Math.cos(directionAngle),
+      y: Math.sin(directionAngle),
+    };
     const projectile: RuntimeProjectile = {
       id: this.nextId(kind),
       ownerId: source.ownerId,
       factionId: source.factionId,
       sourceUnitId: source.id,
       kind,
-      x: source.x + direction.x * (source.radius + 8),
-      y: source.y + direction.y * (source.radius + 8),
-      vx: direction.x * speed,
-      vy: direction.y * speed,
+      x: source.x + shotDirection.x * (source.radius + 8),
+      y: source.y + shotDirection.y * (source.radius + 8),
+      vx: shotDirection.x * speed,
+      vy: shotDirection.y * speed,
       radius: kind === "rocket" ? 14 : 7,
       damage: attack.damage,
       splashDamage: attack.splashDamage,

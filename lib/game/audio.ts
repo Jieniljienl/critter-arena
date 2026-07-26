@@ -14,6 +14,8 @@ export class ArenaAudio {
   private master?: GainNode;
   private muted = false;
   private volume = 0.72;
+  private announcementsEnabled = true;
+  private announcementVolume = 0.78;
   private lastPlayed = new Map<string, number>();
   private soundWindowStartedAt = 0;
   private soundsInWindow = 0;
@@ -50,6 +52,15 @@ export class ArenaAudio {
   setVolume(volume: number): void {
     this.volume = Math.max(0, Math.min(1, volume));
     this.applyMasterVolume();
+  }
+
+  setAnnouncementsEnabled(enabled: boolean): void {
+    this.announcementsEnabled = enabled;
+    if (!enabled && typeof window !== "undefined") window.speechSynthesis?.cancel();
+  }
+
+  setAnnouncementVolume(volume: number): void {
+    this.announcementVolume = Math.max(0, Math.min(1, volume));
   }
 
   async setMusic(config: BackgroundMusicConfig, assets: AssetRef[]): Promise<void> {
@@ -213,7 +224,14 @@ export class ArenaAudio {
   }
 
   private playAnnouncement(message: string, priority: boolean): void {
-    if (this.muted || typeof window === "undefined" || !window.speechSynthesis) return;
+    if (
+      this.muted ||
+      !this.announcementsEnabled ||
+      typeof window === "undefined" ||
+      !window.speechSynthesis
+    ) {
+      return;
+    }
     if (!priority && performance.now() - this.lastSpeechAt < 650) return;
     if (priority) window.speechSynthesis.cancel();
     this.lastSpeechAt = performance.now();
@@ -221,7 +239,10 @@ export class ArenaAudio {
     utterance.lang = "zh-CN";
     utterance.rate = priority ? 0.98 : 1.02;
     utterance.pitch = 1;
-    utterance.volume = Math.min(0.86, this.volume * (priority ? 0.9 : 0.72));
+    utterance.volume = Math.min(
+      0.9,
+      this.volume * this.announcementVolume * (priority ? 1 : 0.82),
+    );
     const voice = this.preferredChineseVoice("announcer");
     if (voice) utterance.voice = voice;
     window.speechSynthesis.speak(utterance);

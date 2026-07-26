@@ -404,7 +404,7 @@ test("an RPG that misses its moving target explodes on the board edge", () => {
   );
 });
 
-test("five-star police fires each periodic round along one locked direction", () => {
+test("five-star police keeps one round direction while applying configurable spread", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.width = 2_000;
@@ -446,14 +446,23 @@ test("five-star police fires each periodic round along one locked direction", ()
   runSteps(simulation, 35);
   let projectiles = simulation.getSnapshot().projectiles;
   assert.equal(projectiles.length, 4);
-  const firstDirection = {
-    x: projectiles[0].vx / 20,
-    y: projectiles[0].vy / 20,
-  };
-  for (const projectile of projectiles.slice(1)) {
-    assert.ok(Math.abs(projectile.vx / 20 - firstDirection.x) < 1e-9);
-    assert.ok(Math.abs(projectile.vy / 20 - firstDirection.y) < 1e-9);
+  const lockedAngle = Math.atan2(300 - 500, 1_600 - 150);
+  const shotAngles = projectiles.map((projectile) =>
+    Math.atan2(projectile.vy, projectile.vx),
+  );
+  for (const angle of shotAngles) {
+    const difference = Math.atan2(
+      Math.sin(angle - lockedAngle),
+      Math.cos(angle - lockedAngle),
+    );
+    assert.ok(
+      Math.abs(difference) <= ((officer.attack.spreadDegrees ?? 0) * Math.PI) / 180 + 1e-9,
+    );
   }
+  assert.ok(
+    new Set(shotAngles.map((angle) => angle.toFixed(6))).size > 1,
+    "gatling spread should vary individual bullets without reacquiring the target",
+  );
 
   runSteps(simulation, 125);
   assert.equal(simulation.getSnapshot().projectiles.length, 4);
@@ -642,6 +651,161 @@ test("a mole can ambush through a single nearby hole and stays immune to new dam
     snapshot.events.some((event) => event.message.includes("同一洞口突袭")),
     "the single-hole ambush animation path should be selected",
   );
+});
+
+test("a missed cross-hole ambush emerges at its destination and becomes targetable", () => {
+  const manifest = twoFighterManifest();
+  const mole = definition(manifest, "mole");
+  const panda = definition(manifest, "panda-lazy");
+  mole.speed = 0;
+  mole.attack.range = -100;
+  mole.attack.damage = 15;
+  mole.skillParameters!.mole!.digCooldown = 100;
+  mole.skillParameters!.mole!.ambushCooldown = 100;
+  mole.skillParameters!.mole!.tunnelDuration = 1;
+  panda.pluginId = undefined;
+  panda.speed = 400;
+  panda.attack.range = 0;
+  panda.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "miss-mole",
+      definitionId: "mole",
+      displayName: "扑空地鼠",
+      position: { x: 250, y: 450 },
+      direction: { x: 1, y: 0 },
+      color: "#ff8b62",
+      teamId: "red",
+    },
+    {
+      id: "helper-mole",
+      definitionId: "mole",
+      displayName: "挖洞队友",
+      position: { x: 800, y: 450 },
+      direction: { x: -1, y: 0 },
+      color: "#ff8b62",
+      teamId: "red",
+    },
+    {
+      id: "fast-target",
+      definitionId: "panda-lazy",
+      displayName: "快速路过目标",
+      position: { x: 560, y: 450 },
+      direction: { x: 1, y: 0 },
+      color: "#55a7ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  let enteredTunnel = false;
+  let emerged:
+    | ReturnType<BattleSimulation["getSnapshot"]>["units"][number]
+    | undefined;
+  for (let step = 0; step < 180; step += 1) {
+    simulation.step(1 / 60);
+    const current = simulation
+      .getSnapshot()
+      .units.find((unit) => unit.id === "miss-mole");
+    assert.ok(current);
+    if (current.action === "tunneling") enteredTunnel = true;
+    if (enteredTunnel && current.action !== "tunneling") {
+      emerged = current;
+      break;
+    }
+  }
+  assert.equal(enteredTunnel, true);
+  assert.ok(emerged);
+  assert.equal(emerged.targetable, true);
+  assert.ok(Math.abs(emerged.x - 800) < 1);
+  assert.ok(Math.abs(emerged.y - 450) < 1);
+  const target = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "fast-target");
+  assert.ok(target);
+  assert.equal(target.hp, target.maxHp);
+});
+
+test("a successful cross-hole ambush returns to a random surviving hole", () => {
+  const manifest = twoFighterManifest();
+  const mole = definition(manifest, "mole");
+  const panda = definition(manifest, "panda-lazy");
+  mole.speed = 0;
+  mole.attack.range = -100;
+  mole.attack.damage = 15;
+  mole.skillParameters!.mole!.digCooldown = 100;
+  mole.skillParameters!.mole!.ambushCooldown = 100;
+  mole.skillParameters!.mole!.tunnelDuration = 1;
+  panda.pluginId = undefined;
+  panda.speed = 0;
+  panda.attack.range = 0;
+  panda.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "return-mole",
+      definitionId: "mole",
+      displayName: "回洞地鼠",
+      position: { x: 250, y: 450 },
+      direction: { x: 1, y: 0 },
+      color: "#ff8b62",
+      teamId: "red",
+    },
+    {
+      id: "return-helper",
+      definitionId: "mole",
+      displayName: "另一洞队友",
+      position: { x: 800, y: 450 },
+      direction: { x: -1, y: 0 },
+      color: "#ff8b62",
+      teamId: "red",
+    },
+    {
+      id: "stationary-target",
+      definitionId: "panda-lazy",
+      displayName: "洞边固定靶",
+      position: { x: 800, y: 450 },
+      direction: { x: 1, y: 0 },
+      color: "#55a7ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  let enteredTunnel = false;
+  let returned:
+    | ReturnType<BattleSimulation["getSnapshot"]>["units"][number]
+    | undefined;
+  for (let step = 0; step < 180; step += 1) {
+    simulation.step(1 / 60);
+    const current = simulation
+      .getSnapshot()
+      .units.find((unit) => unit.id === "return-mole");
+    assert.ok(current);
+    if (current.action === "tunneling") enteredTunnel = true;
+    if (enteredTunnel && current.action !== "tunneling") {
+      returned = current;
+      break;
+    }
+  }
+  assert.equal(enteredTunnel, true);
+  assert.ok(returned);
+  assert.equal(returned.targetable, true);
+  assert.ok(
+    simulation
+      .getSnapshot()
+      .holes.some(
+        (hole) =>
+          Math.abs(hole.x - returned.x) < 1 &&
+          Math.abs(hole.y - returned.y) < 1,
+      ),
+  );
+  const target = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "stationary-target");
+  assert.ok(target);
+  assert.equal(target.hp, target.maxHp - 15);
 });
 
 test("allied projectiles pass through allies and team victory waits only for enemy factions", () => {
@@ -899,7 +1063,7 @@ test("legacy panda entries migrate to the single lazy panda definition", () => {
   assert.equal(definition(upgraded, "panda-lazy").name, "熊猫");
 });
 
-test("legacy team HUD colors gain clear defaults while saved custom styles stay intact", () => {
+test("legacy team HUD colors gain clear defaults and obsolete name positions are removed", () => {
   const manifest = createDefaultManifest();
   manifest.setup.contestants[0].teamId = "red";
   manifest.setup.contestants[0].color = "#111111";
@@ -909,16 +1073,22 @@ test("legacy team HUD colors gain clear defaults while saved custom styles stay 
   const upgraded = upgradeManifest(manifest);
   assert.equal(upgraded.setup.contestants[0].color, "#ff5968");
   assert.equal(upgraded.setup.contestants[0].nameColor, "#ff5968");
-  assert.equal(upgraded.setup.contestants[0].namePlacement, "above");
   assert.equal(upgraded.setup.contestants[1].color, "#55a7ff");
 
   upgraded.setup.contestants[0].color = "#123456";
   upgraded.setup.contestants[0].nameColor = "#abcdef";
-  upgraded.setup.contestants[0].namePlacement = "inside";
+  (
+    upgraded.setup.contestants[0] as typeof upgraded.setup.contestants[number] & {
+      namePlacement?: string;
+    }
+  ).namePlacement = "inside";
   const reloaded = upgradeManifest(upgraded);
   assert.equal(reloaded.setup.contestants[0].color, "#123456");
   assert.equal(reloaded.setup.contestants[0].nameColor, "#abcdef");
-  assert.equal(reloaded.setup.contestants[0].namePlacement, "inside");
+  assert.equal(
+    "namePlacement" in reloaded.setup.contestants[0],
+    false,
+  );
 });
 
 test("extreme sub-frame burst settings stay deterministic and within runtime budgets", () => {

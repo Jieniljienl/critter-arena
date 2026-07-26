@@ -32,6 +32,8 @@ export type ArenaHandle = {
   setSpeed: (speed: number) => void;
   setMuted: (muted: boolean) => void;
   setVolume: (volume: number) => void;
+  setAnnouncementsEnabled: (enabled: boolean) => void;
+  setAnnouncementVolume: (volume: number) => void;
   setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => void;
   setMusicVolume: (volume: number) => void;
   syncReadySetup: (setup: ProjectManifest["setup"]) => boolean;
@@ -84,7 +86,7 @@ const collectBattleImageAssets = (
     }
   }
 
-  const assetIds = new Set<string>(["bamboo", "rocket", "explosion"]);
+  const assetIds = new Set<string>(["bamboo", "hole", "rocket", "explosion"]);
   const board = manifest.boards.find((candidate) => candidate.id === setup.boardId);
   if (board?.backgroundAssetId) assetIds.add(board.backgroundAssetId);
   for (const definitionId of definitionIds) {
@@ -149,6 +151,7 @@ const frameForClip = (
 
 const actionClipName = (unit: RuntimeUnit): string => {
   if (unit.action === "tunneling") return "tunnelAttack";
+  if (unit.action === "victory") return "victory";
   if (unit.action === "eating") return "eat";
   if (unit.action === "satisfied") return "eatComplete";
   if (unit.action === "digging" || unit.action === "kick") {
@@ -215,6 +218,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           volumeRef.current = nextVolume;
           audioRef.current.setVolume(nextVolume);
         },
+        setAnnouncementsEnabled: (enabled: boolean) => {
+          audioRef.current.setAnnouncementsEnabled(enabled);
+        },
+        setAnnouncementVolume: (nextVolume: number) => {
+          audioRef.current.setAnnouncementVolume(nextVolume);
+        },
         setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => {
           void audioRef.current.setMusic(config, assets);
         },
@@ -270,6 +279,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private overlayGraphics!: PhaserType.GameObjects.Graphics;
           private unitImages = new Map<string, PhaserType.GameObjects.Image>();
           private projectileImages = new Map<string, PhaserType.GameObjects.Image>();
+          private holeImages = new Map<string, PhaserType.GameObjects.Image>();
           private effectImages = new Map<string, PhaserType.GameObjects.Image>();
           private unitFallbacks = new Map<string, PhaserType.GameObjects.Text>();
           private unitLabels = new Map<string, PhaserType.GameObjects.Text>();
@@ -452,6 +462,13 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.projectileImages.delete(id);
               }
             }
+            const activeHoleIds = new Set(snapshot.holes.map((hole) => hole.id));
+            for (const [id, image] of this.holeImages) {
+              if (!activeHoleIds.has(id)) {
+                image.destroy();
+                this.holeImages.delete(id);
+              }
+            }
             for (const [id, label] of this.unitLabels) {
               if (!activeIds.has(id)) {
                 label.destroy();
@@ -464,7 +481,6 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.healthLabels.delete(id);
               }
             }
-            const activeHoleIds = new Set(snapshot.holes.map((hole) => hole.id));
             for (const [id, label] of this.holeLabels) {
               if (!activeHoleIds.has(id)) {
                 label.destroy();
@@ -530,9 +546,6 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.drawAreaTexture(prop, time);
               } else {
                 const center = this.shapeCenter(prop.shape);
-                if (shouldRedrawShapes) {
-                  this.drawShape(this.propGraphics, prop.shape, 0x2d6f4a, 0.18, 0x79cf71);
-                }
                 const key = "asset:bamboo";
                 if (this.textures.exists(key) && !this.failedTextures.has(key)) {
                   const markerKey = `prop:${prop.id}`;
@@ -671,12 +684,26 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
 
           private drawHoles(snapshot: BattleSnapshot) {
             for (const hole of snapshot.holes) {
-              this.arenaGraphics.fillStyle(0x1a1412, 0.88);
-              this.arenaGraphics.lineStyle(4, 0x7d5f3b, 0.9);
-              this.arenaGraphics.fillEllipse(hole.x, hole.y, hole.radius * 1.65, hole.radius * 0.72);
-              this.arenaGraphics.strokeEllipse(hole.x, hole.y, hole.radius * 1.65, hole.radius * 0.72);
-              this.arenaGraphics.lineStyle(2, 0xe1b76b, 0.18);
-              this.arenaGraphics.strokeCircle(hole.x, hole.y, hole.radius);
+              const holeKey = "asset:hole";
+              if (this.textures.exists(holeKey) && !this.failedTextures.has(holeKey)) {
+                let image = this.holeImages.get(hole.id);
+                if (!image) {
+                  image = this.add.image(hole.x, hole.y, holeKey).setDepth(-4);
+                  this.holeImages.set(hole.id, image);
+                }
+                image
+                  .setPosition(hole.x, hole.y)
+                  .setDisplaySize(hole.radius * 1.2, hole.radius * 0.72)
+                  .setAlpha(0.96);
+              } else {
+                this.arenaGraphics.fillStyle(0x17110e, 0.9);
+                this.arenaGraphics.fillEllipse(
+                  hole.x,
+                  hole.y,
+                  hole.radius * 1.18,
+                  hole.radius * 0.66,
+                );
+              }
               let label = this.holeLabels.get(hole.id);
               if (!label) {
                 label = this.add
@@ -692,9 +719,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   .setDepth(19);
                 this.holeLabels.set(hole.id, label);
               }
-              const holeText = `洞口 ${hole.stompsRemaining}/${hole.stompsRequired}`;
+              const holeText = `${hole.stompsRemaining}/${hole.stompsRequired}`;
               if (label.text !== holeText) label.setText(holeText);
-              label.setPosition(hole.x, hole.y + hole.radius * 0.55);
+              label.setPosition(hole.x, hole.y + hole.radius * 0.42);
             }
           }
 
@@ -710,7 +737,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   }
                   image
                     .setPosition(projectile.x, projectile.y)
-                    .setDisplaySize(projectile.radius * 4.9, projectile.radius * 4.9)
+                    .setDisplaySize(projectile.radius * 8.2, projectile.radius * 3.2)
                     .setRotation(Math.atan2(projectile.vy, projectile.vx));
                 } else {
                   const angle = Math.atan2(projectile.vy, projectile.vx);
@@ -1133,31 +1160,68 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 visualY = origin.y;
                 tunnelAlpha = 1 - progress / 0.2;
                 tunnelScale = Math.max(0.2, 1 - progress / 0.26);
-              } else if (progress < 0.34) {
-                visualX = origin.x;
-                visualY = origin.y;
-                tunnelAlpha = 0;
-              } else if (progress < 0.64) {
+              } else if (progress < 0.36) {
+                const travelProgress = (progress - 0.2) / 0.16;
+                visualX = origin.x + (destination.x - origin.x) * travelProgress;
+                visualY = origin.y + (destination.y - origin.y) * travelProgress;
+                tunnelAlpha = 0.28;
+                tunnelScale = 0.42;
+                this.arenaGraphics.fillStyle(0x5f3b24, 0.22);
+                this.arenaGraphics.fillEllipse(
+                  visualX,
+                  visualY + unit.radius * 0.35,
+                  unit.radius * 1.25,
+                  unit.radius * 0.42,
+                );
+              } else if (progress < 0.68) {
                 visualX = destination.x;
                 visualY = destination.y;
-                const emerge = Math.min(1, (progress - 0.34) / 0.1);
-                const leave = progress > 0.56 ? Math.max(0, 1 - (progress - 0.56) / 0.08) : 1;
+                const emerge = Math.min(1, (progress - 0.36) / 0.1);
+                const leave =
+                  unit.tunnelData.hitSucceeded && progress > 0.6
+                    ? Math.max(0, 1 - (progress - 0.6) / 0.08)
+                    : 1;
                 tunnelAlpha = Math.min(emerge, leave);
                 tunnelScale = 0.35 + tunnelAlpha * 0.78;
-              } else if (progress < 0.84) {
+              } else if (
+                unit.tunnelData.hitSucceeded &&
+                unit.tunnelData.returnDestination
+              ) {
+                const returnDestination = unit.tunnelData.returnDestination;
+                if (progress < 0.84) {
+                  const returnProgress = (progress - 0.68) / 0.16;
+                  visualX =
+                    destination.x +
+                    (returnDestination.x - destination.x) * returnProgress;
+                  visualY =
+                    destination.y +
+                    (returnDestination.y - destination.y) * returnProgress;
+                  tunnelAlpha = 0.24;
+                  tunnelScale = 0.4;
+                  this.arenaGraphics.fillStyle(0x5f3b24, 0.2);
+                  this.arenaGraphics.fillEllipse(
+                    visualX,
+                    visualY + unit.radius * 0.34,
+                    unit.radius * 1.2,
+                    unit.radius * 0.4,
+                  );
+                } else {
+                  visualX = returnDestination.x;
+                  visualY = returnDestination.y;
+                  tunnelAlpha = Math.min(1, (progress - 0.84) / 0.13);
+                  tunnelScale = 0.35 + tunnelAlpha * 0.65;
+                }
+              } else {
                 visualX = destination.x;
                 visualY = destination.y;
-                tunnelAlpha = 0;
-              } else {
-                visualX = origin.x;
-                visualY = origin.y;
-                tunnelAlpha = Math.min(1, (progress - 0.84) / 0.13);
-                tunnelScale = 0.35 + tunnelAlpha * 0.65;
+                tunnelAlpha = 1;
+                tunnelScale = 1;
               }
             }
             const bob =
-              Math.sin(time * (unit.action === "victory" ? 12 : 8) + unit.bornAt * 2) *
-              (unit.action === "victory" ? 9 : 3);
+              unit.action === "victory"
+                ? 0
+                : Math.sin(time * 8 + unit.bornAt * 2) * 3;
             const alpha =
               unit.action === "dead"
                 ? Math.max(0, (unit.actionUntil - time) / 0.45)
@@ -1174,13 +1238,40 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   : unit.action === "merge"
                     ? 1.12 + Math.sin((time - unit.actionStartedAt) * 20) * 0.12
                     : unit.action === "victory"
-                      ? 1.18 + Math.sin(time * 10) * 0.08
+                      ? 1.18
                 : unit.action === "eating" ||
                     unit.action === "satisfied" ||
                     unit.action === "digging"
                   ? 1.06
                   : 1;
             const displayScale = scaleBump * tunnelScale;
+
+            if (unit.action === "victory") {
+              const victoryStyle = definition.victoryStyle ?? "spotlight";
+              const glowColor =
+                victoryStyle === "dance"
+                  ? 0x83e7ef
+                  : victoryStyle === "taunt"
+                    ? 0xff8b62
+                    : 0xffdf70;
+              this.arenaGraphics.fillStyle(
+                glowColor,
+                victoryStyle === "spotlight" ? 0.2 : 0.12,
+              );
+              this.arenaGraphics.fillEllipse(
+                visualX,
+                visualY + unit.radius * 0.72,
+                unit.radius * 4.8,
+                unit.radius * 1.5,
+              );
+              this.arenaGraphics.lineStyle(4, glowColor, 0.62);
+              this.arenaGraphics.strokeEllipse(
+                visualX,
+                visualY + unit.radius * 0.72,
+                unit.radius * 4.3,
+                unit.radius * 1.22,
+              );
+            }
 
             if (hasTexture) {
               let image = this.unitImages.get(unit.id);
@@ -1193,9 +1284,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setPosition(visualX, visualY + bob)
                 .setDisplaySize(
                   unit.radius *
-                    (unit.definitionId === "mole" ? 2.05 : 3) *
+                    (unit.definitionId === "mole" ? 1.72 : 3) *
                     displayScale,
-                  unit.radius * 3 * displayScale,
+                  unit.radius *
+                    (unit.definitionId === "mole" ? 2.78 : 3) *
+                    displayScale,
                 )
                 .setFlipX(unit.vx < 0)
                 .setAlpha(alpha)
@@ -1204,9 +1297,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     ? unit.vx < 0
                       ? -12
                       : 12
-                    : unit.action === "victory"
-                      ? Math.sin(time * 6) * 7
-                      : 0,
+                    : 0,
                 );
               this.unitFallbacks.get(unit.id)?.setVisible(false);
             } else {
@@ -1233,17 +1324,10 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               contestantIndexRef.current.get(unit.factionId);
             const ownerColor = ownerContestant?.color ?? definition.accent;
             const nameColor = ownerContestant?.nameColor ?? ownerColor;
-            const namePlacement = ownerContestant?.namePlacement ?? "above";
             const color = Phaser.Display.Color.HexStringToColor(ownerColor).color;
-            const healthWidth = Math.max(
-              namePlacement === "inside" ? 142 : 76,
-              unit.radius * 2.6,
-            );
+            const healthWidth = Math.max(84, unit.radius * 2.6);
             const healthRatio = Math.max(0, unit.hp / unit.maxHp);
-            const healthY = Math.max(
-              namePlacement === "above" ? 24 : 3,
-              visualY - unit.radius - 31,
-            );
+            const healthY = Math.max(24, visualY - unit.radius - 31);
             this.overlayGraphics.fillStyle(0x100e13, 0.82);
             this.overlayGraphics.lineStyle(2, color, unit.targetable ? 0.95 : 0.3);
             this.overlayGraphics.fillRoundedRect(
@@ -1302,25 +1386,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setDepth(21);
               this.unitLabels.set(unit.id, label);
             }
-            if (namePlacement === "inside") {
-              const compactName =
-                unit.name.length > 7 ? `${unit.name.slice(0, 7)}…` : unit.name;
-              if (label.text !== compactName) label.setText(compactName);
-              label
-                .setFontSize(unit.main ? 11 : 10)
-                .setOrigin(0, 0.5)
-                .setPosition(visualX - healthWidth / 2 + 7, healthY + 9);
-              healthLabel
-                .setOrigin(1, 0.5)
-                .setPosition(visualX + healthWidth / 2 - 7, healthY + 9);
-            } else {
-              if (label.text !== unit.name) label.setText(unit.name);
-              label
-                .setFontSize(unit.main ? 16 : 12)
-                .setOrigin(0.5)
-                .setPosition(visualX, healthY - 11);
-              healthLabel.setOrigin(0.5).setPosition(visualX, healthY + 9);
-            }
+            if (label.text !== unit.name) label.setText(unit.name);
+            label
+              .setFontSize(unit.main ? 16 : 12)
+              .setOrigin(0.5)
+              .setPosition(visualX, healthY - 11);
+            healthLabel.setOrigin(0.5).setPosition(visualX, healthY + 9);
             label.setColor(nameColor).setAlpha(alpha);
             healthLabel.setAlpha(alpha);
           }

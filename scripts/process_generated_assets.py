@@ -53,6 +53,32 @@ def save_sprite(cell: Image.Image, filename: str) -> None:
     normalize_sprite(cell).save(OUTPUT / filename, optimize=True)
 
 
+def process_replacement_assets() -> None:
+    """Process the smaller, independently regenerated replacement sheets."""
+    mole = split_grid("mole-v2-sheet-alpha.png", 4, 2)
+    save_sprite(mole[0], "mole-idle.png")
+    for index, cell_index in enumerate((1, 2, 6), start=1):
+        save_sprite(mole[cell_index], f"mole-attack-{index}.png")
+    for index, cell_index in enumerate((3, 4, 5, 6), start=1):
+        save_sprite(mole[cell_index], f"mole-skill-{index}.png")
+        save_sprite(mole[cell_index], f"mole-tunnel-{index}.png")
+    save_sprite(mole[7], "mole-victory.png")
+
+    police_four = split_grid("police-4-v2-sheet-alpha.png", 4, 1)
+    save_sprite(police_four[0], "police-4-idle.png")
+    for index, cell in enumerate(police_four[1:], start=1):
+        save_sprite(cell, f"police-4-attack-{index}.png")
+
+    save_sprite(
+        Image.open(SOURCE / "hole-v2-alpha.png").convert("RGBA"),
+        "hole.png",
+    )
+    save_sprite(
+        Image.open(SOURCE / "rocket-v2-alpha.png").convert("RGBA"),
+        "rocket.png",
+    )
+
+
 def process_units() -> None:
     panda = split_grid("panda-sheet-alpha.png", 4, 2)
     lazy_panda = split_grid("panda-lazy-sheet-alpha.png", 4, 2)
@@ -127,4 +153,5 @@ if __name__ == "__main__":
     process_units()
     process_props()
     process_large_art()
+    process_replacement_assets()
     print(f"Generated game assets in {OUTPUT}")

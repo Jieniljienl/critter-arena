@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDefaultManifest } from "../lib/game/defaultContent";
+import { createDefaultManifest, upgradeManifest } from "../lib/game/defaultContent";
 import { BattleSimulation, circleOverlapsRegion } from "../lib/game/simulation";
 import type { BoardDefinition, CharacterDefinition, ProjectManifest } from "../lib/game/types";
 
@@ -493,6 +493,34 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
   assert.equal(runtimePanda.action, "eating");
   assert.equal(runtimePanda.targetable, true);
   assert.ok(runtimePanda.hp <= runtimePanda.maxHp - 20);
+
+  let completedPanda = runtimePanda;
+  let finishedEating = false;
+  for (let index = 0; index < 360; index += 1) {
+    simulation.step();
+    const currentSnapshot = simulation.getSnapshot();
+    if (currentSnapshot.events.some((event) => event.message.includes("吃完竹子"))) {
+      completedPanda =
+        currentSnapshot.units.find((unit) => unit.definitionId === "panda-lazy") ??
+        completedPanda;
+      finishedEating = true;
+      break;
+    }
+  }
+  assert.equal(finishedEating, true);
+  assert.equal(completedPanda.action, "satisfied");
+  const pandaDefinition = definition(manifest, "panda-lazy");
+  assert.equal(pandaDefinition.animations.eat.loop, true);
+  assert.equal(
+    pandaDefinition.animations.eat.frames.some(
+      (frame) => frame.assetId === "panda-lazy-skill-4",
+    ),
+    false,
+  );
+  assert.deepEqual(
+    pandaDefinition.animations.eatComplete.frames.map((frame) => frame.assetId),
+    ["panda-lazy-skill-4"],
+  );
 });
 
 test("a mole can ambush through a single nearby hole and stays immune to new damage while tunneling", () => {
@@ -679,4 +707,59 @@ test("default character name libraries provide ordered, playful names for every 
     assert.ok(library.names.length >= 3);
   }
   assert.match(manifest.nameLibraries.find((item) => item.definitionId === "mole")!.names[0], /鼠鼠/);
+});
+
+test("ready formation positions can sync without advancing or rebuilding the battle clock", () => {
+  const manifest = twoFighterManifest();
+  const simulation = new BattleSimulation(manifest);
+  const nextSetup = structuredClone(manifest.setup);
+  nextSetup.contestants[0].position = { x: 620, y: 330 };
+  nextSetup.contestants[0].displayName = "同步后的熊猫";
+  nextSetup.contestants[0].teamId = "green";
+
+  assert.equal(simulation.syncReadySetup(nextSetup), true);
+  const snapshot = simulation.getSnapshot();
+  const synced = snapshot.units.find((unit) => unit.id === nextSetup.contestants[0].id);
+  assert.ok(synced);
+  assert.equal(snapshot.time, 0);
+  assert.equal(snapshot.status, "ready");
+  assert.equal(synced.x, 620);
+  assert.equal(synced.y, 330);
+  assert.equal(synced.name, "同步后的熊猫");
+  assert.equal(synced.factionId, "team:green");
+
+  simulation.start();
+  assert.equal(simulation.syncReadySetup(manifest.setup), false);
+});
+
+test("every character definition can be explicitly added as a main contestant", () => {
+  const manifest = twoFighterManifest();
+  const officer = definition(manifest, "police-1");
+  officer.role = "summon";
+  manifest.setup.contestants[0] = {
+    ...manifest.setup.contestants[0],
+    id: "manual-police",
+    definitionId: "police-1",
+    displayName: "手动参赛警察",
+  };
+  const simulation = new BattleSimulation(manifest);
+  const runtimeOfficer = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "manual-police");
+  assert.ok(runtimeOfficer);
+  assert.equal(runtimeOfficer.main, true);
+});
+
+test("legacy panda entries migrate to the single lazy panda definition", () => {
+  const manifest = createDefaultManifest();
+  const canonical = definition(manifest, "panda-lazy");
+  manifest.characters.push({ ...structuredClone(canonical), id: "panda", name: "活力熊猫（旧版）" });
+  manifest.nameLibraries.push({ definitionId: "panda", names: ["旧熊猫名字"] });
+  manifest.setup.contestants[0].definitionId = "panda";
+
+  const upgraded = upgradeManifest(manifest);
+  assert.equal(upgraded.characters.some((character) => character.id === "panda"), false);
+  assert.equal(upgraded.nameLibraries.some((library) => library.definitionId === "panda"), false);
+  assert.equal(upgraded.setup.contestants[0].definitionId, "panda-lazy");
+  assert.equal(definition(upgraded, "panda-lazy").name, "熊猫");
 });

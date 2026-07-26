@@ -32,6 +32,7 @@ export type ArenaHandle = {
   setVolume: (volume: number) => void;
   setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => void;
   setMusicVolume: (volume: number) => void;
+  syncReadySetup: (setup: ProjectManifest["setup"]) => boolean;
   getSnapshot: () => BattleSnapshot | undefined;
 };
 
@@ -69,7 +70,9 @@ const frameForClip = (
 
 const actionClipName = (unit: RuntimeUnit): string => {
   if (unit.action === "tunneling") return "tunnelAttack";
-  if (unit.action === "eating" || unit.action === "digging" || unit.action === "kick") {
+  if (unit.action === "eating") return "eat";
+  if (unit.action === "satisfied") return "eatComplete";
+  if (unit.action === "digging" || unit.action === "kick") {
     return "skill";
   }
   if (unit.action === "attack" || unit.action === "kill") return "attack";
@@ -138,6 +141,14 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
         setMusicVolume: (nextVolume: number) => {
           audioRef.current.setMusicVolume(nextVolume);
         },
+        syncReadySetup: (setup: ProjectManifest["setup"]) => {
+          const simulation = simulationRef.current;
+          if (!simulation?.syncReadySetup(setup)) return false;
+          const nextSnapshot = simulation.getSnapshot();
+          snapshotRef.current = nextSnapshot;
+          onSnapshotRef.current(nextSnapshot);
+          return true;
+        },
         getSnapshot: () => snapshotRef.current,
       }),
       [],
@@ -155,7 +166,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
       audio.setMuted(mutedRef.current);
       audio.setVolume(volumeRef.current);
       void audio.setMusic(manifest.backgroundMusic, manifest.assets);
-      let lastSnapshotPush = 0;
+      let lastSnapshotPushMs = 0;
+      let lastPushedStatus: BattleSnapshot["status"] | undefined;
       let previousEventIds = new Set<string>();
 
       const boot = async () => {
@@ -208,11 +220,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             this.overlayGraphics = this.add.graphics().setDepth(20);
             const initial = simulation.getSnapshot();
             snapshotRef.current = initial;
+            lastPushedStatus = initial.status;
             onSnapshotRef.current(initial);
             onReadyRef.current?.();
           }
 
-          update(_time: number, delta: number) {
+          update(time: number, delta: number) {
             this.accumulatedMs += delta * speedRef.current;
             const fixedMs = 1000 / 60;
             let safety = 0;
@@ -230,8 +243,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             this.renderArena(snapshot, this.finishedVisualTime);
 
-            if (snapshot.time - lastSnapshotPush >= 0.08 || snapshot.status === "finished") {
-              lastSnapshotPush = snapshot.time;
+            const statusChanged = snapshot.status !== lastPushedStatus;
+            const liveRefreshDue =
+              snapshot.status === "running" && time - lastSnapshotPushMs >= 80;
+            if (statusChanged || liveRefreshDue) {
+              lastSnapshotPushMs = time;
+              lastPushedStatus = snapshot.status;
               onSnapshotRef.current(snapshot);
               const freshEvents = snapshot.events.filter((event) => !previousEventIds.has(event.id));
               previousEventIds = new Set(snapshot.events.map((event) => event.id));
@@ -590,7 +607,13 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               (candidate) => candidate.id === unit.definitionId,
             );
             if (!definition) return;
-            const clip = definition.animations[actionClipName(unit)] ?? definition.animations.idle;
+            const requestedClip = actionClipName(unit);
+            const clip =
+              definition.animations[requestedClip] ??
+              (unit.action === "eating" || unit.action === "satisfied"
+                ? definition.animations.skill
+                : undefined) ??
+              definition.animations.idle;
             const frameId =
               frameForClip(clip, Math.max(0, (time - unit.actionStartedAt) * 1000)) ??
               definition.portraitAssetId;
@@ -668,7 +691,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     ? 1.12 + Math.sin((time - unit.actionStartedAt) * 20) * 0.12
                     : unit.action === "victory"
                       ? 1.18 + Math.sin(time * 10) * 0.08
-                : unit.action === "eating" || unit.action === "digging"
+                : unit.action === "eating" ||
+                    unit.action === "satisfied" ||
+                    unit.action === "digging"
                   ? 1.06
                   : 1;
             const displayScale = scaleBump * tunnelScale;

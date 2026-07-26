@@ -129,6 +129,8 @@ export function GameApp() {
   const arenaStageRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const musicImportRef = useRef<HTMLInputElement>(null);
+  const pendingPreviewSetupRef = useRef<MatchSetup>();
+  const previewSyncFrameRef = useRef<number>();
 
   useEffect(() => {
     let alive = true;
@@ -178,6 +180,15 @@ export function GameApp() {
   useEffect(() => {
     arenaRef.current?.setVolume(volume);
   }, [volume]);
+
+  useEffect(
+    () => () => {
+      if (previewSyncFrameRef.current !== undefined) {
+        window.cancelAnimationFrame(previewSyncFrameRef.current);
+      }
+    },
+    [],
+  );
 
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
@@ -256,10 +267,22 @@ export function GameApp() {
     arenaRef.current?.setSpeed(speed);
     arenaRef.current?.setMuted(muted);
     arenaRef.current?.setVolume(volume);
+    if (!pendingAutoStart) arenaRef.current?.syncReadySetup(manifest.setup);
     if (pendingAutoStart) {
       arenaRef.current?.start();
       setPendingAutoStart(false);
     }
+  };
+
+  const queuePreviewSetupSync = (setup: MatchSetup) => {
+    pendingPreviewSetupRef.current = setup;
+    if (previewSyncFrameRef.current !== undefined) return;
+    previewSyncFrameRef.current = window.requestAnimationFrame(() => {
+      previewSyncFrameRef.current = undefined;
+      const pendingSetup = pendingPreviewSetupRef.current;
+      pendingPreviewSetupRef.current = undefined;
+      if (pendingSetup) arenaRef.current?.syncReadySetup(pendingSetup);
+    });
   };
 
   const updateSetup = (setup: MatchSetup) => {
@@ -267,13 +290,14 @@ export function GameApp() {
     next.setup = setup;
     next.updatedAt = new Date().toISOString();
     setManifest(next);
+    queuePreviewSetupSync(setup);
   };
 
   const switchBoard = (boardId: string) => {
     const nextBoard = manifest.boards.find((board) => board.id === boardId);
     const previousBoard = activeBoard;
     if (!nextBoard || !previousBoard) return;
-    updateSetup({
+    const nextSetup: MatchSetup = {
       ...manifest.setup,
       boardId,
       contestants: manifest.setup.contestants.map((contestant) => ({
@@ -295,9 +319,16 @@ export function GameApp() {
           ),
         },
       })),
-    });
-    setSelectedBoardId(boardId);
+    };
+    const nextManifest = structuredClone(manifest);
+    nextManifest.setup = nextSetup;
+    nextManifest.updatedAt = new Date().toISOString();
+    setManifest(nextManifest);
+    setBattleManifest(structuredClone(nextManifest));
     setSnapshot(undefined);
+    setPendingAutoStart(false);
+    setBattleKey((key) => key + 1);
+    setSelectedBoardId(boardId);
     setNotice(`已切换为${nextBoard.name}`);
   };
 
@@ -313,7 +344,7 @@ export function GameApp() {
 
   const addContestant = (definitionId: string) => {
     const definition = manifest.characters.find((character) => character.id === definitionId);
-    if (!definition || definition.role !== "contestant") return;
+    if (!definition) return;
     const index = manifest.setup.contestants.length;
     const ratio = spawnRatios[index % spawnRatios.length];
     const point = {
@@ -748,6 +779,8 @@ export function GameApp() {
                 characters={manifest.characters}
                 board={activeBoard}
                 onChange={updateSetup}
+                liveUnits={snapshot?.units}
+                battleStatus={snapshot?.status}
               />
               <div className="contestant-list">
                 {manifest.setup.contestants.map((contestant, index) => {
@@ -806,7 +839,6 @@ export function GameApp() {
               </div>
               <div className="add-fighter-grid">
                 {manifest.characters
-                  .filter((character) => character.role === "contestant")
                   .map((character) => (
                     <button type="button" key={character.id} onClick={() => addContestant(character.id)}>
                       <Plus size={14} /> {character.name}

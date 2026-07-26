@@ -16,10 +16,10 @@ export function NameLibraryEditor({
   onChange,
 }: NameLibraryEditorProps) {
   const [selectedId, setSelectedId] = useState(
-    characters.find((character) => character.role === "contestant")?.id ?? characters[0]?.id ?? "",
+    characters[0]?.id ?? "",
   );
   const [draggingIndex, setDraggingIndex] = useState<number>();
-  const selectable = characters.filter((character) => character.role === "contestant");
+  const selectable = characters;
   const selected =
     selectable.find((character) => character.id === selectedId) ?? selectable[0];
   const names =

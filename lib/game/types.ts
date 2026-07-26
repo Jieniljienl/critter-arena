@@ -242,6 +242,7 @@ export type UnitAction =
   | "skill"
   | "hurt"
   | "eating"
+  | "satisfied"
   | "digging"
   | "tunneling"
   | "kick"

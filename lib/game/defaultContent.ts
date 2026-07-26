@@ -201,8 +201,8 @@ export const defaultCharacters: CharacterDefinition[] = [
   {
     schemaVersion: SCHEMA_VERSION,
     id: "panda-lazy",
-    name: "懒洋洋熊猫",
-    subtitle: "清醒但懒 · 躺着吃竹子 · 受击呼叫人类警察",
+    name: "熊猫",
+    subtitle: "懒洋洋但清醒 · 躺着吃竹子 · 受击呼叫人类警察",
     role: "contestant",
     pluginId: "panda",
     maxHp: 350,
@@ -226,11 +226,17 @@ export const defaultCharacters: CharacterDefinition[] = [
           "panda-lazy-skill-1",
           "panda-lazy-skill-2",
           "panda-lazy-skill-3",
-          "panda-lazy-skill-4",
         ],
         true,
         180,
       ),
+      eat: clip(
+        "eat",
+        ["panda-lazy-skill-2", "panda-lazy-skill-3"],
+        true,
+        220,
+      ),
+      eatComplete: clip("eatComplete", ["panda-lazy-skill-4"], false, 650),
     },
     sounds: {
       attack: speech("panda-lazy-attack", ["别催，我打了。", "躺着也能拍到你。"]),
@@ -238,44 +244,6 @@ export const defaultCharacters: CharacterDefinition[] = [
       hurt: speech("panda-lazy-hurt", ["保护动物也敢打？", "警察叔叔，有人动手。"]),
       skill: speech("panda-lazy-chew", ["竹子拿近点，我不想起来。", "躺着吃，味道也一样。"]),
       death: speech("panda-lazy-death", ["先躺一会儿，别叫我。"], 0.72),
-    },
-    abilities: [],
-  },
-  {
-    schemaVersion: SCHEMA_VERSION,
-    id: "panda",
-    name: "活力熊猫（旧版）",
-    subtitle: "可替代皮肤 · 国家保护动物 · 受击呼叫人类警察",
-    role: "contestant",
-    pluginId: "panda",
-    maxHp: 350,
-    speed: 115,
-    radius: 38,
-    accent: "#f4d35e",
-    portraitAssetId: "panda-idle",
-    attack: {
-      range: 150,
-      damage: 30,
-      cooldown: 1.25,
-      windup: 0.32,
-      mode: "melee",
-    },
-    skillParameters: { panda: structuredClone(pandaSkillParameters) },
-    animations: {
-      ...baseAnimations("panda"),
-      skill: clip(
-        "skill",
-        ["panda-skill-1", "panda-skill-2", "panda-skill-3", "panda-skill-4"],
-        true,
-        180,
-      ),
-    },
-    sounds: {
-      attack: speech("panda-attack", ["看我一巴掌。", "保护动物也会还手。"]),
-      hit: synth("panda-hit", "pandaGrunt", 0.6),
-      hurt: speech("panda-hurt", ["谁打我？警察叔叔！", "这可是保护动物。"]),
-      skill: speech("panda-chew", ["这根竹子很脆。", "吃完再打。"]),
-      death: synth("panda-death", "death", 0.7),
     },
     abilities: [],
   },
@@ -403,17 +371,6 @@ export const defaultNameLibraries: ProjectManifest["nameLibraries"] = [
       "吃完再营业",
       "熊猫村村长",
       "懒得出招",
-    ],
-  },
-  {
-    definitionId: "panda",
-    names: [
-      "阿宝今天加班",
-      "滚滚大侠",
-      "竹叶青代言熊",
-      "川蜀一巴掌",
-      "黑白闪电",
-      "熊猫头本头",
     ],
   },
   {
@@ -649,7 +606,7 @@ export const defaultSetup: MatchSetup = {
     {
       id: "fighter-panda-a",
       definitionId: "panda-lazy",
-      displayName: "懒熊猫·团团",
+      displayName: "熊猫·团团",
       position: { x: 170, y: 160 },
       direction: { x: 0.88, y: 0.47 },
       color: "#f6d85f",
@@ -665,7 +622,7 @@ export const defaultSetup: MatchSetup = {
     {
       id: "fighter-panda-b",
       definitionId: "panda-lazy",
-      displayName: "懒熊猫·滚滚",
+      displayName: "熊猫·滚滚",
       position: { x: 180, y: 740 },
       direction: { x: 0.75, y: -0.66 },
       color: "#72d4af",
@@ -708,6 +665,13 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
 
   upgraded.nameLibraries ??= [];
   upgraded.backgroundMusic ??= structuredClone(defaults.backgroundMusic);
+  for (const contestant of upgraded.setup.contestants) {
+    if (contestant.definitionId === "panda") contestant.definitionId = "panda-lazy";
+  }
+  upgraded.characters = upgraded.characters.filter((character) => character.id !== "panda");
+  upgraded.nameLibraries = upgraded.nameLibraries.filter(
+    (library) => library.definitionId !== "panda",
+  );
 
   for (const assetDefinition of defaults.assets) {
     if (!upgraded.assets.some((assetItem) => assetItem.id === assetDefinition.id)) {
@@ -719,6 +683,13 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     if (!character) {
       upgraded.characters.push(structuredClone(defaultCharacter));
       continue;
+    }
+    if (defaultCharacter.policeStar && character.role === "summon") {
+      character.role = "contestant";
+    }
+    if (defaultCharacter.id === "panda-lazy") {
+      character.name = defaultCharacter.name;
+      character.subtitle = defaultCharacter.subtitle;
     }
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
     for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {

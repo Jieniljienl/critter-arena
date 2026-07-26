@@ -150,6 +150,24 @@ export class BattleSimulation {
     if (this.status === "paused") this.status = "running";
   }
 
+  syncReadySetup(setup: MatchSetup): boolean {
+    if (this.status !== "ready" || setup.boardId !== this.setup.boardId) return false;
+    this.setup.seed = setup.seed;
+    this.setup.contestants = structuredClone(setup.contestants);
+    this.units.clear();
+    this.holes.clear();
+    this.projectiles.clear();
+    this.holeOccupants.clear();
+    this.scheduledShots.length = 0;
+    this.eventLog.length = 0;
+    this.winnerId = undefined;
+    this.winnerName = undefined;
+    this.draw = false;
+    this.finishAt = undefined;
+    this.initializeContestants();
+    return true;
+  }
+
   step(dt = 1 / 60, force = false): void {
     if ((!force && this.status !== "running") || this.status === "finished") return;
     this.time += dt;
@@ -186,7 +204,7 @@ export class BattleSimulation {
   private initializeContestants(): void {
     for (const contestant of this.setup.contestants) {
       const definition = this.definitions.get(contestant.definitionId);
-      if (!definition || definition.role !== "contestant") continue;
+      if (!definition) continue;
       const direction = normalize(contestant.direction);
       const unit = this.createUnit({
         id: contestant.id,
@@ -285,9 +303,15 @@ export class BattleSimulation {
       if (unit.action !== "tunneling") this.runIntervalModules(unit);
       this.updateSpecialAbility(unit, definition, dt);
 
-      const immobilized = ["eating", "digging", "tunneling", "kick", "merge", "victory"].includes(
-        unit.action,
-      );
+      const immobilized = [
+        "eating",
+        "satisfied",
+        "digging",
+        "tunneling",
+        "kick",
+        "merge",
+        "victory",
+      ].includes(unit.action);
       if (!immobilized) this.moveUnit(unit, dt, definition.speed);
 
       this.updateAreaBuffs(unit);
@@ -583,8 +607,10 @@ export class BattleSimulation {
         const definition = this.definitions.get(unit.definitionId);
         const parameters = definition?.skillParameters?.panda;
         const bamboo = this.props.find((prop) => prop.id === unit.reservedBambooId);
+        let ateBamboo = false;
         if (bamboo?.active) {
           bamboo.active = false;
+          ateBamboo = true;
           const amount = Math.min(parameters?.eatHeal ?? 100, unit.maxHp - unit.hp);
           unit.hp += amount;
           unit.nextEatAt = this.time + (parameters?.eatCooldown ?? 5);
@@ -599,7 +625,13 @@ export class BattleSimulation {
           this.emit("prop", `${bamboo.label ?? "竹子"} 被吃光了`, unit);
         }
         unit.reservedBambooId = undefined;
-        this.resetAction(unit);
+        if (ateBamboo) {
+          unit.action = "satisfied";
+          unit.actionStartedAt = this.time;
+          unit.actionUntil = this.time + 0.65;
+        } else {
+          this.resetAction(unit);
+        }
       } else if (unit.action === "digging") {
         const definition = this.definitions.get(unit.definitionId);
         const parameters = definition?.skillParameters?.mole;
@@ -643,6 +675,7 @@ export class BattleSimulation {
         unit.action === "kick" ||
         unit.action === "attack" ||
         unit.action === "hurt" ||
+        unit.action === "satisfied" ||
         unit.action === "merge" ||
         unit.action === "kill"
       ) {
@@ -684,6 +717,7 @@ export class BattleSimulation {
     return (
       unit.targetable &&
       unit.action !== "eating" &&
+      unit.action !== "satisfied" &&
       unit.action !== "digging" &&
       unit.action !== "tunneling" &&
       unit.action !== "kick" &&

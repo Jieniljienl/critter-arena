@@ -833,6 +833,24 @@ textarea:focus-visible {
   box-shadow: 0 7px 14px rgba(0, 0, 0, 0.28);
 }
 
+.formation-board.is-live .formation-token {
+  cursor: default;
+  pointer-events: none;
+  transition:
+    left 80ms linear,
+    top 80ms linear,
+    opacity 160ms ease;
+}
+
+.formation-token.is-eliminated {
+  opacity: 0.28;
+  filter: grayscale(1);
+}
+
+.formation-token.is-missing {
+  opacity: 0;
+}
+
 .formation-token:active {
   cursor: grabbing;
   scale: 1.12;

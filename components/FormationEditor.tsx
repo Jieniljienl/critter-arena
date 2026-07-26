@@ -1,23 +1,31 @@
 "use client";
 
 import { useRef, useState } from "react";
-import type { CharacterDefinition, MatchSetup } from "@/lib/game/types";
+import type { BoardDefinition, CharacterDefinition, MatchSetup } from "@/lib/game/types";
 
 type FormationEditorProps = {
   setup: MatchSetup;
   characters: CharacterDefinition[];
+  board: BoardDefinition;
   onChange: (setup: MatchSetup) => void;
 };
 
-export function FormationEditor({ setup, characters, onChange }: FormationEditorProps) {
+export function FormationEditor({ setup, characters, board, onChange }: FormationEditorProps) {
   const boardRef = useRef<HTMLDivElement>(null);
   const [draggingId, setDraggingId] = useState<string>();
 
   const moveContestant = (clientX: number, clientY: number) => {
     if (!draggingId || !boardRef.current) return;
     const rect = boardRef.current.getBoundingClientRect();
-    const x = Math.max(50, Math.min(1550, ((clientX - rect.left) / rect.width) * 1600));
-    const y = Math.max(50, Math.min(850, ((clientY - rect.top) / rect.height) * 900));
+    const margin = 50 * (board.unitScale ?? 1);
+    const x = Math.max(
+      margin,
+      Math.min(board.width - margin, ((clientX - rect.left) / rect.width) * board.width),
+    );
+    const y = Math.max(
+      margin,
+      Math.min(board.height - margin, ((clientY - rect.top) / rect.height) * board.height),
+    );
     onChange({
       ...setup,
       contestants: setup.contestants.map((contestant) =>
@@ -32,6 +40,7 @@ export function FormationEditor({ setup, characters, onChange }: FormationEditor
     <div
       ref={boardRef}
       className="formation-board"
+      style={{ aspectRatio: `${board.width} / ${board.height}` }}
       onPointerMove={(event) => moveContestant(event.clientX, event.clientY)}
       onPointerUp={() => setDraggingId(undefined)}
       onPointerLeave={() => setDraggingId(undefined)}
@@ -47,8 +56,8 @@ export function FormationEditor({ setup, characters, onChange }: FormationEditor
             type="button"
             className="formation-token"
             style={{
-              left: `${(contestant.position.x / 1600) * 100}%`,
-              top: `${(contestant.position.y / 900) * 100}%`,
+              left: `${(contestant.position.x / board.width) * 100}%`,
+              top: `${(contestant.position.y / board.height) * 100}%`,
               borderColor: contestant.color,
               background: `color-mix(in srgb, ${contestant.color} 32%, #17151c)`,
             }}
@@ -59,7 +68,7 @@ export function FormationEditor({ setup, characters, onChange }: FormationEditor
             aria-label={`拖动 ${contestant.displayName}`}
             title={`${contestant.displayName} · ${Math.round(contestant.position.x)}, ${Math.round(contestant.position.y)}`}
           >
-            <span>{definition?.id === "panda" ? "🐼" : definition?.id === "mole" ? "🦫" : "🐾"}</span>
+            <span>{definition?.id.startsWith("panda") ? "🐼" : definition?.id === "mole" ? "🦫" : "🐾"}</span>
             <small>{index + 1}</small>
           </button>
         );

@@ -10,10 +10,11 @@ import {
   Download,
   FileArchive,
   FileJson,
-  Flame,
   Gamepad2,
   Gauge,
   ImagePlus,
+  Maximize2,
+  Minimize2,
   Pause,
   Play,
   Plus,
@@ -74,16 +75,26 @@ const colorPalette = [
   "#f0a35a",
 ];
 
-const spawnPoints = [
-  { x: 170, y: 150 },
-  { x: 1430, y: 150 },
-  { x: 180, y: 750 },
-  { x: 1420, y: 750 },
-  { x: 800, y: 110 },
-  { x: 800, y: 790 },
-  { x: 120, y: 450 },
-  { x: 1480, y: 450 },
+const spawnRatios = [
+  { x: 0.11, y: 0.17 },
+  { x: 0.89, y: 0.17 },
+  { x: 0.11, y: 0.83 },
+  { x: 0.89, y: 0.83 },
+  { x: 0.5, y: 0.12 },
+  { x: 0.5, y: 0.88 },
+  { x: 0.08, y: 0.5 },
+  { x: 0.92, y: 0.5 },
 ];
+
+let contestantIdCounter = 0;
+const createContestantId = () => {
+  contestantIdCounter += 1;
+  const randomPart =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `local-${contestantIdCounter}`;
+  return `fighter-${randomPart}`;
+};
 
 export function GameApp() {
   const [manifest, setManifest] = useState<ProjectManifest>(() => createDefaultManifest());
@@ -97,10 +108,12 @@ export function GameApp() {
   const [hydrated, setHydrated] = useState(false);
   const [savedAt, setSavedAt] = useState<string>();
   const [notice, setNotice] = useState<string>();
-  const [selectedCharacterId, setSelectedCharacterId] = useState("panda");
-  const [selectedBoardId, setSelectedBoardId] = useState("bamboo-lava-arena");
+  const [selectedCharacterId, setSelectedCharacterId] = useState("panda-lazy");
+  const [selectedBoardId, setSelectedBoardId] = useState("stream-landscape");
   const [pendingAutoStart, setPendingAutoStart] = useState(false);
+  const [cleanView, setCleanView] = useState(false);
   const arenaRef = useRef<ArenaHandle>(null);
+  const arenaStageRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
@@ -110,7 +123,11 @@ export function GameApp() {
         if (!alive || !saved) return;
         setManifest(saved);
         setBattleManifest(structuredClone(saved));
-        setSelectedCharacterId(saved.characters[0]?.id ?? "panda");
+        setSelectedCharacterId(
+          saved.characters.some((character) => character.id === "panda-lazy")
+            ? "panda-lazy"
+            : saved.characters[0]?.id ?? "panda",
+        );
         setSelectedBoardId(saved.setup.boardId);
       })
       .catch(() => setNotice("本地存档读取失败，已载入默认内容"))
@@ -157,16 +174,40 @@ export function GameApp() {
         arenaRef.current?.togglePause();
       }
       if (event.key === "." && view === "battle") arenaRef.current?.step();
+      if (event.key.toLowerCase() === "f" && view === "battle") {
+        event.preventDefault();
+        if (document.fullscreenElement) {
+          void document.exitFullscreen();
+          setCleanView(false);
+        } else {
+          setCleanView(true);
+          void arenaStageRef.current?.requestFullscreen().catch(() => undefined);
+        }
+      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
   }, [view]);
+
+  useEffect(() => {
+    const handleFullscreenChange = () => {
+      if (!document.fullscreenElement) setCleanView(false);
+    };
+    document.addEventListener("fullscreenchange", handleFullscreenChange);
+    return () => document.removeEventListener("fullscreenchange", handleFullscreenChange);
+  }, []);
 
   const showNotice = useCallback((message: string) => setNotice(message), []);
 
   const livingMain = useMemo(
     () => snapshot?.units.filter((unit) => unit.main && unit.targetable).length ?? manifest.setup.contestants.length,
     [manifest.setup.contestants.length, snapshot],
+  );
+  const activeBoard = useMemo(
+    () =>
+      manifest.boards.find((board) => board.id === manifest.setup.boardId) ??
+      manifest.boards[0],
+    [manifest.boards, manifest.setup.boardId],
   );
 
   const beginFreshBattle = (newSeed = false) => {
@@ -203,14 +244,60 @@ export function GameApp() {
     setManifest(next);
   };
 
+  const switchBoard = (boardId: string) => {
+    const nextBoard = manifest.boards.find((board) => board.id === boardId);
+    const previousBoard = activeBoard;
+    if (!nextBoard || !previousBoard) return;
+    updateSetup({
+      ...manifest.setup,
+      boardId,
+      contestants: manifest.setup.contestants.map((contestant) => ({
+        ...contestant,
+        position: {
+          x: Math.max(
+            60,
+            Math.min(
+              nextBoard.width - 60,
+              (contestant.position.x / previousBoard.width) * nextBoard.width,
+            ),
+          ),
+          y: Math.max(
+            60,
+            Math.min(
+              nextBoard.height - 60,
+              (contestant.position.y / previousBoard.height) * nextBoard.height,
+            ),
+          ),
+        },
+      })),
+    });
+    setSelectedBoardId(boardId);
+    setSnapshot(undefined);
+    setNotice(`已切换为${nextBoard.name}`);
+  };
+
+  const enterCleanView = () => {
+    setCleanView(true);
+    void arenaStageRef.current?.requestFullscreen().catch(() => undefined);
+  };
+
+  const exitCleanView = () => {
+    setCleanView(false);
+    if (document.fullscreenElement) void document.exitFullscreen();
+  };
+
   const addContestant = (definitionId: string) => {
     const definition = manifest.characters.find((character) => character.id === definitionId);
     if (!definition || definition.role !== "contestant") return;
     const index = manifest.setup.contestants.length;
-    const point = spawnPoints[index % spawnPoints.length];
+    const ratio = spawnRatios[index % spawnRatios.length];
+    const point = {
+      x: ratio.x * (activeBoard?.width ?? 1600),
+      y: ratio.y * (activeBoard?.height ?? 900),
+    };
     const angle = (index * 2.3999632297 + 0.65) % (Math.PI * 2);
     const contestant: MatchContestant = {
-      id: `fighter-${Date.now()}-${index}`,
+      id: createContestantId(),
       definitionId,
       displayName: `${definition.name}·${index + 1}`,
       position: { ...point },
@@ -231,16 +318,25 @@ export function GameApp() {
   };
 
   const randomizeFormation = () => {
+    const boardWidth = activeBoard?.width ?? 1600;
+    const boardHeight = activeBoard?.height ?? 900;
     updateSetup({
       ...manifest.setup,
       contestants: manifest.setup.contestants.map((contestant, index) => {
-        const point = spawnPoints[index % spawnPoints.length];
+        const ratio = spawnRatios[index % spawnRatios.length];
+        const point = { x: ratio.x * boardWidth, y: ratio.y * boardHeight };
         const angle = Math.random() * Math.PI * 2;
         return {
           ...contestant,
           position: {
-            x: Math.max(90, Math.min(1510, point.x + (Math.random() - 0.5) * 80)),
-            y: Math.max(90, Math.min(810, point.y + (Math.random() - 0.5) * 80)),
+            x: Math.max(
+              90,
+              Math.min(boardWidth - 90, point.x + (Math.random() - 0.5) * 80),
+            ),
+            y: Math.max(
+              90,
+              Math.min(boardHeight - 90, point.y + (Math.random() - 0.5) * 80),
+            ),
           },
           direction: { x: Math.cos(angle), y: Math.sin(angle) },
         };
@@ -255,7 +351,11 @@ export function GameApp() {
       const imported = await importProjectFile(file);
       setManifest(imported);
       setBattleManifest(structuredClone(imported));
-      setSelectedCharacterId(imported.characters[0]?.id ?? "panda");
+      setSelectedCharacterId(
+        imported.characters.some((character) => character.id === "panda-lazy")
+          ? "panda-lazy"
+          : imported.characters[0]?.id ?? "panda",
+      );
       setSelectedBoardId(imported.setup.boardId);
       setBattleKey((key) => key + 1);
       setSnapshot(undefined);
@@ -274,7 +374,7 @@ export function GameApp() {
   ];
 
   return (
-    <main className="app-shell">
+    <main className={`app-shell ${cleanView ? "clean-spectator" : ""}`}>
       <header className="topbar">
         <div className="brand">
           <span className="brand-mark">
@@ -351,7 +451,13 @@ export function GameApp() {
               </div>
             </div>
 
-            <div className="arena-stage">
+            <div
+              ref={arenaStageRef}
+              className="arena-stage"
+              style={{
+                aspectRatio: `${activeBoard?.width ?? 1600} / ${activeBoard?.height ?? 900}`,
+              }}
+            >
               <ArenaCanvas
                 key={`${battleKey}-${battleManifest.setup.seed}`}
                 ref={arenaRef}
@@ -422,6 +528,29 @@ export function GameApp() {
                 ))}
               </div>
               <div className="control-divider" />
+              <label className="board-quick-select">
+                <span>画面比例</span>
+                <select
+                  value={manifest.setup.boardId}
+                  onChange={(event) => switchBoard(event.target.value)}
+                >
+                  {manifest.boards.map((board) => (
+                    <option key={board.id} value={board.id}>
+                      {board.name} · {board.width}×{board.height}
+                    </option>
+                  ))}
+                </select>
+              </label>
+              <button
+                type="button"
+                className="clean-view-control"
+                onClick={cleanView ? exitCleanView : enterCleanView}
+                title="隐藏全部界面，只保留对战画面（快捷键 F）"
+              >
+                {cleanView ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
+                纯净全屏 <kbd>F</kbd>
+              </button>
+              <div className="control-divider" />
               <button
                 type="button"
                 className="icon-control"
@@ -458,6 +587,7 @@ export function GameApp() {
               <FormationEditor
                 setup={manifest.setup}
                 characters={manifest.characters}
+                board={activeBoard}
                 onChange={updateSetup}
               />
               <div className="contestant-list">
@@ -471,7 +601,7 @@ export function GameApp() {
                         {index + 1}
                       </span>
                       <span className="contestant-type">
-                        {definition?.id === "panda" ? "🐼" : definition?.id === "mole" ? "🦫" : "🐾"}
+                        {definition?.id.startsWith("panda") ? "🐼" : definition?.id === "mole" ? "🦫" : "👮"}
                       </span>
                       <input
                         value={contestant.displayName}
@@ -551,11 +681,11 @@ export function GameApp() {
           manifest={manifest}
           selectedId={selectedBoardId}
           onSelect={(id) => {
-            setSelectedBoardId(id);
-            const next = structuredClone(manifest);
-            next.setup.boardId = id;
-            next.updatedAt = new Date().toISOString();
-            setManifest(next);
+            if (manifest.boards.some((board) => board.id === id)) {
+              switchBoard(id);
+            } else {
+              setSelectedBoardId(id);
+            }
           }}
           onChange={setManifest}
           onNotice={showNotice}

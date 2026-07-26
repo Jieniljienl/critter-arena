@@ -4,7 +4,6 @@ import type {
   CombatEvent,
   RuntimeUnit,
   SoundCue,
-  SynthPreset,
 } from "./types";
 
 type OscillatorShape = OscillatorType;
@@ -15,6 +14,7 @@ export class ArenaAudio {
   private muted = false;
   private volume = 0.72;
   private lastPlayed = new Map<string, number>();
+  private lastSpeechAt = 0;
 
   async unlock(): Promise<void> {
     if (typeof window === "undefined") return;
@@ -29,6 +29,7 @@ export class ArenaAudio {
 
   setMuted(muted: boolean): void {
     this.muted = muted;
+    if (muted && typeof window !== "undefined") window.speechSynthesis?.cancel();
     this.applyMasterVolume();
   }
 
@@ -55,13 +56,15 @@ export class ArenaAudio {
       ? definitions.find((candidate) => candidate.id === unit.definitionId)
       : undefined;
     const slot =
-      event.type === "attack"
+      event.sound === "lava" || event.sound === "spring"
+        ? undefined
+        : event.type === "attack"
         ? "attack"
         : event.type === "damage"
           ? "hurt"
           : event.type === "death"
             ? "death"
-            : event.type === "skill"
+            : event.type === "skill" || event.type === "spawn"
               ? "skill"
               : undefined;
     const cue = slot ? definition?.sounds[slot] : undefined;
@@ -74,7 +77,37 @@ export class ArenaAudio {
         return;
       }
     }
+    if (cue?.source === "speech") {
+      this.playSpeech(cue);
+      return;
+    }
     this.playSynth(cue ?? { id: event.sound, source: "synth", preset: event.sound, volume: 0.7 });
+  }
+
+  private playSpeech(cue: SoundCue): void {
+    if (
+      this.muted ||
+      typeof window === "undefined" ||
+      !window.speechSynthesis ||
+      performance.now() - this.lastSpeechAt < 850
+    ) {
+      return;
+    }
+    const phrases = cue.phrases?.filter(Boolean) ?? [];
+    if (!phrases.length) return;
+    this.lastSpeechAt = performance.now();
+    const utterance = new SpeechSynthesisUtterance(
+      phrases[Math.floor(Math.random() * phrases.length)],
+    );
+    utterance.lang = "zh-CN";
+    utterance.rate = cue.speechRate ?? 1;
+    utterance.pitch = cue.speechPitch ?? 1;
+    utterance.volume = Math.min(1, this.volume * cue.volume);
+    const voice = window.speechSynthesis
+      .getVoices()
+      .find((candidate) => candidate.lang.toLowerCase().startsWith("zh"));
+    if (voice) utterance.voice = voice;
+    window.speechSynthesis.speak(utterance);
   }
 
   playSynth(cue: SoundCue): void {
@@ -124,6 +157,16 @@ export class ArenaAudio {
       this.noiseBurst(now + 0.08, 0.26, volume * 0.18, 500, 70);
     } else if (preset === "lava") {
       this.noiseBurst(now, 0.3, volume * 0.08, 950, 260);
+    } else if (preset === "spring") {
+      [0, 0.08, 0.17].forEach((offset, index) =>
+        this.tone(now + offset, 420 + index * 95, 0.1, volume * 0.1, "sine", 520 + index * 80),
+      );
+    } else if (preset === "pandaGrunt") {
+      this.tone(now, 155 * randomPitch, 0.16, volume * 0.24, "triangle", 105);
+      this.tone(now + 0.09, 125 * randomPitch, 0.14, volume * 0.18, "sine", 85);
+    } else if (preset === "moleSqueak") {
+      this.tone(now, 680 * randomPitch, 0.07, volume * 0.18, "square", 980);
+      this.tone(now + 0.08, 820 * randomPitch, 0.06, volume * 0.14, "triangle", 560);
     }
   }
 

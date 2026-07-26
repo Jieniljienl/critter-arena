@@ -21,6 +21,16 @@ const synth = (id: string, preset: SynthPreset, volume = 0.75): SoundCue => ({
   maxVoices: 8,
 });
 
+const speech = (id: string, phrases: string[], volume = 0.8): SoundCue => ({
+  id,
+  source: "speech",
+  phrases,
+  speechRate: 1.05,
+  speechPitch: 0.92,
+  volume,
+  maxVoices: 1,
+});
+
 const clip = (
   id: string,
   frames: string[],
@@ -41,11 +51,13 @@ const asset = (id: string, url: string, name: string): AssetRef => ({
   kind: "image",
   url,
   name,
-  mime: "image/png",
+  mime: url.endsWith(".webp") ? "image/webp" : "image/png",
 });
 
 export const defaultAssets: AssetRef[] = [
   asset("board-bamboo-lava", "/assets/board-bamboo-lava.webp", "竹林熔岩竞技场"),
+  asset("board-stream-landscape", "/assets/board-stream-landscape.webp", "横屏直播竞技场"),
+  asset("board-stream-portrait", "/assets/board-stream-portrait.webp", "竖屏直播竞技场"),
   asset("panda-idle", "/assets/panda-idle.png", "熊猫待机"),
   asset("panda-attack-1", "/assets/panda-attack-1.png", "熊猫攻击蓄力"),
   asset("panda-attack-2", "/assets/panda-attack-2.png", "熊猫攻击命中"),
@@ -54,6 +66,14 @@ export const defaultAssets: AssetRef[] = [
   asset("panda-skill-2", "/assets/panda-skill-2.png", "熊猫咀嚼一"),
   asset("panda-skill-3", "/assets/panda-skill-3.png", "熊猫咀嚼二"),
   asset("panda-skill-4", "/assets/panda-skill-4.png", "熊猫满足"),
+  asset("panda-lazy-idle", "/assets/panda-lazy-idle.png", "懒洋洋熊猫待机"),
+  asset("panda-lazy-attack-1", "/assets/panda-lazy-attack-1.png", "懒洋洋熊猫随手蓄力"),
+  asset("panda-lazy-attack-2", "/assets/panda-lazy-attack-2.png", "懒洋洋熊猫随手拍"),
+  asset("panda-lazy-attack-3", "/assets/panda-lazy-attack-3.png", "懒洋洋熊猫摊手"),
+  asset("panda-lazy-skill-1", "/assets/panda-lazy-skill-1.png", "懒洋洋熊猫够竹子"),
+  asset("panda-lazy-skill-2", "/assets/panda-lazy-skill-2.png", "懒洋洋熊猫躺吃一"),
+  asset("panda-lazy-skill-3", "/assets/panda-lazy-skill-3.png", "懒洋洋熊猫躺吃二"),
+  asset("panda-lazy-skill-4", "/assets/panda-lazy-skill-4.png", "懒洋洋熊猫揉肚子"),
   asset("mole-idle", "/assets/mole-idle.png", "地鼠待机"),
   asset("mole-attack-1", "/assets/mole-attack-1.png", "地鼠攻击蓄力"),
   asset("mole-attack-2", "/assets/mole-attack-2.png", "地鼠攻击命中"),
@@ -62,6 +82,10 @@ export const defaultAssets: AssetRef[] = [
   asset("mole-skill-2", "/assets/mole-skill-2.png", "地鼠挖洞二"),
   asset("mole-skill-3", "/assets/mole-skill-3.png", "地鼠钻地"),
   asset("mole-skill-4", "/assets/mole-skill-4.png", "地鼠偷袭"),
+  asset("mole-tunnel-1", "/assets/mole-tunnel-1.png", "地鼠钻洞起手"),
+  asset("mole-tunnel-2", "/assets/mole-tunnel-2.png", "地鼠地下突进"),
+  asset("mole-tunnel-3", "/assets/mole-tunnel-3.png", "地鼠出洞攻击"),
+  asset("mole-tunnel-4", "/assets/mole-tunnel-4.png", "地鼠返回洞口"),
   asset("bamboo", "/assets/bamboo.png", "竹子"),
   asset("hole", "/assets/hole.png", "洞"),
   asset("rocket", "/assets/rocket.png", "火箭"),
@@ -92,6 +116,37 @@ const baseAnimations = (prefix: string): Record<string, AnimationClip> => ({
   ]),
 });
 
+const pandaSkillParameters = {
+  eatDuration: 5,
+  eatHeal: 100,
+  eatCooldown: 5,
+  bambooExtraRange: 0,
+  policeSummonCooldown: 0.5,
+  policeMergePadding: 0,
+};
+
+const moleSkillParameters = {
+  digCooldown: 10,
+  digDuration: 0.6,
+  minimumHoleDistance: 220,
+  holeRadius: 80,
+  stompsToFlatten: 3,
+  ambushRange: 150,
+  ambushCooldown: 3,
+  tunnelDuration: 1,
+  tunnelChance: 0.2,
+};
+
+const policeSkillParameters = {
+  kickRange: 160,
+  kickDistance: 140,
+  kickCooldown: 0.5,
+  kickDuration: 0.35,
+  gatlingFireDuration: 5,
+  gatlingRestDuration: 5,
+  gatlingShots: 15,
+};
+
 const policeDefinition = (
   star: 1 | 2 | 3 | 4 | 5,
   data: Pick<CharacterDefinition, "maxHp" | "speed" | "radius" | "attack">,
@@ -116,6 +171,7 @@ const policeDefinition = (
     pluginId: "police",
     policeStar: star,
     ...data,
+    skillParameters: { police: structuredClone(policeSkillParameters) },
     accent: ["", "#83c96f", "#5eb8ff", "#a58aff", "#ff9f58", "#ffd55e"][star],
     portraitAssetId: `police-${star}-idle`,
     animations: {
@@ -144,9 +200,52 @@ const policeDefinition = (
 export const defaultCharacters: CharacterDefinition[] = [
   {
     schemaVersion: SCHEMA_VERSION,
+    id: "panda-lazy",
+    name: "懒洋洋熊猫",
+    subtitle: "清醒但懒 · 躺着吃竹子 · 受击呼叫人类警察",
+    role: "contestant",
+    pluginId: "panda",
+    maxHp: 350,
+    speed: 100,
+    radius: 42,
+    accent: "#f4d35e",
+    portraitAssetId: "panda-lazy-idle",
+    attack: {
+      range: 150,
+      damage: 30,
+      cooldown: 1.25,
+      windup: 0.32,
+      mode: "melee",
+    },
+    skillParameters: { panda: structuredClone(pandaSkillParameters) },
+    animations: {
+      ...baseAnimations("panda-lazy"),
+      skill: clip(
+        "skill",
+        [
+          "panda-lazy-skill-1",
+          "panda-lazy-skill-2",
+          "panda-lazy-skill-3",
+          "panda-lazy-skill-4",
+        ],
+        true,
+        180,
+      ),
+    },
+    sounds: {
+      attack: speech("panda-lazy-attack", ["别催，我打了。", "躺着也能拍到你。"]),
+      hit: synth("panda-lazy-hit", "pandaGrunt", 0.55),
+      hurt: speech("panda-lazy-hurt", ["保护动物也敢打？", "警察叔叔，有人动手。"]),
+      skill: speech("panda-lazy-chew", ["竹子拿近点，我不想起来。", "躺着吃，味道也一样。"]),
+      death: speech("panda-lazy-death", ["先躺一会儿，别叫我。"], 0.72),
+    },
+    abilities: [],
+  },
+  {
+    schemaVersion: SCHEMA_VERSION,
     id: "panda",
-    name: "熊猫",
-    subtitle: "国家保护动物 · 受击呼叫人类警察",
+    name: "活力熊猫（旧版）",
+    subtitle: "可替代皮肤 · 国家保护动物 · 受击呼叫人类警察",
     role: "contestant",
     pluginId: "panda",
     maxHp: 350,
@@ -161,6 +260,7 @@ export const defaultCharacters: CharacterDefinition[] = [
       windup: 0.32,
       mode: "melee",
     },
+    skillParameters: { panda: structuredClone(pandaSkillParameters) },
     animations: {
       ...baseAnimations("panda"),
       skill: clip(
@@ -171,10 +271,10 @@ export const defaultCharacters: CharacterDefinition[] = [
       ),
     },
     sounds: {
-      attack: synth("panda-attack", "swipe"),
-      hit: synth("panda-hit", "hurt", 0.6),
-      hurt: synth("panda-hurt", "hurt", 0.5),
-      skill: synth("panda-chew", "chew", 0.65),
+      attack: speech("panda-attack", ["看我一巴掌。", "保护动物也会还手。"]),
+      hit: synth("panda-hit", "pandaGrunt", 0.6),
+      hurt: speech("panda-hurt", ["谁打我？警察叔叔！", "这可是保护动物。"]),
+      skill: speech("panda-chew", ["这根竹子很脆。", "吃完再打。"]),
       death: synth("panda-death", "death", 0.7),
     },
     abilities: [],
@@ -198,6 +298,7 @@ export const defaultCharacters: CharacterDefinition[] = [
       windup: 0.25,
       mode: "melee",
     },
+    skillParameters: { mole: structuredClone(moleSkillParameters) },
     animations: {
       ...baseAnimations("mole"),
       skill: clip(
@@ -206,12 +307,18 @@ export const defaultCharacters: CharacterDefinition[] = [
         false,
         150,
       ),
+      tunnelAttack: clip(
+        "tunnelAttack",
+        ["mole-tunnel-1", "mole-tunnel-2", "mole-tunnel-3", "mole-tunnel-4"],
+        false,
+        180,
+      ),
     },
     sounds: {
-      attack: synth("mole-attack", "swipe", 0.65),
-      hit: synth("mole-hit", "hurt", 0.55),
-      hurt: synth("mole-hurt", "hurt", 0.5),
-      skill: synth("mole-dig", "dig", 0.7),
+      attack: synth("mole-attack", "moleSqueak", 0.65),
+      hit: synth("mole-hit", "swipe", 0.55),
+      hurt: speech("mole-hurt", ["谁踩我洞口？", "我的洞还有耐久呢。"], 0.72),
+      skill: speech("mole-dig", ["借个洞，我马上回来。", "地下通道，人人能用。"], 0.72),
       death: synth("mole-death", "death", 0.65),
     },
     abilities: [],
@@ -297,9 +404,10 @@ export const defaultBoard: BoardDefinition = {
   schemaVersion: SCHEMA_VERSION,
   id: "bamboo-lava-arena",
   name: "竹林熔岩竞技场",
-  description: "六处竹子补给与三片岩浆险区，四角保留安全出生空间。",
+  description: "六处竹子补给、三片持续燃烧岩浆与一处温泉，四角保留安全出生空间。",
   width: BOARD_WIDTH,
   height: BOARD_HEIGHT,
+  unitScale: 1.35,
   backgroundAssetId: "board-bamboo-lava",
   props: [
     ...bambooPositions.map(([x, y], index) => ({
@@ -325,6 +433,8 @@ export const defaultBoard: BoardDefinition = {
         ],
       },
       label: "中央岩浆",
+      buffDuration: 3,
+      effectPerSecond: 5,
     },
     {
       id: "lava-left",
@@ -332,6 +442,8 @@ export const defaultBoard: BoardDefinition = {
       active: true,
       shape: { kind: "circle", x: 430, y: 450, radius: 95 },
       label: "左侧岩浆",
+      buffDuration: 3,
+      effectPerSecond: 5,
     },
     {
       id: "lava-right",
@@ -339,19 +451,145 @@ export const defaultBoard: BoardDefinition = {
       active: true,
       shape: { kind: "rectangle", x: 1130, y: 380, width: 150, height: 150 },
       label: "右侧岩浆",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "spring-north",
+      type: "hotSpring",
+      active: true,
+      shape: { kind: "circle", x: 1080, y: 160, radius: 76 },
+      label: "北侧温泉",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+  ],
+};
+
+export const streamLandscapeBoard: BoardDefinition = {
+  schemaVersion: SCHEMA_VERSION,
+  id: "stream-landscape",
+  name: "横屏直播竞技场",
+  description: "为 OBS、直播伴侣和横屏视频设计的 16:9 纯净观战棋盘。",
+  width: 1600,
+  height: 900,
+  unitScale: 1.45,
+  backgroundAssetId: "board-stream-landscape",
+  props: [
+    ...[
+      [250, 160],
+      [1350, 160],
+      [250, 740],
+      [1350, 740],
+    ].map(([x, y], index) => ({
+      id: `stream-bamboo-${index + 1}`,
+      type: "bamboo" as const,
+      active: true,
+      shape: { kind: "circle" as const, x, y, radius: 92 },
+      label: `直播竹子 ${index + 1}`,
+    })),
+    {
+      id: "stream-lava-left",
+      type: "lava",
+      active: true,
+      shape: { kind: "circle", x: 510, y: 455, radius: 105 },
+      label: "左侧燃烧区",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "stream-lava-right",
+      type: "lava",
+      active: true,
+      shape: {
+        kind: "polygon",
+        points: [
+          { x: 1040, y: 340 },
+          { x: 1225, y: 375 },
+          { x: 1260, y: 520 },
+          { x: 1090, y: 565 },
+          { x: 990, y: 455 },
+        ],
+      },
+      label: "右侧燃烧区",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "stream-spring",
+      type: "hotSpring",
+      active: true,
+      shape: { kind: "circle", x: 800, y: 180, radius: 85 },
+      label: "直播温泉",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+  ],
+};
+
+export const streamPortraitBoard: BoardDefinition = {
+  schemaVersion: SCHEMA_VERSION,
+  id: "stream-portrait",
+  name: "手机竖屏直播竞技场",
+  description: "为抖音等 9:16 手机竖屏直播设计，中央保留清晰战斗通道。",
+  width: 900,
+  height: 1600,
+  unitScale: 1.42,
+  backgroundAssetId: "board-stream-portrait",
+  props: [
+    ...[
+      [155, 205],
+      [745, 205],
+      [145, 800],
+      [755, 800],
+      [155, 1390],
+      [745, 1390],
+    ].map(([x, y], index) => ({
+      id: `portrait-bamboo-${index + 1}`,
+      type: "bamboo" as const,
+      active: true,
+      shape: { kind: "circle" as const, x, y, radius: 78 },
+      label: `竖屏竹子 ${index + 1}`,
+    })),
+    {
+      id: "portrait-lava-upper",
+      type: "lava",
+      active: true,
+      shape: { kind: "rectangle", x: 290, y: 430, width: 320, height: 120 },
+      label: "上段燃烧区",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "portrait-lava-lower",
+      type: "lava",
+      active: true,
+      shape: { kind: "circle", x: 450, y: 1110, radius: 115 },
+      label: "下段燃烧区",
+      buffDuration: 3,
+      effectPerSecond: 5,
+    },
+    {
+      id: "portrait-spring",
+      type: "hotSpring",
+      active: true,
+      shape: { kind: "circle", x: 450, y: 760, radius: 90 },
+      label: "竖屏温泉",
+      buffDuration: 3,
+      effectPerSecond: 5,
     },
   ],
 };
 
 export const defaultSetup: MatchSetup = {
   schemaVersion: SCHEMA_VERSION,
-  boardId: defaultBoard.id,
+  boardId: streamLandscapeBoard.id,
   seed: 20260726,
   contestants: [
     {
       id: "fighter-panda-a",
-      definitionId: "panda",
-      displayName: "熊猫·团团",
+      definitionId: "panda-lazy",
+      displayName: "懒熊猫·团团",
       position: { x: 170, y: 160 },
       direction: { x: 0.88, y: 0.47 },
       color: "#f6d85f",
@@ -366,8 +604,8 @@ export const defaultSetup: MatchSetup = {
     },
     {
       id: "fighter-panda-b",
-      definitionId: "panda",
-      displayName: "熊猫·滚滚",
+      definitionId: "panda-lazy",
+      displayName: "懒熊猫·滚滚",
       position: { x: 180, y: 740 },
       direction: { x: 0.75, y: -0.66 },
       color: "#72d4af",
@@ -388,7 +626,56 @@ export const createDefaultManifest = (): ProjectManifest => ({
   name: "电子斗蛐蛐",
   assets: structuredClone(defaultAssets),
   characters: structuredClone(defaultCharacters),
-  boards: [structuredClone(defaultBoard)],
+  boards: [
+    structuredClone(defaultBoard),
+    structuredClone(streamLandscapeBoard),
+    structuredClone(streamPortraitBoard),
+  ],
   setup: structuredClone(defaultSetup),
   updatedAt: new Date().toISOString(),
 });
+
+export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
+  const upgraded = structuredClone(manifest);
+  const defaults = createDefaultManifest();
+
+  for (const assetDefinition of defaults.assets) {
+    if (!upgraded.assets.some((assetItem) => assetItem.id === assetDefinition.id)) {
+      upgraded.assets.push(structuredClone(assetDefinition));
+    }
+  }
+  for (const defaultCharacter of defaults.characters) {
+    const character = upgraded.characters.find((item) => item.id === defaultCharacter.id);
+    if (!character) {
+      upgraded.characters.push(structuredClone(defaultCharacter));
+      continue;
+    }
+    character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
+    for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {
+      character.animations[clipId] ??= structuredClone(animation);
+    }
+  }
+  for (const defaultBoardDefinition of defaults.boards) {
+    const board = upgraded.boards.find((item) => item.id === defaultBoardDefinition.id);
+    if (!board) {
+      upgraded.boards.push(structuredClone(defaultBoardDefinition));
+      continue;
+    }
+    board.unitScale ??= defaultBoardDefinition.unitScale ?? 1;
+    for (const defaultProp of defaultBoardDefinition.props) {
+      if (!board.props.some((prop) => prop.id === defaultProp.id)) {
+        board.props.push(structuredClone(defaultProp));
+      }
+    }
+  }
+  for (const board of upgraded.boards) {
+    board.unitScale ??= 1.35;
+    for (const prop of board.props) {
+      if (prop.type !== "lava" && prop.type !== "hotSpring") continue;
+      prop.buffDuration ??= 3;
+      prop.effectPerSecond ??= 5;
+    }
+  }
+  upgraded.updatedAt = new Date().toISOString();
+  return upgraded;
+};

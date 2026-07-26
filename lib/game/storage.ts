@@ -1,6 +1,7 @@
 import Dexie, { type EntityTable } from "dexie";
 import JSZip from "jszip";
 import { z } from "zod";
+import { upgradeManifest } from "./defaultContent";
 import type { ProjectManifest } from "./types";
 
 type StoredProject = {
@@ -93,7 +94,7 @@ const manifestSchema = z
   .passthrough();
 
 export const validateManifest = (value: unknown): ProjectManifest => {
-  const parsed = manifestSchema.parse(value) as ProjectManifest;
+  const parsed = upgradeManifest(manifestSchema.parse(value) as ProjectManifest);
   const characterIds = new Set(parsed.characters.map((character) => character.id));
   const boardIds = new Set(parsed.boards.map((board) => board.id));
   const assetIds = new Set(parsed.assets.map((asset) => asset.id));

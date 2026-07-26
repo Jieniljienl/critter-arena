@@ -48,9 +48,12 @@ export type AnimationClip = {
 
 export type SoundCue = {
   id: string;
-  source: "synth" | "asset";
+  source: "synth" | "asset" | "speech";
   preset?: SynthPreset;
   assetId?: string;
+  phrases?: string[];
+  speechRate?: number;
+  speechPitch?: number;
   volume: number;
   pitchVariance?: number;
   maxVoices?: number;
@@ -72,7 +75,10 @@ export type SynthPreset =
   | "heal"
   | "merge"
   | "death"
-  | "lava";
+  | "lava"
+  | "spring"
+  | "pandaGrunt"
+  | "moleSqueak";
 
 export type AttackDefinition = {
   range: number;
@@ -111,6 +117,37 @@ export type AbilityModule = {
   actions: AbilityAction[];
 };
 
+export type PandaSkillParameters = {
+  eatDuration: number;
+  eatHeal: number;
+  eatCooldown: number;
+  bambooExtraRange: number;
+  policeSummonCooldown: number;
+  policeMergePadding: number;
+};
+
+export type MoleSkillParameters = {
+  digCooldown: number;
+  digDuration: number;
+  minimumHoleDistance: number;
+  holeRadius: number;
+  stompsToFlatten: number;
+  ambushRange: number;
+  ambushCooldown: number;
+  tunnelDuration: number;
+  tunnelChance: number;
+};
+
+export type PoliceSkillParameters = {
+  kickRange: number;
+  kickDistance: number;
+  kickCooldown: number;
+  kickDuration: number;
+  gatlingFireDuration: number;
+  gatlingRestDuration: number;
+  gatlingShots: number;
+};
+
 export type CharacterDefinition = {
   schemaVersion: typeof SCHEMA_VERSION;
   id: string;
@@ -125,6 +162,11 @@ export type CharacterDefinition = {
   accent: string;
   portraitAssetId: string;
   attack: AttackDefinition;
+  skillParameters?: {
+    panda?: PandaSkillParameters;
+    mole?: MoleSkillParameters;
+    police?: PoliceSkillParameters;
+  };
   animations: Record<string, AnimationClip>;
   sounds: Partial<Record<"attack" | "hit" | "hurt" | "skill" | "death", SoundCue>>;
   abilities: AbilityModule[];
@@ -132,10 +174,12 @@ export type CharacterDefinition = {
 
 export type BoardProp = {
   id: string;
-  type: "bamboo" | "lava";
+  type: "bamboo" | "lava" | "hotSpring";
   shape: RegionShape;
   active: boolean;
   label?: string;
+  buffDuration?: number;
+  effectPerSecond?: number;
 };
 
 export type BoardDefinition = {
@@ -145,6 +189,7 @@ export type BoardDefinition = {
   description: string;
   width: number;
   height: number;
+  unitScale?: number;
   backgroundAssetId: string;
   props: BoardProp[];
 };
@@ -212,6 +257,12 @@ export type RuntimeUnit = {
   reservedBambooId?: string;
   nextDigAt: number;
   nextAmbushAt: number;
+  burnUntil: number;
+  burnDamagePerSecond: number;
+  springUntil: number;
+  springHealPerSecond: number;
+  nextBurnFeedbackAt: number;
+  nextSpringFeedbackAt: number;
   lastHoleId?: string;
   tunnelData?: {
     mode: "ambush" | "travel";
@@ -238,6 +289,8 @@ export type RuntimeHole = {
   x: number;
   y: number;
   radius: number;
+  stompsRequired: number;
+  stompsRemaining: number;
   bornAt: number;
 };
 
@@ -277,6 +330,7 @@ export type CombatEvent = {
   unitId?: string;
   targetId?: string;
   sound?: SynthPreset;
+  amount?: number;
 };
 
 export type BattleStatus = "ready" | "running" | "paused" | "finished";

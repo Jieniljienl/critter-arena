@@ -42,7 +42,7 @@ type ArenaCanvasProps = {
 type PhaserModule = typeof PhaserType;
 
 const fallbackGlyph = (definitionId: string): string => {
-  if (definitionId === "panda") return "🐼";
+  if (definitionId.startsWith("panda")) return "🐼";
   if (definitionId === "mole") return "🦫";
   if (definitionId.startsWith("police-")) return "👮";
   return "🐾";
@@ -64,7 +64,8 @@ const frameForClip = (
 };
 
 const actionClipName = (unit: RuntimeUnit): string => {
-  if (unit.action === "eating" || unit.action === "digging" || unit.action === "tunneling" || unit.action === "kick") {
+  if (unit.action === "tunneling") return "tunnelAttack";
+  if (unit.action === "eating" || unit.action === "digging" || unit.action === "kick") {
     return "skill";
   }
   if (unit.action === "attack") return "attack";
@@ -132,6 +133,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
       let disposed = false;
       let game: PhaserType.Game | undefined;
       const simulation = new BattleSimulation(manifest);
+      const board =
+        manifest.boards.find((candidate) => candidate.id === manifest.setup.boardId) ??
+        manifest.boards[0];
       simulationRef.current = simulation;
       audioRef.current.setMuted(mutedRef.current);
       audioRef.current.setVolume(volumeRef.current);
@@ -139,10 +143,10 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
       let previousEventIds = new Set<string>();
 
       const boot = async () => {
-        const module = (await import("phaser")) as unknown as {
+        const phaserModule = (await import("phaser")) as unknown as {
           default?: PhaserModule;
         } & PhaserModule;
-        const Phaser = (module.default ?? module) as PhaserModule;
+        const Phaser = (phaserModule.default ?? phaserModule) as PhaserModule;
         if (disposed) return;
 
         class ArenaScene extends Phaser.Scene {
@@ -151,6 +155,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private unitImages = new Map<string, PhaserType.GameObjects.Image>();
           private unitFallbacks = new Map<string, PhaserType.GameObjects.Text>();
           private unitLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private healthLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private holeLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private eventLabels = new Map<string, PhaserType.GameObjects.Text>();
           private accumulatedMs = 0;
           private failedTextures = new Set<string>();
 
@@ -169,18 +176,15 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           }
 
           create() {
-            const backgroundKey = `asset:${
-              manifest.boards.find((board) => board.id === manifest.setup.boardId)
-                ?.backgroundAssetId ?? ""
-            }`;
+            const backgroundKey = `asset:${board?.backgroundAssetId ?? ""}`;
             if (this.textures.exists(backgroundKey) && !this.failedTextures.has(backgroundKey)) {
-              const image = this.add.image(800, 450, backgroundKey);
-              image.setDisplaySize(1600, 900);
+              const image = this.add.image((board?.width ?? 1600) / 2, (board?.height ?? 900) / 2, backgroundKey);
+              image.setDisplaySize(board?.width ?? 1600, board?.height ?? 900);
               image.setDepth(-20);
             } else {
               const background = this.add.graphics();
               background.fillGradientStyle(0x183c2f, 0x244f37, 0x4b2920, 0x241d1d, 1);
-              background.fillRect(0, 0, 1600, 900);
+              background.fillRect(0, 0, board?.width ?? 1600, board?.height ?? 900);
               background.setDepth(-20);
             }
             this.arenaGraphics = this.add.graphics().setDepth(-10);
@@ -257,6 +261,30 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.unitLabels.delete(id);
               }
             }
+            for (const [id, label] of this.healthLabels) {
+              if (!activeIds.has(id)) {
+                label.destroy();
+                this.healthLabels.delete(id);
+              }
+            }
+            const activeHoleIds = new Set(snapshot.holes.map((hole) => hole.id));
+            for (const [id, label] of this.holeLabels) {
+              if (!activeHoleIds.has(id)) {
+                label.destroy();
+                this.holeLabels.delete(id);
+              }
+            }
+            const visibleEventIds = new Set(
+              snapshot.events
+                .filter((event) => snapshot.time - event.time <= 0.9 && event.amount !== undefined)
+                .map((event) => event.id),
+            );
+            for (const [id, label] of this.eventLabels) {
+              if (!visibleEventIds.has(id)) {
+                label.destroy();
+                this.eventLabels.delete(id);
+              }
+            }
 
             for (const unit of snapshot.units) this.drawUnit(unit, snapshot.time);
           }
@@ -266,14 +294,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!prop.active) continue;
               if (prop.type === "lava") {
                 this.drawShape(prop.shape, 0xff5a35, 0.34, 0xffc04a);
+              } else if (prop.type === "hotSpring") {
+                this.drawShape(prop.shape, 0x43cbd3, 0.32, 0xa5fbff);
               } else {
                 const center = this.shapeCenter(prop.shape);
-                this.arenaGraphics.fillStyle(0x2d6f4a, 0.18);
-                this.arenaGraphics.lineStyle(3, 0x79cf71, 0.4);
-                if (prop.shape.kind === "circle") {
-                  this.arenaGraphics.fillCircle(center.x, center.y, prop.shape.radius);
-                  this.arenaGraphics.strokeCircle(center.x, center.y, prop.shape.radius);
-                }
+                this.drawShape(prop.shape, 0x2d6f4a, 0.18, 0x79cf71);
                 const key = "asset:bamboo";
                 if (this.textures.exists(key) && !this.failedTextures.has(key)) {
                   const markerKey = `prop:${prop.id}`;
@@ -282,7 +307,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     image = this.add.image(center.x, center.y, key).setDepth(-5);
                     this.unitImages.set(markerKey, image);
                   }
-                  image.setPosition(center.x, center.y).setDisplaySize(78, 96).setAlpha(0.94);
+                  const scale = board?.unitScale ?? 1;
+                  image
+                    .setPosition(center.x, center.y)
+                    .setDisplaySize(78 * scale, 96 * scale)
+                    .setAlpha(0.94);
                 } else {
                   this.arenaGraphics.fillStyle(0x79cf71, 1);
                   this.arenaGraphics.fillRoundedRect(center.x - 11, center.y - 36, 22, 72, 7);
@@ -308,7 +337,13 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           }
 
           private shapeCenter(shape: RegionShape) {
-            if (shape.kind !== "polygon") return { x: shape.x, y: shape.y };
+            if (shape.kind === "circle") return { x: shape.x, y: shape.y };
+            if (shape.kind === "rectangle") {
+              return {
+                x: shape.x + shape.width / 2,
+                y: shape.y + shape.height / 2,
+              };
+            }
             return shape.points.reduce(
               (center, point) => ({
                 x: center.x + point.x / shape.points.length,
@@ -322,10 +357,28 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             for (const hole of snapshot.holes) {
               this.arenaGraphics.fillStyle(0x1a1412, 0.88);
               this.arenaGraphics.lineStyle(4, 0x7d5f3b, 0.9);
-              this.arenaGraphics.fillEllipse(hole.x, hole.y, 126, 56);
-              this.arenaGraphics.strokeEllipse(hole.x, hole.y, 126, 56);
+              this.arenaGraphics.fillEllipse(hole.x, hole.y, hole.radius * 1.65, hole.radius * 0.72);
+              this.arenaGraphics.strokeEllipse(hole.x, hole.y, hole.radius * 1.65, hole.radius * 0.72);
               this.arenaGraphics.lineStyle(2, 0xe1b76b, 0.18);
               this.arenaGraphics.strokeCircle(hole.x, hole.y, hole.radius);
+              let label = this.holeLabels.get(hole.id);
+              if (!label) {
+                label = this.add
+                  .text(hole.x, hole.y, "", {
+                    fontSize: "16px",
+                    fontFamily: "Arial",
+                    fontStyle: "bold",
+                    color: "#fff0c4",
+                    stroke: "#1a1412",
+                    strokeThickness: 4,
+                  })
+                  .setOrigin(0.5)
+                  .setDepth(19);
+                this.holeLabels.set(hole.id, label);
+              }
+              label
+                .setText(`洞口 ${hole.stompsRemaining}/${hole.stompsRequired}`)
+                .setPosition(hole.x, hole.y + hole.radius * 0.55);
             }
           }
 
@@ -357,8 +410,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private drawEventEffects(snapshot: BattleSnapshot) {
             for (const event of snapshot.events) {
               const age = snapshot.time - event.time;
-              if (age < 0 || age > 0.55 || event.x === undefined || event.y === undefined) continue;
-              const progress = age / 0.55;
+              if (age < 0 || age > 0.9 || event.x === undefined || event.y === undefined) continue;
+              const progress = Math.min(1, age / 0.55);
               const color =
                 event.sound === "explosion"
                   ? 0xff653f
@@ -367,8 +420,35 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     : event.type === "merge"
                       ? 0xffdf70
                       : 0xffffff;
-              this.overlayGraphics.lineStyle(5 * (1 - progress), color, 0.8 * (1 - progress));
-              this.overlayGraphics.strokeCircle(event.x, event.y, 18 + progress * 95);
+              if (age <= 0.55) {
+                this.overlayGraphics.lineStyle(5 * (1 - progress), color, 0.8 * (1 - progress));
+                this.overlayGraphics.strokeCircle(event.x, event.y, 18 + progress * 95);
+              }
+              if (event.amount !== undefined && Math.abs(event.amount) > 0.01) {
+                let label = this.eventLabels.get(event.id);
+                if (!label) {
+                  label = this.add
+                    .text(event.x, event.y, "", {
+                      fontSize: "27px",
+                      fontFamily: "Arial",
+                      fontStyle: "bold",
+                      color: event.amount > 0 ? "#7ef5ad" : "#ff7b72",
+                      stroke: "#130f16",
+                      strokeThickness: 6,
+                    })
+                    .setOrigin(0.5)
+                    .setDepth(40);
+                  this.eventLabels.set(event.id, label);
+                }
+                const displayAmount =
+                  Math.abs(event.amount) >= 10
+                    ? Math.round(Math.abs(event.amount)).toString()
+                    : Math.abs(event.amount).toFixed(1).replace(/\.0$/, "");
+                label
+                  .setText(`${event.amount > 0 ? "+" : "-"}${displayAmount}`)
+                  .setPosition(event.x, event.y - 28 - age * 70)
+                  .setAlpha(Math.max(0, 1 - age / 0.9));
+              }
             }
           }
 
@@ -429,31 +509,57 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               manifest.setup.contestants.find((contestant) => contestant.id === unit.ownerId)
                 ?.color ?? definition.accent;
             const color = Phaser.Display.Color.HexStringToColor(ownerColor).color;
-            this.overlayGraphics.lineStyle(unit.main ? 5 : 3, color, unit.targetable ? 0.9 : 0.28);
-            this.overlayGraphics.strokeCircle(unit.x, unit.y, unit.radius + 7);
-
-            const healthWidth = Math.max(48, unit.radius * 2.2);
+            const healthWidth = Math.max(76, unit.radius * 2.6);
             const healthRatio = Math.max(0, unit.hp / unit.maxHp);
-            const healthY = unit.y - unit.radius - 25;
+            const healthY = unit.y - unit.radius - 31;
             this.overlayGraphics.fillStyle(0x100e13, 0.82);
+            this.overlayGraphics.lineStyle(2, color, unit.targetable ? 0.95 : 0.3);
             this.overlayGraphics.fillRoundedRect(
               unit.x - healthWidth / 2,
               healthY,
               healthWidth,
-              8,
-              4,
+              18,
+              7,
+            );
+            this.overlayGraphics.strokeRoundedRect(
+              unit.x - healthWidth / 2,
+              healthY,
+              healthWidth,
+              18,
+              7,
             );
             this.overlayGraphics.fillStyle(
               healthRatio > 0.55 ? 0x69db83 : healthRatio > 0.25 ? 0xffc857 : 0xff5b68,
               1,
             );
             this.overlayGraphics.fillRoundedRect(
-              unit.x - healthWidth / 2 + 1,
-              healthY + 1,
-              Math.max(0, (healthWidth - 2) * healthRatio),
-              6,
-              3,
+              unit.x - healthWidth / 2 + 3,
+              healthY + 3,
+              Math.max(0, (healthWidth - 6) * healthRatio),
+              12,
+              5,
             );
+            let healthLabel = this.healthLabels.get(unit.id);
+            if (!healthLabel) {
+              healthLabel = this.add
+                .text(unit.x, healthY, "", {
+                  fontSize: "12px",
+                  fontFamily: "Arial",
+                  fontStyle: "bold",
+                  color: "#ffffff",
+                  stroke: "#161118",
+                  strokeThickness: 3,
+                })
+                .setOrigin(0.5)
+                .setDepth(24);
+              this.healthLabels.set(unit.id, healthLabel);
+            }
+            const status =
+              time < unit.burnUntil ? "🔥 " : time < unit.springUntil ? "♨ " : "";
+            healthLabel
+              .setText(`${status}${Math.ceil(unit.hp)} / ${Math.ceil(unit.maxHp)}`)
+              .setPosition(unit.x, healthY + 9)
+              .setAlpha(alpha);
 
             let label = this.unitLabels.get(unit.id);
             if (!label) {
@@ -472,6 +578,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             label
               .setText(unit.name)
               .setPosition(unit.x, unit.y + unit.radius + 21)
+              .setColor(ownerColor)
               .setAlpha(alpha);
           }
         }
@@ -479,8 +586,8 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
         game = new Phaser.Game({
           type: Phaser.AUTO,
           parent: containerId,
-          width: 1600,
-          height: 900,
+          width: board?.width ?? 1600,
+          height: board?.height ?? 900,
           transparent: true,
           render: {
             antialias: true,

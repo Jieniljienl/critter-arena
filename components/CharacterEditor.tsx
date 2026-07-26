@@ -13,12 +13,14 @@ import {
 import { removeFlatBackground } from "@/lib/game/imageProcessing";
 import { fileToDataUrl } from "@/lib/game/storage";
 import {
-  SCHEMA_VERSION,
+  type AbilityAction,
   type AbilityModule,
   type AnimationClip,
   type AssetRef,
   type CharacterDefinition,
   type ProjectManifest,
+  type SoundCue,
+  type SynthPreset,
 } from "@/lib/game/types";
 
 type CharacterEditorProps = {
@@ -32,6 +34,114 @@ type CharacterEditorProps = {
 const numeric = (value: string, fallback: number): number => {
   const parsed = Number(value);
   return Number.isFinite(parsed) ? parsed : fallback;
+};
+
+let localIdCounter = 0;
+const makeLocalId = (prefix: string) => {
+  localIdCounter += 1;
+  const randomPart =
+    typeof globalThis.crypto?.randomUUID === "function"
+      ? globalThis.crypto.randomUUID()
+      : `local-${localIdCounter}`;
+  return `${prefix}-${randomPart}`;
+};
+
+type SoundSlot = "attack" | "hit" | "hurt" | "skill" | "death";
+type SkillGroup = "panda" | "mole" | "police";
+
+const soundSlots: Array<[SoundSlot, string]> = [
+  ["attack", "攻击"],
+  ["hit", "命中"],
+  ["hurt", "受伤"],
+  ["skill", "技能"],
+  ["death", "死亡"],
+];
+
+const synthPresets: SynthPreset[] = [
+  "swipe",
+  "baton",
+  "pistol",
+  "rifle",
+  "rocket",
+  "explosion",
+  "gatling",
+  "kick",
+  "chew",
+  "dig",
+  "tunnel",
+  "hurt",
+  "heal",
+  "merge",
+  "death",
+  "lava",
+  "spring",
+  "pandaGrunt",
+  "moleSqueak",
+];
+
+const funnyPhrases = (
+  character: CharacterDefinition,
+  slot: SoundSlot,
+): string[] => {
+  if (character.pluginId === "panda") {
+    if (slot === "hurt") return ["谁打保护动物？", "警察同志，就是他！", "我躺着也中招？"];
+    if (slot === "skill") return ["先吃口竹子，别催。", "慢慢来，竹子又不会跑。"];
+    if (slot === "death") return ["今天先歇业。", "这班我不上了。"];
+    return ["我就轻轻拍一下。", "非要让我起来是吧。"];
+  }
+  if (character.pluginId === "mole") {
+    if (slot === "skill") return ["地下通道，借过一下！", "猜猜我从哪出来？"];
+    if (slot === "hurt") return ["谁踩我洞口？", "地底下都不安全啦！"];
+    return ["土里土气的一击！", "钻出来吓你一跳！"];
+  }
+  if (character.pluginId === "police") {
+    if (slot === "hurt") return ["袭警了啊！", "执法记录仪开着呢！"];
+    if (slot === "death") return ["申请支援！", "先撤回派出所。"];
+    return ["保护动物执法现场！", "不许动！", "就是你打的熊猫？"];
+  }
+  return ["看招！", "这一下有点意思。", "别急，节目效果来了。"];
+};
+
+const skillFields: Record<
+  SkillGroup,
+  Array<{ key: string; label: string; fallback: number; min?: number; max?: number; step?: number }>
+> = {
+  panda: [
+    { key: "eatDuration", label: "进食耗时（秒）", fallback: 5, min: 0.1, step: 0.1 },
+    { key: "eatHeal", label: "吃竹回血", fallback: 100, min: 0 },
+    { key: "eatCooldown", label: "进食冷却（秒）", fallback: 5, min: 0, step: 0.1 },
+    { key: "bambooExtraRange", label: "竹子额外触发距离", fallback: 0, min: 0 },
+    { key: "policeSummonCooldown", label: "受击召警冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
+    { key: "policeMergePadding", label: "警察碰撞合并余量", fallback: 0, min: 0 },
+  ],
+  mole: [
+    { key: "digCooldown", label: "挖洞冷却（秒）", fallback: 10, min: 0, step: 0.1 },
+    { key: "digDuration", label: "挖洞动作（秒）", fallback: 0.6, min: 0.1, step: 0.1 },
+    { key: "minimumHoleDistance", label: "洞口最小间距", fallback: 220, min: 0 },
+    { key: "holeRadius", label: "洞口范围半径", fallback: 80, min: 10 },
+    { key: "stompsToFlatten", label: "踩平所需进入次数", fallback: 3, min: 1, max: 99, step: 1 },
+    { key: "ambushRange", label: "钻洞偷袭范围", fallback: 150, min: 0 },
+    { key: "ambushCooldown", label: "偷袭冷却（秒）", fallback: 3, min: 0, step: 0.1 },
+    { key: "tunnelDuration", label: "地道移动耗时（秒）", fallback: 1, min: 0.1, step: 0.1 },
+    { key: "tunnelChance", label: "随机钻洞概率", fallback: 0.2, min: 0, max: 1, step: 0.05 },
+  ],
+  police: [
+    { key: "kickRange", label: "五星踹击范围", fallback: 160, min: 0 },
+    { key: "kickDistance", label: "五星踹飞距离", fallback: 140, min: 0 },
+    { key: "kickCooldown", label: "踹击冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
+    { key: "kickDuration", label: "踹击动作（秒）", fallback: 0.35, min: 0.05, step: 0.05 },
+    { key: "gatlingFireDuration", label: "加特林开火时长", fallback: 5, min: 0.1, step: 0.1 },
+    { key: "gatlingRestDuration", label: "加特林休息时长", fallback: 5, min: 0, step: 0.1 },
+    { key: "gatlingShots", label: "每轮子弹数", fallback: 15, min: 1, step: 1 },
+  ],
+};
+
+const defaultAction = (kind: AbilityAction["kind"]): AbilityAction => {
+  if (kind === "heal") return { kind, amount: 20 };
+  if (kind === "damageNearby") return { kind, amount: 10, radius: 180 };
+  if (kind === "spawnUnit") return { kind, definitionId: "police-1", count: 1 };
+  if (kind === "knockbackNearby") return { kind, distance: 120, radius: 160 };
+  return { kind, cue: "swipe" };
 };
 
 export function CharacterEditor({
@@ -60,7 +170,7 @@ export function CharacterEditor({
   };
 
   const createCharacter = () => {
-    const id = `custom-${Date.now()}`;
+    const id = makeLocalId("custom");
     const clone = structuredClone(selected);
     clone.id = id;
     clone.name = `${selected.name}副本`;
@@ -68,6 +178,7 @@ export function CharacterEditor({
     clone.role = "contestant";
     clone.pluginId = undefined;
     clone.policeStar = undefined;
+    clone.skillParameters = undefined;
     const next = structuredClone(manifest);
     next.characters.push(clone);
     next.updatedAt = new Date().toISOString();
@@ -76,7 +187,10 @@ export function CharacterEditor({
     onNotice("已创建可编辑角色副本");
   };
 
-  const uploadAnimation = async (files: File[], clipName: "idle" | "attack" | "skill") => {
+  const uploadAnimation = async (
+    files: File[],
+    clipName: "idle" | "attack" | "skill" | "tunnelAttack",
+  ) => {
     if (!files.length) return;
     const newAssets: AssetRef[] = [];
     const frames: AnimationClip["frames"] = [];
@@ -85,7 +199,7 @@ export function CharacterEditor({
       const url = removeBackground
         ? await removeFlatBackground(file)
         : await fileToDataUrl(file);
-      const id = `${selected.id}-${clipName}-${Date.now()}-${index}`;
+      const id = makeLocalId(`${selected.id}-${clipName}-${index}`);
       newAssets.push({
         id,
         kind: "image",
@@ -98,7 +212,7 @@ export function CharacterEditor({
         durationMs: clipName === "idle" ? 500 : 140,
         marker:
           index === Math.floor(files.length / 2)
-            ? clipName === "attack"
+            ? clipName === "attack" || clipName === "tunnelAttack"
               ? "attack"
               : "skill"
             : undefined,
@@ -111,7 +225,7 @@ export function CharacterEditor({
     if (!character) return;
     character.animations[clipName] = {
       id: clipName,
-      loop: clipName !== "attack",
+      loop: clipName === "idle",
       frames,
     };
     if (clipName === "idle") {
@@ -124,7 +238,17 @@ export function CharacterEditor({
     }
     next.updatedAt = new Date().toISOString();
     onChange(next);
-    onNotice(`已更新${clipName === "idle" ? "待机" : clipName === "attack" ? "普攻" : "技能"}动作`);
+    onNotice(
+      `已更新${
+        clipName === "idle"
+          ? "待机"
+          : clipName === "attack"
+            ? "普攻"
+            : clipName === "tunnelAttack"
+              ? "钻洞攻击"
+              : "技能"
+      }动作`,
+    );
   };
 
   const uploadSound = async (
@@ -133,7 +257,7 @@ export function CharacterEditor({
   ) => {
     if (!file || !file.type.startsWith("audio/")) return;
     const url = await fileToDataUrl(file);
-    const assetId = `${selected.id}-${slot}-sound-${Date.now()}`;
+    const assetId = makeLocalId(`${selected.id}-${slot}-sound`);
     const next = structuredClone(manifest);
     next.assets.push({
       id: assetId,
@@ -157,10 +281,10 @@ export function CharacterEditor({
   };
 
   const addAbility = (preset: "heal" | "pulse" | "summon") => {
-    const module: AbilityModule =
+    const abilityModule: AbilityModule =
       preset === "heal"
         ? {
-            id: `ability-${Date.now()}`,
+            id: makeLocalId("ability"),
             name: "负伤恢复",
             trigger: "onDamageTaken",
             cooldown: 5,
@@ -169,7 +293,7 @@ export function CharacterEditor({
           }
         : preset === "pulse"
           ? {
-              id: `ability-${Date.now()}`,
+              id: makeLocalId("ability"),
               name: "定时冲击波",
               trigger: "interval",
               cooldown: 8,
@@ -177,14 +301,72 @@ export function CharacterEditor({
               actions: [{ kind: "damageNearby", amount: 10, radius: 180 }],
             }
           : {
-              id: `ability-${Date.now()}`,
+              id: makeLocalId("ability"),
               name: "受击援军",
               trigger: "onDamageTaken",
               cooldown: 4,
               actions: [{ kind: "spawnUnit", definitionId: "police-1", count: 1 }],
             };
-    updateCharacter((character) => character.abilities.push(module));
+    updateCharacter((character) => character.abilities.push(abilityModule));
   };
+
+  const updateSkillParameter = (group: SkillGroup, key: string, value: number) => {
+    updateCharacter((character) => {
+      character.skillParameters ??= {};
+      const parameters = character.skillParameters as unknown as Record<
+        string,
+        Record<string, number> | undefined
+      >;
+      parameters[group] ??= {};
+      parameters[group]![key] = value;
+    });
+  };
+
+  const setSoundStyle = (slot: SoundSlot, source: "synth" | "speech") => {
+    updateCharacter((character) => {
+      const existing = character.sounds[slot];
+      character.sounds[slot] =
+        source === "speech"
+          ? {
+              id: `${character.id}-${slot}-speech`,
+              source,
+              phrases: existing?.phrases?.length
+                ? existing.phrases
+                : funnyPhrases(character, slot),
+              speechRate: existing?.speechRate ?? 1.08,
+              speechPitch: existing?.speechPitch ?? (character.pluginId === "mole" ? 1.35 : 1),
+              volume: existing?.volume ?? 0.78,
+              maxVoices: 2,
+            }
+          : {
+              id: `${character.id}-${slot}-synth`,
+              source,
+              preset: existing?.preset ?? (slot === "hurt" ? "hurt" : slot === "death" ? "death" : "swipe"),
+              volume: existing?.volume ?? 0.72,
+              pitchVariance: existing?.pitchVariance ?? 0.08,
+              maxVoices: existing?.maxVoices ?? 8,
+            };
+    });
+  };
+
+  const updateSound = (slot: SoundSlot, update: (cue: SoundCue) => void) => {
+    updateCharacter((character) => {
+      const cue = character.sounds[slot];
+      if (cue) update(cue);
+    });
+  };
+
+  const updateAbility = (abilityId: string, update: (ability: AbilityModule) => void) => {
+    updateCharacter((character) => {
+      const ability = character.abilities.find((candidate) => candidate.id === abilityId);
+      if (ability) update(ability);
+    });
+  };
+
+  const selectedSkillValues =
+    selected.pluginId && selected.skillParameters?.[selected.pluginId]
+      ? (selected.skillParameters[selected.pluginId] as unknown as Record<string, number>)
+      : undefined;
 
   return (
     <div className="editor-layout">
@@ -212,7 +394,12 @@ export function CharacterEditor({
                   className="library-avatar"
                   style={portrait ? { backgroundImage: `url("${portrait.url}")` } : undefined}
                 >
-                  {!portrait && (character.id === "panda" ? "🐼" : character.id === "mole" ? "🦫" : "👮")}
+                  {!portrait &&
+                    (character.id.startsWith("panda")
+                      ? "🐼"
+                      : character.id === "mole"
+                        ? "🦫"
+                        : "👮")}
                 </span>
                 <span>
                   <strong>{character.name}</strong>
@@ -351,6 +538,111 @@ export function CharacterEditor({
                 </select>
               </label>
               <label>
+                出手前摇（秒）
+                <input
+                  type="number"
+                  min={0}
+                  step={0.01}
+                  value={selected.attack.windup}
+                  onChange={(event) =>
+                    updateCharacter(
+                      (character) =>
+                        (character.attack.windup = numeric(
+                          event.target.value,
+                          character.attack.windup,
+                        )),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                弹丸速度
+                <input
+                  type="number"
+                  min={1}
+                  value={selected.attack.projectileSpeed ?? 650}
+                  onChange={(event) =>
+                    updateCharacter(
+                      (character) =>
+                        (character.attack.projectileSpeed = numeric(
+                          event.target.value,
+                          character.attack.projectileSpeed ?? 650,
+                        )),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                连发数量
+                <input
+                  type="number"
+                  min={1}
+                  step={1}
+                  value={selected.attack.burstCount ?? 1}
+                  onChange={(event) =>
+                    updateCharacter(
+                      (character) =>
+                        (character.attack.burstCount = Math.max(
+                          1,
+                          Math.round(numeric(event.target.value, character.attack.burstCount ?? 1)),
+                        )),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                连发间隔（秒）
+                <input
+                  type="number"
+                  min={0}
+                  step={0.05}
+                  value={selected.attack.burstGap ?? 0.3}
+                  onChange={(event) =>
+                    updateCharacter(
+                      (character) =>
+                        (character.attack.burstGap = numeric(
+                          event.target.value,
+                          character.attack.burstGap ?? 0.3,
+                        )),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                爆炸溅射伤害
+                <input
+                  type="number"
+                  min={0}
+                  value={selected.attack.splashDamage ?? 0}
+                  onChange={(event) =>
+                    updateCharacter(
+                      (character) =>
+                        (character.attack.splashDamage = numeric(
+                          event.target.value,
+                          character.attack.splashDamage ?? 0,
+                        )),
+                    )
+                  }
+                />
+              </label>
+              <label>
+                爆炸半径
+                <input
+                  type="number"
+                  min={0}
+                  value={selected.attack.splashRadius ?? 0}
+                  onChange={(event) =>
+                    updateCharacter(
+                      (character) =>
+                        (character.attack.splashRadius = numeric(
+                          event.target.value,
+                          character.attack.splashRadius ?? 0,
+                        )),
+                    )
+                  }
+                />
+              </label>
+              <label>
                 角色色
                 <input
                   type="color"
@@ -360,6 +652,46 @@ export function CharacterEditor({
               </label>
             </div>
           </div>
+
+          {selected.pluginId && (
+            <div className="editor-card">
+              <div className="card-title">
+                <Sparkles size={17} />
+                <span>
+                  {selected.pluginId === "panda"
+                    ? "熊猫内置技能参数"
+                    : selected.pluginId === "mole"
+                      ? "地鼠内置技能参数"
+                      : "警察内置技能参数"}
+                </span>
+              </div>
+              <p className="editor-card-note">
+                内置行为也完全参数化；修改后重新部署战斗生效。
+                {selected.pluginId === "mole" && " 洞口默认需被敌人重新进入 3 次才会踩平。"}
+              </p>
+              <div className="form-grid two-columns">
+                {skillFields[selected.pluginId].map((field) => (
+                  <label key={field.key}>
+                    {field.label}
+                    <input
+                      type="number"
+                      min={field.min}
+                      max={field.max}
+                      step={field.step ?? 1}
+                      value={selectedSkillValues?.[field.key] ?? field.fallback}
+                      onChange={(event) =>
+                        updateSkillParameter(
+                          selected.pluginId as SkillGroup,
+                          field.key,
+                          numeric(event.target.value, field.fallback),
+                        )
+                      }
+                    />
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
 
           <div className="editor-card">
             <div className="card-title">
@@ -379,6 +711,7 @@ export function CharacterEditor({
                 ["idle", "待机 / 移动", false],
                 ["attack", "普攻动作", true],
                 ["skill", "技能动作", true],
+                ["tunnelAttack", "钻洞攻击动作", true],
               ] as const).map(([clipName, label, multiple]) => (
                 <label className="upload-tile" key={clipName}>
                   <Upload size={18} />
@@ -403,7 +736,13 @@ export function CharacterEditor({
                 const frameAsset = imageById.get(frame.assetId);
                 return (
                   <div className="frame-chip" key={frame.assetId}>
-                    {frameAsset ? <img src={frameAsset.url} alt="" /> : <span>?</span>}
+                    {frameAsset ? (
+                      // User-supplied data URLs are intentionally rendered directly in the frame editor.
+                      // eslint-disable-next-line @next/next/no-img-element
+                      <img src={frameAsset.url} alt="" />
+                    ) : (
+                      <span>?</span>
+                    )}
                     <small>{frame.durationMs}ms</small>
                   </div>
                 );
@@ -417,30 +756,132 @@ export function CharacterEditor({
               <span>动作音效</span>
             </div>
             <div className="sound-list">
-              {([
-                ["attack", "攻击"],
-                ["hit", "命中"],
-                ["hurt", "受伤"],
-                ["skill", "技能"],
-                ["death", "死亡"],
-              ] as const).map(([slot, label]) => (
-                <label className="sound-row" key={slot}>
-                  <span>
-                    <strong>{label}</strong>
-                    <small>
-                      {selected.sounds[slot]?.source === "asset" ? "自定义音频" : "程序合成"}
-                    </small>
-                  </span>
-                  <span className="upload-pill">
-                    <Upload size={14} /> 替换
-                    <input
-                      type="file"
-                      accept="audio/wav,audio/mpeg,audio/ogg"
-                      onChange={(event) => void uploadSound(event.target.files?.[0], slot)}
-                    />
-                  </span>
-                </label>
-              ))}
+              {soundSlots.map(([slot, label]) => {
+                const cue = selected.sounds[slot];
+                return (
+                  <div className="sound-editor-row" key={slot}>
+                    <div className="sound-editor-heading">
+                      <span>
+                        <strong>{label}</strong>
+                        <small>
+                          {cue?.source === "asset"
+                            ? "自定义音频"
+                            : cue?.source === "speech"
+                              ? "搞笑台词 / 说话"
+                              : "程序合成 / 动物叫声"}
+                        </small>
+                      </span>
+                      <select
+                        aria-label={`${label}声音类型`}
+                        value={cue?.source === "asset" ? "asset" : cue?.source ?? "synth"}
+                        onChange={(event) => {
+                          if (event.target.value !== "asset") {
+                            setSoundStyle(slot, event.target.value as "synth" | "speech");
+                          }
+                        }}
+                      >
+                        <option value="synth">合成 / 动物叫声</option>
+                        <option value="speech">搞笑台词</option>
+                        {cue?.source === "asset" && <option value="asset">已上传音频</option>}
+                      </select>
+                      <label className="upload-pill">
+                        <Upload size={14} /> 上传
+                        <input
+                          type="file"
+                          accept="audio/wav,audio/mpeg,audio/ogg"
+                          onChange={(event) => void uploadSound(event.target.files?.[0], slot)}
+                        />
+                      </label>
+                    </div>
+                    {cue?.source === "speech" && (
+                      <div className="sound-detail-grid speech-grid">
+                        <label>
+                          候选台词（每行一句，播放时随机）
+                          <textarea
+                            value={(cue.phrases ?? []).join("\n")}
+                            onChange={(event) =>
+                              updateSound(slot, (sound) => {
+                                sound.phrases = event.target.value
+                                  .split("\n")
+                                  .map((phrase) => phrase.trim())
+                                  .filter(Boolean);
+                              })
+                            }
+                          />
+                        </label>
+                        <label>
+                          语速
+                          <input
+                            type="number"
+                            min={0.5}
+                            max={2}
+                            step={0.05}
+                            value={cue.speechRate ?? 1}
+                            onChange={(event) =>
+                              updateSound(
+                                slot,
+                                (sound) => (sound.speechRate = Number(event.target.value)),
+                              )
+                            }
+                          />
+                        </label>
+                        <label>
+                          音调
+                          <input
+                            type="number"
+                            min={0.5}
+                            max={2}
+                            step={0.05}
+                            value={cue.speechPitch ?? 1}
+                            onChange={(event) =>
+                              updateSound(
+                                slot,
+                                (sound) => (sound.speechPitch = Number(event.target.value)),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                    )}
+                    {cue?.source === "synth" && (
+                      <div className="sound-detail-grid">
+                        <label>
+                          合成预设
+                          <select
+                            value={cue.preset ?? "swipe"}
+                            onChange={(event) =>
+                              updateSound(
+                                slot,
+                                (sound) => (sound.preset = event.target.value as SynthPreset),
+                              )
+                            }
+                          >
+                            {synthPresets.map((preset) => (
+                              <option key={preset} value={preset}>{preset}</option>
+                            ))}
+                          </select>
+                        </label>
+                        <label>
+                          随机音高
+                          <input
+                            type="number"
+                            min={0}
+                            max={1}
+                            step={0.01}
+                            value={cue.pitchVariance ?? 0}
+                            onChange={(event) =>
+                              updateSound(
+                                slot,
+                                (sound) => (sound.pitchVariance = Number(event.target.value)),
+                              )
+                            }
+                          />
+                        </label>
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
             </div>
           </div>
 
@@ -453,28 +894,242 @@ export function CharacterEditor({
               {selected.abilities.length === 0 && (
                 <div className="empty-inline">内置特殊技能由插件提供；可继续叠加通用模块。</div>
               )}
-              {selected.abilities.map((ability) => (
-                <div className="ability-row" key={ability.id}>
-                  <span>
-                    <strong>{ability.name}</strong>
-                    <small>{ability.trigger} · 冷却 {ability.cooldown}s</small>
-                  </span>
-                  <button
-                    type="button"
-                    className="icon-button danger"
-                    onClick={() =>
-                      updateCharacter(
-                        (character) =>
-                          (character.abilities = character.abilities.filter(
-                            (candidate) => candidate.id !== ability.id,
-                          )),
-                      )
-                    }
-                  >
-                    <Trash2 size={15} />
-                  </button>
-                </div>
-              ))}
+              {selected.abilities.map((ability) => {
+                const action = ability.actions[0] ?? defaultAction("heal");
+                return (
+                  <article className="ability-editor" key={ability.id}>
+                    <div className="ability-editor-heading">
+                      <input
+                        aria-label="技能名称"
+                        value={ability.name}
+                        onChange={(event) =>
+                          updateAbility(ability.id, (item) => (item.name = event.target.value))
+                        }
+                      />
+                      <button
+                        type="button"
+                        className="icon-button danger"
+                        title="删除技能"
+                        onClick={() =>
+                          updateCharacter(
+                            (character) =>
+                              (character.abilities = character.abilities.filter(
+                                (candidate) => candidate.id !== ability.id,
+                              )),
+                          )
+                        }
+                      >
+                        <Trash2 size={15} />
+                      </button>
+                    </div>
+                    <div className="ability-editor-fields">
+                      <label>
+                        触发器
+                        <select
+                          value={ability.trigger}
+                          onChange={(event) =>
+                            updateAbility(
+                              ability.id,
+                              (item) =>
+                                (item.trigger = event.target.value as AbilityModule["trigger"]),
+                            )
+                          }
+                        >
+                          <option value="interval">定时触发</option>
+                          <option value="onDamageTaken">受到攻击</option>
+                          <option value="onAttack">发动攻击</option>
+                          <option value="onDeath">死亡时</option>
+                        </select>
+                      </label>
+                      <label>
+                        冷却（秒）
+                        <input
+                          type="number"
+                          min={0}
+                          step={0.1}
+                          value={ability.cooldown}
+                          onChange={(event) =>
+                            updateAbility(
+                              ability.id,
+                              (item) => (item.cooldown = Number(event.target.value)),
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        定时间隔（秒）
+                        <input
+                          type="number"
+                          min={0.1}
+                          step={0.1}
+                          value={ability.interval ?? ability.cooldown}
+                          onChange={(event) =>
+                            updateAbility(
+                              ability.id,
+                              (item) => (item.interval = Number(event.target.value)),
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        血量条件（0–1）
+                        <input
+                          type="number"
+                          min={0}
+                          max={1}
+                          step={0.05}
+                          value={ability.hpBelowRatio ?? 1}
+                          onChange={(event) =>
+                            updateAbility(
+                              ability.id,
+                              (item) => (item.hpBelowRatio = Number(event.target.value)),
+                            )
+                          }
+                        />
+                      </label>
+                      <label>
+                        效果
+                        <select
+                          value={action.kind}
+                          onChange={(event) =>
+                            updateAbility(
+                              ability.id,
+                              (item) =>
+                                (item.actions = [
+                                  defaultAction(event.target.value as AbilityAction["kind"]),
+                                ]),
+                            )
+                          }
+                        >
+                          <option value="heal">治疗自己</option>
+                          <option value="damageNearby">范围伤害</option>
+                          <option value="spawnUnit">召唤单位</option>
+                          <option value="knockbackNearby">范围击退</option>
+                          <option value="playSound">播放音效</option>
+                        </select>
+                      </label>
+                      {(action.kind === "heal" || action.kind === "damageNearby") && (
+                        <label>
+                          {action.kind === "heal" ? "治疗量" : "伤害"}
+                          <input
+                            type="number"
+                            min={0}
+                            value={action.amount}
+                            onChange={(event) =>
+                              updateAbility(ability.id, (item) => {
+                                const effect = item.actions[0];
+                                if (effect?.kind === "heal" || effect?.kind === "damageNearby") {
+                                  effect.amount = Number(event.target.value);
+                                }
+                              })
+                            }
+                          />
+                        </label>
+                      )}
+                      {(action.kind === "damageNearby" || action.kind === "knockbackNearby") && (
+                        <label>
+                          作用半径
+                          <input
+                            type="number"
+                            min={0}
+                            value={action.radius}
+                            onChange={(event) =>
+                              updateAbility(ability.id, (item) => {
+                                const effect = item.actions[0];
+                                if (
+                                  effect?.kind === "damageNearby" ||
+                                  effect?.kind === "knockbackNearby"
+                                ) {
+                                  effect.radius = Number(event.target.value);
+                                }
+                              })
+                            }
+                          />
+                        </label>
+                      )}
+                      {action.kind === "knockbackNearby" && (
+                        <label>
+                          击退距离
+                          <input
+                            type="number"
+                            min={0}
+                            value={action.distance}
+                            onChange={(event) =>
+                              updateAbility(ability.id, (item) => {
+                                const effect = item.actions[0];
+                                if (effect?.kind === "knockbackNearby") {
+                                  effect.distance = Number(event.target.value);
+                                }
+                              })
+                            }
+                          />
+                        </label>
+                      )}
+                      {action.kind === "spawnUnit" && (
+                        <>
+                          <label>
+                            召唤单位
+                            <select
+                              value={action.definitionId}
+                              onChange={(event) =>
+                                updateAbility(ability.id, (item) => {
+                                  const effect = item.actions[0];
+                                  if (effect?.kind === "spawnUnit") {
+                                    effect.definitionId = event.target.value;
+                                  }
+                                })
+                              }
+                            >
+                              {manifest.characters.map((character) => (
+                                <option value={character.id} key={character.id}>
+                                  {character.name}
+                                </option>
+                              ))}
+                            </select>
+                          </label>
+                          <label>
+                            召唤数量
+                            <input
+                              type="number"
+                              min={1}
+                              step={1}
+                              value={action.count}
+                              onChange={(event) =>
+                                updateAbility(ability.id, (item) => {
+                                  const effect = item.actions[0];
+                                  if (effect?.kind === "spawnUnit") {
+                                    effect.count = Math.max(1, Math.round(Number(event.target.value)));
+                                  }
+                                })
+                              }
+                            />
+                          </label>
+                        </>
+                      )}
+                      {action.kind === "playSound" && (
+                        <label>
+                          音效预设
+                          <select
+                            value={action.cue}
+                            onChange={(event) =>
+                              updateAbility(ability.id, (item) => {
+                                const effect = item.actions[0];
+                                if (effect?.kind === "playSound") {
+                                  effect.cue = event.target.value as SynthPreset;
+                                }
+                              })
+                            }
+                          >
+                            {synthPresets.map((preset) => (
+                              <option key={preset} value={preset}>{preset}</option>
+                            ))}
+                          </select>
+                        </label>
+                      )}
+                    </div>
+                  </article>
+                );
+              })}
             </div>
             <div className="button-cluster">
               <button type="button" className="secondary-button" onClick={() => addAbility("heal")}>

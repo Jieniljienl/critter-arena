@@ -101,6 +101,7 @@ export class BattleSimulation {
   private readonly units = new Map<string, RuntimeUnit>();
   private readonly holes = new Map<string, RuntimeHole>();
   private readonly projectiles = new Map<string, RuntimeProjectile>();
+  private readonly holeOccupants = new Map<string, Set<string>>();
   private readonly props: BoardProp[];
   private readonly scheduledShots: ScheduledShot[] = [];
   private readonly eventLog: CombatEvent[] = [];
@@ -144,6 +145,7 @@ export class BattleSimulation {
     this.completeTimedActions();
     this.processScheduledShots();
     this.updateUnits(dt);
+    this.mergeCollidingPolice();
     this.updateProjectiles(dt);
     this.flattenHoles();
     this.cleanupDeadUnits();
@@ -205,6 +207,8 @@ export class BattleSimulation {
       options.direction ??
       normalize({ x: Math.cos(this.random.angle()), y: Math.sin(this.random.angle()) });
     const definition = options.definition;
+    const radius = definition.radius * (this.board.unitScale ?? 1);
+    const policeParameters = definition.skillParameters?.police;
     const unit: RuntimeUnit = {
       id: options.id ?? this.nextId(definition.id),
       definitionId: definition.id,
@@ -215,11 +219,11 @@ export class BattleSimulation {
       policeStar: definition.policeStar,
       hp: definition.maxHp,
       maxHp: definition.maxHp,
-      x: Math.max(definition.radius, Math.min(this.board.width - definition.radius, options.x)),
-      y: Math.max(definition.radius, Math.min(this.board.height - definition.radius, options.y)),
+      x: Math.max(radius, Math.min(this.board.width - radius, options.x)),
+      y: Math.max(radius, Math.min(this.board.height - radius, options.y)),
       vx: direction.x * definition.speed,
       vy: direction.y * definition.speed,
-      radius: definition.radius,
+      radius,
       bornAt: this.time,
       nextAttackAt: this.time + 0.4 + this.random.next() * 0.4,
       targetable: true,
@@ -230,18 +234,24 @@ export class BattleSimulation {
       nextEatAt: 0,
       nextDigAt: definition.pluginId === "mole" ? this.time : Number.POSITIVE_INFINITY,
       nextAmbushAt: 0,
+      burnUntil: 0,
+      burnDamagePerSecond: 0,
+      springUntil: 0,
+      springHealPerSecond: 0,
+      nextBurnFeedbackAt: 0,
+      nextSpringFeedbackAt: 0,
       moduleCooldowns: Object.fromEntries(
-        definition.abilities.map((module) => [
-          module.id,
-          this.time + (module.trigger === "interval" ? module.interval ?? module.cooldown : 0),
+        definition.abilities.map((ability) => [
+          ability.id,
+          this.time + (ability.trigger === "interval" ? ability.interval ?? ability.cooldown : 0),
         ]),
       ),
       ...(definition.policeStar === 5
         ? {
             gatling: {
               phase: "fire" as const,
-              phaseRemaining: 5,
-              shotsRemaining: 15,
+              phaseRemaining: policeParameters?.gatlingFireDuration ?? 5,
+              shotsRemaining: policeParameters?.gatlingShots ?? 15,
               nextShotIn: 0.08,
               nextKickAt: 0,
             },
@@ -267,16 +277,86 @@ export class BattleSimulation {
       const immobilized = ["eating", "digging", "tunneling", "kick"].includes(unit.action);
       if (!immobilized) this.moveUnit(unit, dt, definition.speed);
 
-      if (this.touchesLava(unit)) {
-        this.damageUnit(unit.id, 5 * dt, undefined, "environment");
-        if (Math.floor((this.time - dt) * 2) !== Math.floor(this.time * 2)) {
-          this.emit("sound", "岩浆滋滋作响", unit, undefined, "lava");
-        }
-      }
+      this.updateAreaBuffs(unit, dt);
       if (unit.action === "dead") continue;
 
       if (definition.attack.mode !== "gatling" && this.canBeginAttack(unit)) {
         this.beginAttack(unit, definition);
+      }
+    }
+  }
+
+  private updateAreaBuffs(unit: RuntimeUnit, dt: number): void {
+    const touchingLava = this.props.filter(
+      (prop) =>
+        prop.active &&
+        prop.type === "lava" &&
+        circleOverlapsRegion(unit, unit.radius, prop.shape),
+    );
+    const wasBurning = this.time < unit.burnUntil;
+    if (touchingLava.length) {
+      unit.burnUntil =
+        this.time + Math.max(...touchingLava.map((prop) => prop.buffDuration ?? 3));
+      unit.burnDamagePerSecond = Math.max(
+        ...touchingLava.map((prop) => prop.effectPerSecond ?? 5),
+      );
+      if (!wasBurning) unit.nextBurnFeedbackAt = this.time + 0.5;
+    }
+    if (this.time < unit.burnUntil && unit.burnDamagePerSecond > 0) {
+      this.damageUnit(
+        unit.id,
+        unit.burnDamagePerSecond * dt,
+        undefined,
+        "environment",
+      );
+      if (this.time >= unit.nextBurnFeedbackAt && unit.action !== "dead") {
+        const amount = unit.burnDamagePerSecond * 0.5;
+        this.emit(
+          "damage",
+          `${unit.name} 持续燃烧，损失 ${amount.toFixed(1)} 点血`,
+          unit,
+          undefined,
+          "lava",
+          -amount,
+        );
+        unit.nextBurnFeedbackAt = this.time + 0.5;
+      }
+    }
+    if (unit.action === "dead") return;
+
+    const touchingSpring = this.props.filter(
+      (prop) =>
+        prop.active &&
+        prop.type === "hotSpring" &&
+        circleOverlapsRegion(unit, unit.radius, prop.shape),
+    );
+    const hadSpringBuff = this.time < unit.springUntil;
+    if (touchingSpring.length) {
+      unit.springUntil =
+        this.time + Math.max(...touchingSpring.map((prop) => prop.buffDuration ?? 3));
+      unit.springHealPerSecond = Math.max(
+        ...touchingSpring.map((prop) => prop.effectPerSecond ?? 5),
+      );
+      if (!hadSpringBuff) unit.nextSpringFeedbackAt = this.time + 0.5;
+    }
+    if (
+      this.time < unit.springUntil &&
+      unit.springHealPerSecond > 0 &&
+      unit.hp < unit.maxHp
+    ) {
+      const healed = Math.min(unit.springHealPerSecond * dt, unit.maxHp - unit.hp);
+      unit.hp += healed;
+      if (this.time >= unit.nextSpringFeedbackAt) {
+        const amount = Math.min(unit.springHealPerSecond * 0.5, unit.maxHp - unit.hp + healed);
+        this.emit(
+          "heal",
+          `${unit.name} 受到温泉滋养，回复 ${amount.toFixed(1)} 点血`,
+          unit,
+          undefined,
+          "spring",
+          amount,
+        );
+        unit.nextSpringFeedbackAt = this.time + 0.5;
       }
     }
   }
@@ -286,14 +366,15 @@ export class BattleSimulation {
     definition: CharacterDefinition,
     dt: number,
   ): void {
-    if (definition.pluginId === "panda") this.updatePanda(unit);
+    if (definition.pluginId === "panda") this.updatePanda(unit, definition);
     if (definition.pluginId === "mole") this.updateMole(unit);
     if (definition.pluginId === "police" && definition.policeStar === 5) {
       this.updateGatling(unit, definition, dt);
     }
   }
 
-  private updatePanda(unit: RuntimeUnit): void {
+  private updatePanda(unit: RuntimeUnit, definition: CharacterDefinition): void {
+    const parameters = definition.skillParameters?.panda;
     if (
       unit.action !== "move" &&
       unit.action !== "attack" &&
@@ -312,12 +393,12 @@ export class BattleSimulation {
         prop.type === "bamboo" &&
         prop.active &&
         !reserved.has(prop.id) &&
-        circleOverlapsRegion(unit, unit.radius, prop.shape),
+        circleOverlapsRegion(unit, unit.radius + (parameters?.bambooExtraRange ?? 0), prop.shape),
     );
     if (!bamboo) return;
     unit.action = "eating";
     unit.actionStartedAt = this.time;
-    unit.actionUntil = this.time + 5;
+    unit.actionUntil = this.time + (parameters?.eatDuration ?? 5);
     unit.reservedBambooId = bamboo.id;
     this.emit("skill", `${unit.name} 抱住竹子，开始猛吃`, unit, undefined, "chew");
   }
@@ -326,8 +407,9 @@ export class BattleSimulation {
     if (unit.action !== "move" && unit.action !== "attack" && unit.action !== "hurt") return;
     const definition = this.definitions.get(unit.definitionId);
     if (!definition) return;
-    const ownHoles = [...this.holes.values()].filter((hole) => hole.ownerId === unit.ownerId);
-    const currentHole = ownHoles.find(
+    const parameters = definition.skillParameters?.mole;
+    const availableHoles = [...this.holes.values()];
+    const currentHole = availableHoles.find(
       (hole) => distance(unit, hole) <= hole.radius + unit.radius,
     );
     const justEntered = Boolean(currentHole && currentHole.id !== unit.lastHoleId);
@@ -337,10 +419,10 @@ export class BattleSimulation {
     } else {
       unit.lastHoleId = currentHole.id;
       if (this.time >= unit.nextAmbushAt) {
-        const candidates = ownHoles
+        const candidates = availableHoles
           .filter((hole) => hole.id !== currentHole.id)
           .flatMap((hole) =>
-            this.validTargets(unit, definition.attack.range, hole).map((target) => ({
+            this.validTargets(unit, parameters?.ambushRange ?? definition.attack.range, hole).map((target) => ({
               hole,
               target,
             })),
@@ -349,25 +431,26 @@ export class BattleSimulation {
         if (selection) {
           unit.action = "tunneling";
           unit.actionStartedAt = this.time;
-          unit.actionUntil = this.time + 1;
+          const tunnelDuration = parameters?.tunnelDuration ?? 1;
+          unit.actionUntil = this.time + tunnelDuration;
           unit.targetable = false;
-          unit.nextAmbushAt = this.time + 3;
+          unit.nextAmbushAt = this.time + (parameters?.ambushCooldown ?? 3);
           unit.tunnelData = {
             mode: "ambush",
             origin: { x: unit.x, y: unit.y },
             destination: { x: selection.hole.x, y: selection.hole.y },
             targetId: selection.target.id,
-            hitAt: this.time + 0.5,
+            hitAt: this.time + tunnelDuration * 0.5,
             hitDone: false,
           };
           this.scheduledShots.push({
             id: this.nextId("ambush"),
-            at: this.time + 0.5,
+            at: this.time + tunnelDuration * 0.5,
             sourceId: unit.id,
             targetId: selection.target.id,
             from: { x: selection.hole.x, y: selection.hole.y },
             damage: definition.attack.damage,
-            range: definition.attack.range,
+            range: parameters?.ambushRange ?? definition.attack.range,
             ambush: true,
           });
           this.emit(
@@ -381,14 +464,18 @@ export class BattleSimulation {
         }
       }
 
-      if (justEntered && ownHoles.length >= 2 && this.random.next() < 0.2) {
+      if (
+        justEntered &&
+        availableHoles.length >= 2 &&
+        this.random.next() < (parameters?.tunnelChance ?? 0.2)
+      ) {
         const destination = this.random.pick(
-          ownHoles.filter((hole) => hole.id !== currentHole.id),
+          availableHoles.filter((hole) => hole.id !== currentHole.id),
         );
         if (destination) {
           unit.action = "tunneling";
           unit.actionStartedAt = this.time;
-          unit.actionUntil = this.time + 1;
+          unit.actionUntil = this.time + (parameters?.tunnelDuration ?? 1);
           unit.targetable = false;
           unit.tunnelData = {
             mode: "travel",
@@ -403,14 +490,14 @@ export class BattleSimulation {
 
     if (this.time < unit.nextDigAt) return;
     const farEnough = [...this.holes.values()].every(
-      (hole) => distance(unit, hole) >= 220,
+      (hole) => distance(unit, hole) >= (parameters?.minimumHoleDistance ?? 220),
     );
     if (!farEnough) return;
     unit.action = "digging";
     unit.actionStartedAt = this.time;
-    unit.actionUntil = this.time + 0.6;
+    unit.actionUntil = this.time + (parameters?.digDuration ?? 0.6);
     unit.digPosition = { x: unit.x, y: unit.y };
-    unit.nextDigAt = this.time + 10;
+    unit.nextDigAt = this.time + (parameters?.digCooldown ?? 10);
     this.emit("skill", `${unit.name} 开始挖洞`, unit, undefined, "dig");
   }
 
@@ -421,6 +508,10 @@ export class BattleSimulation {
   ): void {
     const gatling = unit.gatling;
     if (!gatling || unit.action === "kick" || unit.action === "dead") return;
+    const parameters = definition.skillParameters?.police;
+    const fireDuration = parameters?.gatlingFireDuration ?? 5;
+    const restDuration = parameters?.gatlingRestDuration ?? 5;
+    const shotCount = Math.max(1, Math.round(parameters?.gatlingShots ?? 15));
     gatling.phaseRemaining -= dt;
     if (gatling.phase === "fire") {
       gatling.nextShotIn -= dt;
@@ -428,18 +519,18 @@ export class BattleSimulation {
         const target = this.random.pick(this.validTargets(unit, definition.attack.range));
         if (target) this.launchProjectile(unit, target, definition);
         gatling.shotsRemaining -= 1;
-        gatling.nextShotIn += 5 / 15;
+        gatling.nextShotIn += fireDuration / shotCount;
       }
       if (gatling.phaseRemaining <= 0) {
         gatling.phase = "rest";
-        gatling.phaseRemaining += 5;
+        gatling.phaseRemaining += restDuration;
         gatling.shotsRemaining = 0;
         gatling.nextShotIn = 0;
       }
     } else if (gatling.phaseRemaining <= 0) {
       gatling.phase = "fire";
-      gatling.phaseRemaining += 5;
-      gatling.shotsRemaining = 15;
+      gatling.phaseRemaining += fireDuration;
+      gatling.shotsRemaining = shotCount;
       gatling.nextShotIn = 0;
       this.emit("skill", `${unit.name} 的加特林再次开火`, unit, undefined, "gatling");
     }
@@ -449,25 +540,39 @@ export class BattleSimulation {
     for (const unit of this.units.values()) {
       if (unit.actionUntil <= 0 || this.time < unit.actionUntil) continue;
       if (unit.action === "eating") {
+        const definition = this.definitions.get(unit.definitionId);
+        const parameters = definition?.skillParameters?.panda;
         const bamboo = this.props.find((prop) => prop.id === unit.reservedBambooId);
         if (bamboo?.active) {
           bamboo.active = false;
-          const amount = Math.min(100, unit.maxHp - unit.hp);
+          const amount = Math.min(parameters?.eatHeal ?? 100, unit.maxHp - unit.hp);
           unit.hp += amount;
-          unit.nextEatAt = this.time + 5;
-          this.emit("heal", `${unit.name} 吃完竹子，回复 ${Math.round(amount)} 点血`, unit, undefined, "heal");
+          unit.nextEatAt = this.time + (parameters?.eatCooldown ?? 5);
+          this.emit(
+            "heal",
+            `${unit.name} 吃完竹子，回复 ${Math.round(amount)} 点血`,
+            unit,
+            undefined,
+            "heal",
+            amount,
+          );
           this.emit("prop", `${bamboo.label ?? "竹子"} 被吃光了`, unit);
         }
         unit.reservedBambooId = undefined;
         this.resetAction(unit);
       } else if (unit.action === "digging") {
+        const definition = this.definitions.get(unit.definitionId);
+        const parameters = definition?.skillParameters?.mole;
         const position = unit.digPosition ?? { x: unit.x, y: unit.y };
+        const stompsRequired = Math.max(1, Math.round(parameters?.stompsToFlatten ?? 3));
         const hole: RuntimeHole = {
           id: this.nextId("hole"),
           ownerId: unit.ownerId,
           x: position.x,
           y: position.y,
-          radius: 80,
+          radius: parameters?.holeRadius ?? 80,
+          stompsRequired,
+          stompsRemaining: stompsRequired,
           bornAt: this.time,
         };
         this.holes.set(hole.id, hole);
@@ -482,9 +587,7 @@ export class BattleSimulation {
             unit.x = tunnel.destination.x;
             unit.y = tunnel.destination.y;
             const destinationHole = [...this.holes.values()].find(
-              (hole) =>
-                hole.ownerId === unit.ownerId &&
-                distance(hole, tunnel.destination) < 1,
+              (hole) => distance(hole, tunnel.destination) < 1,
             );
             unit.lastHoleId = destinationHole?.id;
           } else {
@@ -723,9 +826,10 @@ export class BattleSimulation {
         target,
         sourceUnitId ? this.units.get(sourceUnitId) : undefined,
         "hurt",
+        -amount,
       );
       this.runModules(target, "onDamageTaken");
-      this.handleDamagePassive(target, sourceUnitId, amount);
+      this.handleDamagePassive(target, sourceUnitId);
     }
     if (target.hp <= 0) this.killUnit(target, sourceUnitId);
   }
@@ -733,34 +837,40 @@ export class BattleSimulation {
   private handleDamagePassive(
     target: RuntimeUnit,
     sourceUnitId: string | undefined,
-    _amount: number,
   ): void {
     const definition = this.definitions.get(target.definitionId);
     if (!definition || target.hp <= 0) return;
     if (definition.pluginId === "panda" && this.time >= target.nextPandaSummonAt) {
-      target.nextPandaSummonAt = this.time + 0.5;
+      target.nextPandaSummonAt =
+        this.time + (definition.skillParameters?.panda?.policeSummonCooldown ?? 0.5);
       this.spawnPolice(target, 1);
-      this.mergePolice(target.ownerId);
     }
     if (definition.pluginId === "police" && definition.policeStar === 5) {
       const attacker = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
       const gatling = target.gatling;
+      const parameters = definition.skillParameters?.police;
       if (
         attacker &&
         attacker.targetable &&
         gatling &&
         this.time >= gatling.nextKickAt &&
-        distance(target, attacker) <= 160 + attacker.radius
+        distance(target, attacker) <= (parameters?.kickRange ?? 160) + attacker.radius
       ) {
-        gatling.nextKickAt = this.time + 0.5;
+        gatling.nextKickAt = this.time + (parameters?.kickCooldown ?? 0.5);
         const direction = normalize({ x: attacker.x - target.x, y: attacker.y - target.y });
         attacker.x = Math.max(
           attacker.radius,
-          Math.min(this.board.width - attacker.radius, attacker.x + direction.x * 140),
+          Math.min(
+            this.board.width - attacker.radius,
+            attacker.x + direction.x * (parameters?.kickDistance ?? 140),
+          ),
         );
         attacker.y = Math.max(
           attacker.radius,
-          Math.min(this.board.height - attacker.radius, attacker.y + direction.y * 140),
+          Math.min(
+            this.board.height - attacker.radius,
+            attacker.y + direction.y * (parameters?.kickDistance ?? 140),
+          ),
         );
         const attackerDefinition = this.definitions.get(attacker.definitionId);
         const speed = attackerDefinition?.speed ?? Math.hypot(attacker.vx, attacker.vy);
@@ -768,7 +878,7 @@ export class BattleSimulation {
         attacker.vy = direction.y * speed;
         target.action = "kick";
         target.actionStartedAt = this.time;
-        target.actionUntil = this.time + 0.35;
+        target.actionUntil = this.time + (parameters?.kickDuration ?? 0.35);
         this.emit("skill", `${target.name} 一脚踹开 ${attacker.name}`, target, attacker, "kick");
       }
     }
@@ -778,7 +888,8 @@ export class BattleSimulation {
     const definition = this.definitions.get(`police-${star}`);
     if (!definition) return undefined;
     const angle = this.random.angle();
-    const spawnDistance = owner.radius + definition.radius + 16;
+    const spawnDistance =
+      owner.radius + definition.radius * (this.board.unitScale ?? 1) + 16;
     const unit = this.createUnit({
       definition,
       ownerId: owner.ownerId,
@@ -799,74 +910,112 @@ export class BattleSimulation {
     return unit;
   }
 
-  private mergePolice(ownerId: string): void {
-    for (let star = 1 as 1 | 2 | 3 | 4; star <= 4; star = (star + 1) as 1 | 2 | 3 | 4) {
-      let candidates = [...this.units.values()]
+  private mergeCollidingPolice(): void {
+    while (true) {
+      const police = [...this.units.values()]
         .filter(
           (unit) =>
             !unit.main &&
-            unit.ownerId === ownerId &&
-            unit.policeStar === star &&
+            unit.policeStar !== undefined &&
+            unit.policeStar < 5 &&
             unit.action !== "dead",
         )
         .sort((left, right) => left.bornAt - right.bornAt || left.id.localeCompare(right.id));
-      while (candidates.length >= 2) {
-        const left = candidates.shift();
-        const right = candidates.shift();
-        if (!left || !right) break;
-        const nextStar = (star + 1) as 2 | 3 | 4 | 5;
-        const owner = this.units.get(ownerId);
-        const definition = this.definitions.get(`police-${nextStar}`);
-        if (!definition || !owner) break;
-        this.units.delete(left.id);
-        this.units.delete(right.id);
-        const merged = this.createUnit({
-          definition,
-          ownerId,
-          factionId: owner.factionId,
-          main: false,
-          name: `${owner.name}的${nextStar}星警察`,
-          x: (left.x + right.x) / 2,
-          y: (left.y + right.y) / 2,
-        });
-        this.units.set(merged.id, merged);
-        this.emit(
-          "merge",
-          `两名${star}星警察合成为${nextStar}星`,
-          merged,
-          undefined,
-          "merge",
-        );
-        candidates = [...this.units.values()]
-          .filter(
-            (unit) =>
-              !unit.main &&
-              unit.ownerId === ownerId &&
-              unit.policeStar === star &&
-              unit.action !== "dead",
-          )
-          .sort((a, b) => a.bornAt - b.bornAt || a.id.localeCompare(b.id));
+      let pair: [RuntimeUnit, RuntimeUnit] | undefined;
+
+      for (let leftIndex = 0; leftIndex < police.length && !pair; leftIndex += 1) {
+        const left = police[leftIndex];
+        const owner = this.units.get(left.ownerId);
+        const ownerDefinition = owner
+          ? this.definitions.get(owner.definitionId)
+          : undefined;
+        const mergePadding =
+          ownerDefinition?.skillParameters?.panda?.policeMergePadding ?? 0;
+        for (let rightIndex = leftIndex + 1; rightIndex < police.length; rightIndex += 1) {
+          const right = police[rightIndex];
+          if (
+            right.ownerId !== left.ownerId ||
+            right.policeStar !== left.policeStar
+          ) {
+            continue;
+          }
+          if (distance(left, right) <= left.radius + right.radius + mergePadding) {
+            pair = [left, right];
+            break;
+          }
+        }
       }
+      if (!pair) return;
+
+      const [left, right] = pair;
+      const star = left.policeStar;
+      if (!star || star >= 5) return;
+      const owner = this.units.get(left.ownerId);
+      const nextStar = (star + 1) as 2 | 3 | 4 | 5;
+      const definition = this.definitions.get(`police-${nextStar}`);
+      if (!owner || !definition) return;
+      this.units.delete(left.id);
+      this.units.delete(right.id);
+      const merged = this.createUnit({
+        definition,
+        ownerId: owner.id,
+        factionId: owner.factionId,
+        main: false,
+        name: `${owner.name}的${nextStar}星警察`,
+        x: (left.x + right.x) / 2,
+        y: (left.y + right.y) / 2,
+      });
+      this.units.set(merged.id, merged);
+      this.emit(
+        "merge",
+        `两名${star}星警察撞到一起，合成为${nextStar}星`,
+        merged,
+        undefined,
+        "merge",
+      );
     }
   }
 
   private flattenHoles(): void {
     for (const hole of [...this.holes.values()]) {
-      const enemy = [...this.units.values()].find(
-        (unit) =>
-          unit.targetable &&
-          unit.factionId !== hole.ownerId &&
-          distance(unit, hole) <= unit.radius + hole.radius,
+      const occupants = [...this.units.values()].filter(
+        (unit) => {
+          const definition = this.definitions.get(unit.definitionId);
+          return (
+            unit.targetable &&
+            definition?.pluginId !== "mole" &&
+            distance(unit, hole) <= unit.radius + hole.radius
+          );
+        },
       );
-      if (!enemy) continue;
-      this.holes.delete(hole.id);
-      this.emitAt(
-        "prop",
-        `${enemy.name} 踩平了一处地鼠洞`,
-        hole.x,
-        hole.y,
-        "dig",
-      );
+      const previous = this.holeOccupants.get(hole.id) ?? new Set<string>();
+      const current = new Set(occupants.map((unit) => unit.id));
+      const entrants = occupants.filter((unit) => !previous.has(unit.id));
+      let collapsed = false;
+      for (const entrant of entrants) {
+        hole.stompsRemaining = Math.max(0, hole.stompsRemaining - 1);
+        if (hole.stompsRemaining <= 0) {
+          this.holes.delete(hole.id);
+          this.holeOccupants.delete(hole.id);
+          this.emitAt(
+            "prop",
+            `${entrant.name} 第 ${hole.stompsRequired} 次踩中洞口，洞被踩平了`,
+            hole.x,
+            hole.y,
+            "dig",
+          );
+          collapsed = true;
+          break;
+        }
+        this.emitAt(
+          "prop",
+          `${entrant.name} 踩中洞口，剩余 ${hole.stompsRemaining}/${hole.stompsRequired} 次耐久`,
+          hole.x,
+          hole.y,
+          "dig",
+        );
+      }
+      if (!collapsed) this.holeOccupants.set(hole.id, current);
     }
   }
 
@@ -892,7 +1041,10 @@ export class BattleSimulation {
         if (!unit.main && unit.ownerId === target.ownerId) this.units.delete(unit.id);
       }
       for (const hole of [...this.holes.values()]) {
-        if (hole.ownerId === target.ownerId) this.holes.delete(hole.id);
+        if (hole.ownerId === target.ownerId) {
+          this.holes.delete(hole.id);
+          this.holeOccupants.delete(hole.id);
+        }
       }
       for (const projectile of [...this.projectiles.values()]) {
         if (projectile.ownerId === target.ownerId) this.projectiles.delete(projectile.id);
@@ -949,22 +1101,13 @@ export class BattleSimulation {
     );
   }
 
-  private touchesLava(unit: RuntimeUnit): boolean {
-    return this.props.some(
-      (prop) =>
-        prop.active &&
-        prop.type === "lava" &&
-        circleOverlapsRegion(unit, unit.radius, prop.shape),
-    );
-  }
-
   private runIntervalModules(unit: RuntimeUnit): void {
     const definition = this.definitions.get(unit.definitionId);
     if (!definition) return;
-    for (const module of definition.abilities) {
-      if (module.trigger !== "interval") continue;
-      if (this.time < (unit.moduleCooldowns[module.id] ?? 0)) continue;
-      this.executeModule(unit, module);
+    for (const ability of definition.abilities) {
+      if (ability.trigger !== "interval") continue;
+      if (this.time < (unit.moduleCooldowns[ability.id] ?? 0)) continue;
+      this.executeModule(unit, ability);
     }
   }
 
@@ -974,26 +1117,34 @@ export class BattleSimulation {
   ): void {
     const definition = this.definitions.get(unit.definitionId);
     if (!definition) return;
-    for (const module of definition.abilities) {
-      if (module.trigger !== trigger) continue;
-      if (this.time < (unit.moduleCooldowns[module.id] ?? 0)) continue;
-      this.executeModule(unit, module);
+    for (const ability of definition.abilities) {
+      if (ability.trigger !== trigger) continue;
+      if (this.time < (unit.moduleCooldowns[ability.id] ?? 0)) continue;
+      this.executeModule(unit, ability);
     }
   }
 
-  private executeModule(unit: RuntimeUnit, module: AbilityModule): void {
-    if (module.hpBelowRatio !== undefined && unit.hp / unit.maxHp > module.hpBelowRatio) return;
-    for (const action of module.actions) this.executeModuleAction(unit, action);
-    unit.moduleCooldowns[module.id] =
-      this.time + (module.trigger === "interval" ? module.interval ?? module.cooldown : module.cooldown);
-    this.emit("skill", `${unit.name} 触发技能「${module.name}」`, unit);
+  private executeModule(unit: RuntimeUnit, ability: AbilityModule): void {
+    if (ability.hpBelowRatio !== undefined && unit.hp / unit.maxHp > ability.hpBelowRatio) return;
+    for (const action of ability.actions) this.executeModuleAction(unit, action);
+    unit.moduleCooldowns[ability.id] =
+      this.time +
+      (ability.trigger === "interval" ? ability.interval ?? ability.cooldown : ability.cooldown);
+    this.emit("skill", `${unit.name} 触发技能「${ability.name}」`, unit);
   }
 
   private executeModuleAction(unit: RuntimeUnit, action: AbilityAction): void {
     if (action.kind === "heal") {
       const amount = Math.min(action.amount, unit.maxHp - unit.hp);
       unit.hp += amount;
-      this.emit("heal", `${unit.name} 回复 ${Math.round(amount)} 点血`, unit, undefined, "heal");
+      this.emit(
+        "heal",
+        `${unit.name} 回复 ${Math.round(amount)} 点血`,
+        unit,
+        undefined,
+        "heal",
+        amount,
+      );
     } else if (action.kind === "damageNearby") {
       for (const target of this.validTargets(unit, action.radius)) {
         this.damageUnit(target.id, action.amount, unit.id, "attack");
@@ -1008,8 +1159,14 @@ export class BattleSimulation {
           ownerId: unit.ownerId,
           factionId: unit.factionId,
           main: false,
-          x: unit.x + Math.cos(angle) * (unit.radius + definition.radius + 10),
-          y: unit.y + Math.sin(angle) * (unit.radius + definition.radius + 10),
+          x:
+            unit.x +
+            Math.cos(angle) *
+              (unit.radius + definition.radius * (this.board.unitScale ?? 1) + 10),
+          y:
+            unit.y +
+            Math.sin(angle) *
+              (unit.radius + definition.radius * (this.board.unitScale ?? 1) + 10),
         });
         this.units.set(spawned.id, spawned);
       }
@@ -1030,6 +1187,7 @@ export class BattleSimulation {
     unit?: RuntimeUnit,
     target?: RuntimeUnit,
     sound?: SynthPreset,
+    amount?: number,
   ): void {
     this.eventLog.push({
       id: this.nextId("event"),
@@ -1041,6 +1199,7 @@ export class BattleSimulation {
       unitId: unit?.id,
       targetId: target?.id,
       sound,
+      amount,
     });
     if (this.eventLog.length > 200) this.eventLog.splice(0, this.eventLog.length - 200);
   }

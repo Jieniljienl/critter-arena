@@ -55,13 +55,18 @@ def save_sprite(cell: Image.Image, filename: str) -> None:
 
 def process_units() -> None:
     panda = split_grid("panda-sheet-alpha.png", 4, 2)
+    lazy_panda = split_grid("panda-lazy-sheet-alpha.png", 4, 2)
     mole = split_grid("mole-sheet-alpha.png", 4, 2)
-    for prefix, cells in (("panda", panda), ("mole", mole)):
+    for prefix, cells in (("panda", panda), ("panda-lazy", lazy_panda), ("mole", mole)):
         save_sprite(cells[0], f"{prefix}-idle.png")
         for index in range(3):
             save_sprite(cells[index + 1], f"{prefix}-attack-{index + 1}.png")
         for index in range(4):
             save_sprite(cells[index + 4], f"{prefix}-skill-{index + 1}.png")
+
+    mole_tunnel = split_grid("mole-tunnel-sheet-alpha.png", 4, 1)
+    for index, cell in enumerate(mole_tunnel, start=1):
+        save_sprite(cell, f"mole-tunnel-{index}.png")
 
     police = split_grid("police-sheet-alpha.png", 4, 5)
     for row in range(5):
@@ -92,12 +97,26 @@ def process_large_art() -> None:
         quality=90,
         method=6,
     )
+    landscape = Image.open(SOURCE / "board-stream-landscape-source.png").convert("RGB")
+    ImageOps.fit(landscape, (1600, 900), method=Image.Resampling.LANCZOS).save(
+        OUTPUT / "board-stream-landscape.webp",
+        "WEBP",
+        quality=90,
+        method=6,
+    )
+    portrait = Image.open(SOURCE / "board-stream-portrait-source.png").convert("RGB")
+    ImageOps.fit(portrait, (900, 1600), method=Image.Resampling.LANCZOS).save(
+        OUTPUT / "board-stream-portrait.webp",
+        "WEBP",
+        quality=90,
+        method=6,
+    )
     social = Image.open(SOURCE / "og-source.png").convert("RGB")
     ImageOps.fit(social, (1200, 630), method=Image.Resampling.LANCZOS).save(
         ROOT / "public" / "og.png",
         optimize=True,
     )
-    panda_icon = Image.open(OUTPUT / "panda-idle.png").convert("RGBA")
+    panda_icon = Image.open(OUTPUT / "panda-lazy-idle.png").convert("RGBA")
     panda_icon.resize((192, 192), Image.Resampling.LANCZOS).save(
         ROOT / "public" / "icon.png",
         optimize=True,

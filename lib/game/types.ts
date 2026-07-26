@@ -154,8 +154,10 @@ export type PoliceSkillParameters = {
   killsPerPromotion: number;
   kickRange: number;
   kickDistance: number;
+  kickDamage: number;
   kickCooldown: number;
   kickDuration: number;
+  kickWallStunDuration: number;
   /** 旧版五星警察参数，仅用于导入迁移。 */
   gatlingFireDuration?: number;
   /** 旧版五星警察参数，仅用于导入迁移。 */
@@ -256,6 +258,8 @@ export type UnitAction =
   | "digging"
   | "tunneling"
   | "kick"
+  | "knockback"
+  | "stunned"
   | "merge"
   | "kill"
   | "victory"
@@ -264,7 +268,7 @@ export type UnitAction =
 export type RuntimeUnit = {
   id: string;
   definitionId: string;
-  /** 战斗参数可升星更新，外观仍保持该单位入场时的角色形象。 */
+  /** 当前外观使用的角色定义；升星等形态变化会同步更新。 */
   appearanceDefinitionId: string;
   name: string;
   ownerId: string;
@@ -302,6 +306,15 @@ export type RuntimeUnit = {
   springHealPerSecond: number;
   nextBurnFeedbackAt: number;
   nextSpringFeedbackAt: number;
+  stunnedUntil: number;
+  knockbackData?: {
+    origin: Vec2;
+    destination: Vec2;
+    startedAt: number;
+    arrivalAt: number;
+    hitBoundary: boolean;
+    wallStunDuration: number;
+  };
   lastHoleId?: string;
   tunnelData?: {
     mode: "ambush" | "travel";

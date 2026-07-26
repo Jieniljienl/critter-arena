@@ -10,6 +10,7 @@ import {
 import type PhaserType from "phaser";
 import { ArenaAudio } from "@/lib/game/audio";
 import { BattleSimulation, circleOverlapsRegion } from "@/lib/game/simulation";
+import { actionClipName } from "@/lib/game/unitAnimation";
 import type {
   AnimationClip,
   AssetRef,
@@ -80,7 +81,15 @@ const collectBattleImageAssets = (
         action.kind === "spawnUnit" ? [action.definitionId] : [],
       ),
     );
-    if (definition.pluginId === "panda") linkedDefinitionIds.push("police-1");
+    if (definition.pluginId === "panda" || definition.pluginId === "police") {
+      linkedDefinitionIds.push(
+        "police-1",
+        "police-2",
+        "police-3",
+        "police-4",
+        "police-5",
+      );
+    }
     for (const linkedId of linkedDefinitionIds) {
       definitionIds.add(linkedId);
     }
@@ -147,22 +156,6 @@ const frameForClip = (
     if (position < cursor) return frame.assetId;
   }
   return clip.frames.at(-1)?.assetId;
-};
-
-const actionClipName = (
-  unit: RuntimeUnit,
-  callingForHelp = false,
-): string => {
-  if (callingForHelp) return "callPolice";
-  if (unit.action === "tunneling") return "tunnelAttack";
-  if (unit.action === "victory") return "victory";
-  if (unit.action === "eating") return "eat";
-  if (unit.action === "satisfied") return "eatComplete";
-  if (unit.action === "digging" || unit.action === "kick") {
-    return "skill";
-  }
-  if (unit.action === "attack" || unit.action === "kill") return "attack";
-  return "move";
 };
 
 export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
@@ -784,14 +777,74 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   );
                 }
               } else {
-                this.overlayGraphics.fillStyle(0xffe888, 1);
-                this.overlayGraphics.fillCircle(projectile.x, projectile.y, 7);
-                this.overlayGraphics.lineStyle(3, 0xffffff, 0.45);
+                const angle = Math.atan2(projectile.vy, projectile.vx);
+                const directionX = Math.cos(angle);
+                const directionY = Math.sin(angle);
+                const normalX = -directionY;
+                const normalY = directionX;
+                const halfLength = Math.max(9, projectile.radius * 1.45);
+                const halfWidth = Math.max(2.4, projectile.radius * 0.42);
+                const nose = {
+                  x: projectile.x + directionX * halfLength,
+                  y: projectile.y + directionY * halfLength,
+                };
+                const shoulder = {
+                  x: projectile.x + directionX * halfLength * 0.42,
+                  y: projectile.y + directionY * halfLength * 0.42,
+                };
+                const tail = {
+                  x: projectile.x - directionX * halfLength,
+                  y: projectile.y - directionY * halfLength,
+                };
+                const shoulderLeft = {
+                  x: shoulder.x + normalX * halfWidth,
+                  y: shoulder.y + normalY * halfWidth,
+                };
+                const shoulderRight = {
+                  x: shoulder.x - normalX * halfWidth,
+                  y: shoulder.y - normalY * halfWidth,
+                };
+                const tailLeft = {
+                  x: tail.x + normalX * halfWidth * 0.82,
+                  y: tail.y + normalY * halfWidth * 0.82,
+                };
+                const tailRight = {
+                  x: tail.x - normalX * halfWidth * 0.82,
+                  y: tail.y - normalY * halfWidth * 0.82,
+                };
+
+                this.overlayGraphics.lineStyle(2, 0xffdf78, 0.28);
                 this.overlayGraphics.lineBetween(
-                  projectile.x,
-                  projectile.y,
-                  projectile.x - projectile.vx / 65,
-                  projectile.y - projectile.vy / 65,
+                  tail.x - directionX * halfLength * 1.35,
+                  tail.y - directionY * halfLength * 1.35,
+                  tail.x,
+                  tail.y,
+                );
+                this.overlayGraphics.fillStyle(0xb8782f, 1);
+                this.overlayGraphics.fillTriangle(
+                  tailLeft.x,
+                  tailLeft.y,
+                  shoulderLeft.x,
+                  shoulderLeft.y,
+                  tailRight.x,
+                  tailRight.y,
+                );
+                this.overlayGraphics.fillTriangle(
+                  shoulderLeft.x,
+                  shoulderLeft.y,
+                  shoulderRight.x,
+                  shoulderRight.y,
+                  tailRight.x,
+                  tailRight.y,
+                );
+                this.overlayGraphics.fillStyle(0xffe19a, 1);
+                this.overlayGraphics.fillTriangle(
+                  nose.x,
+                  nose.y,
+                  shoulderLeft.x,
+                  shoulderLeft.y,
+                  shoulderRight.x,
+                  shoulderRight.y,
                 );
               }
             }
@@ -1143,9 +1196,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               combatDefinition;
             const callingForHelp =
               unit.action !== "dead" && time < unit.pandaCallUntil;
-            const requestedClip = actionClipName(unit, callingForHelp);
+            const requestedClip = actionClipName(unit, time, callingForHelp);
             const clip =
               definition.animations[requestedClip] ??
+              (unit.action === "tunneling"
+                ? definition.animations.tunnelAttack
+                : undefined) ??
               (unit.action === "eating" || unit.action === "satisfied"
                 ? definition.animations.skill
                 : undefined) ??
@@ -1272,7 +1328,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const displayScale = scaleBump;
 
             if (unit.action === "victory") {
-              const victoryStyle = definition.victoryStyle ?? "spotlight";
+              const victoryStyle = definition.victoryStyle ?? "cool";
               const glowColor =
                 victoryStyle === "dance"
                   ? 0x83e7ef
@@ -1316,7 +1372,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setFlipX(unit.vx < 0)
                 .setAlpha(alpha)
                 .setAngle(
-                  unit.action === "kick"
+                  unit.action === "kick" || unit.action === "knockback"
                     ? unit.vx < 0
                       ? -12
                       : 12
@@ -1429,6 +1485,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const buffs: string[] = [];
             if (time < unit.burnUntil) buffs.push("🔥 灼烧");
             if (time < unit.springUntil) buffs.push("♨ 疗愈");
+            if (time < unit.stunnedUntil) buffs.push("💫 眩晕");
             if (!unit.targetable && unit.action !== "dead") {
               buffs.push("◌ 不可选");
             }

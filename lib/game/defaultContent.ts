@@ -6,6 +6,7 @@ import {
   type AssetRef,
   type BoardDefinition,
   type CharacterDefinition,
+  type MatchContestant,
   type MatchSetup,
   type ProjectManifest,
   type SoundCue,
@@ -160,8 +161,10 @@ const policeSkillParameters = {
   killsPerPromotion: 2,
   kickRange: 160,
   kickDistance: 140,
+  kickDamage: 25,
   kickCooldown: 0.5,
   kickDuration: 0.35,
+  kickWallStunDuration: 0.5,
 };
 
 const policeDefinition = (
@@ -191,7 +194,7 @@ const policeDefinition = (
     skillParameters: { police: structuredClone(policeSkillParameters) },
     accent: ["", "#83c96f", "#5eb8ff", "#a58aff", "#ff9f58", "#ffd55e"][star],
     portraitAssetId: `police-${star}-idle`,
-    victoryStyle: star === 5 ? "spotlight" : "cool",
+    victoryStyle: "cool",
     animations: {
       ...baseAnimations(`police-${star}`),
       victory: clip(
@@ -317,12 +320,10 @@ export const defaultCharacters: CharacterDefinition[] = [
         false,
         150,
       ),
-      tunnelAttack: clip(
-        "tunnelAttack",
-        ["mole-tunnel-1", "mole-tunnel-2", "mole-tunnel-3", "mole-tunnel-4"],
-        false,
-        180,
-      ),
+      tunnelEnter: clip("tunnelEnter", ["mole-tunnel-1"], false, 160),
+      tunnelMove: clip("tunnelMove", ["mole-tunnel-2"], true, 120),
+      tunnelEmerge: clip("tunnelEmerge", ["mole-tunnel-3"], false, 160),
+      tunnelAttack: clip("tunnelAttack", ["mole-tunnel-4"], false, 160),
       victory: clip("victory", ["mole-victory"], true, 500),
     },
     sounds: {
@@ -390,20 +391,20 @@ export const defaultCharacters: CharacterDefinition[] = [
     },
   }),
   policeDefinition(5, {
-    maxHp: 200,
+    maxHp: 1000,
     speed: 60,
     radius: 40,
     attack: {
       range: 9999,
       damage: 5,
-      cooldown: 10,
+      cooldown: 7,
       windup: 0,
       mode: "gatling",
       projectileKind: "bullet",
       projectileSpeed: 800,
       spreadDegrees: 8,
-      burstCount: 15,
-      burstGap: 0.33,
+      burstCount: 18,
+      burstGap: 0.2,
     },
   }),
 ];
@@ -789,44 +790,130 @@ export const auroraPlatformBoard: BoardDefinition = {
   ],
 };
 
+const directionFromDegrees = (degrees: number) => {
+  const radians = (degrees * Math.PI) / 180;
+  return { x: Math.cos(radians), y: Math.sin(radians) };
+};
+
+export const createShowcaseContestants = (
+  boardWidth: number,
+  boardHeight: number,
+): MatchContestant[] => {
+  const contestant = (
+    id: string,
+    definitionId: string,
+    displayName: string,
+    xRatio: number,
+    yRatio: number,
+    degrees: number,
+    teamId: NonNullable<MatchContestant["teamId"]>,
+    color: string,
+  ): MatchContestant => ({
+    id,
+    definitionId,
+    displayName,
+    position: {
+      x: Math.round(boardWidth * xRatio),
+      y: Math.round(boardHeight * yRatio),
+    },
+    direction: directionFromDegrees(degrees),
+    color,
+    nameColor: color,
+    teamId,
+  });
+
+  return [
+    contestant(
+      "showcase-panda",
+      "panda-lazy",
+      "功夫阿宝（今日休假）",
+      0.13,
+      0.18,
+      28,
+      "gold",
+      "#f6d85f",
+    ),
+    contestant(
+      "showcase-police-rookie-a",
+      "police-1",
+      "片警老王",
+      0.22,
+      0.22,
+      31,
+      "gold",
+      "#f6d85f",
+    ),
+    contestant(
+      "showcase-police-rookie-b",
+      "police-1",
+      "下班前一棍",
+      0.265,
+      0.26,
+      211,
+      "gold",
+      "#f6d85f",
+    ),
+    contestant(
+      "showcase-rifle",
+      "police-3",
+      "三连发老六",
+      0.77,
+      0.15,
+      151,
+      "blue",
+      "#55a7ff",
+    ),
+    contestant(
+      "showcase-mole-blue",
+      "mole",
+      "地底包工头",
+      0.85,
+      0.32,
+      202,
+      "blue",
+      "#55a7ff",
+    ),
+    contestant(
+      "showcase-rocket",
+      "police-4",
+      "RPG快递员",
+      0.2,
+      0.82,
+      -29,
+      "red",
+      "#ff5968",
+    ),
+    contestant(
+      "showcase-mole-red",
+      "mole",
+      "鼠鼠我呀",
+      0.1,
+      0.72,
+      -39,
+      "red",
+      "#ff5968",
+    ),
+    contestant(
+      "showcase-gatling",
+      "police-5",
+      "加特林菩萨",
+      0.78,
+      0.78,
+      217,
+      "purple",
+      "#b58aff",
+    ),
+  ];
+};
+
 export const defaultSetup: MatchSetup = {
   schemaVersion: SCHEMA_VERSION,
-  boardId: streamLandscapeBoard.id,
+  boardId: auroraPlatformBoard.id,
   seed: 20260726,
-  contestants: [
-    {
-      id: "fighter-panda-a",
-      definitionId: "panda-lazy",
-      displayName: "熊猫·团团",
-      position: { x: 170, y: 160 },
-      direction: { x: 0.88, y: 0.47 },
-      color: "#f6d85f",
-    },
-    {
-      id: "fighter-mole-a",
-      definitionId: "mole",
-      displayName: "地鼠·钻钻",
-      position: { x: 1430, y: 160 },
-      direction: { x: -0.82, y: 0.57 },
-      color: "#ff8b62",
-    },
-    {
-      id: "fighter-panda-b",
-      definitionId: "panda-lazy",
-      displayName: "熊猫·滚滚",
-      position: { x: 180, y: 740 },
-      direction: { x: 0.75, y: -0.66 },
-      color: "#72d4af",
-    },
-    {
-      id: "fighter-mole-b",
-      definitionId: "mole",
-      displayName: "地鼠·挖挖",
-      position: { x: 1420, y: 740 },
-      direction: { x: -0.71, y: -0.7 },
-      color: "#8fb8ff",
-    },
-  ],
+  contestants: createShowcaseContestants(
+    auroraPlatformBoard.width,
+    auroraPlatformBoard.height,
+  ),
 };
 
 export const createDefaultManifest = (): ProjectManifest => ({
@@ -956,6 +1043,10 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       );
       character.skillParameters.police.killsPerPromotion ??=
         defaultCharacter.skillParameters.police.killsPerPromotion;
+      character.skillParameters.police.kickDamage ??=
+        defaultCharacter.skillParameters.police.kickDamage;
+      character.skillParameters.police.kickWallStunDuration ??=
+        defaultCharacter.skillParameters.police.kickWallStunDuration;
     }
     if (defaultCharacter.skillParameters?.mole) {
       character.skillParameters ??= {};
@@ -965,7 +1056,13 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.skillParameters.mole.tunnelSpeedMultiplier ??=
         defaultCharacter.skillParameters.mole.tunnelSpeedMultiplier;
     }
-    character.victoryStyle ??= defaultCharacter.victoryStyle ?? "spotlight";
+    if (
+      defaultCharacter.id === "police-5" &&
+      character.victoryStyle === "spotlight"
+    ) {
+      character.victoryStyle = defaultCharacter.victoryStyle;
+    }
+    character.victoryStyle ??= defaultCharacter.victoryStyle ?? "cool";
     character.attack.spreadDegrees ??= defaultCharacter.attack.spreadDegrees ?? 0;
     if (defaultCharacter.id === "mole" && character.radius === 32) {
       character.radius = defaultCharacter.radius;
@@ -980,9 +1077,18 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     }
     if (defaultCharacter.id === "police-5") {
       const legacyPolice = character.skillParameters?.police;
+      if (character.maxHp === 200) {
+        character.maxHp = defaultCharacter.maxHp;
+      }
+      const usesLegacyGatlingDefaults =
+        character.attack.cooldown === 10 &&
+        (character.attack.burstCount === undefined ||
+          character.attack.burstCount === 15) &&
+        (character.attack.burstGap === undefined ||
+          Math.abs(character.attack.burstGap - 0.33) < 0.0001);
       const legacyShots = Math.max(
         1,
-        Math.round(legacyPolice?.gatlingShots ?? defaultCharacter.attack.burstCount ?? 15),
+        Math.round(legacyPolice?.gatlingShots ?? defaultCharacter.attack.burstCount ?? 18),
       );
       const legacyFireDuration = legacyPolice?.gatlingFireDuration ?? 5;
       character.attack.burstCount ??= legacyShots;
@@ -996,6 +1102,11 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         delete legacyPolice.gatlingFireDuration;
         delete legacyPolice.gatlingRestDuration;
         delete legacyPolice.gatlingShots;
+      }
+      if (usesLegacyGatlingDefaults) {
+        character.attack.cooldown = defaultCharacter.attack.cooldown;
+        character.attack.burstCount = defaultCharacter.attack.burstCount;
+        character.attack.burstGap = defaultCharacter.attack.burstGap;
       }
     }
     for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {

@@ -52,6 +52,8 @@ const MOLE_TUNNEL_ATTACK_WINDUP = 0.08;
 const MOLE_TUNNEL_RETURN_DELAY = 0.12;
 const MOLE_TUNNEL_EXIT_DURATION = 0.18;
 const MIN_MOLE_TUNNEL_TRAVEL_DURATION = 1 / 60;
+const INITIAL_AXIS_CLEARANCE_RADIANS = (8 * Math.PI) / 180;
+const RESUME_DIRECTION_JITTER_RADIANS = (7 * Math.PI) / 180;
 
 export type SimulationDiagnostics = {
   activeUnits: number;
@@ -283,6 +285,13 @@ export class BattleSimulation {
                 : undefined,
             }
           : undefined,
+        knockbackData: unit.knockbackData
+          ? {
+              ...unit.knockbackData,
+              origin: { ...unit.knockbackData.origin },
+              destination: { ...unit.knockbackData.destination },
+            }
+          : undefined,
       })),
       holes: [...this.holes.values()].map((hole) => ({ ...hole })),
       projectiles: [...this.projectiles.values()].map((projectile) => ({ ...projectile })),
@@ -309,7 +318,6 @@ export class BattleSimulation {
     for (const contestant of this.setup.contestants) {
       const definition = this.definitions.get(contestant.definitionId);
       if (!definition) continue;
-      const direction = normalize(contestant.direction);
       const unit = this.createUnit({
         id: contestant.id,
         definition,
@@ -319,7 +327,7 @@ export class BattleSimulation {
         main: true,
         x: contestant.position.x,
         y: contestant.position.y,
-        direction,
+        direction: contestant.direction,
       });
       this.addUnit(unit);
     }
@@ -338,9 +346,12 @@ export class BattleSimulation {
     y: number;
     direction?: Vec2;
   }): RuntimeUnit {
-    const direction =
-      options.direction ??
-      normalize({ x: Math.cos(this.random.angle()), y: Math.sin(this.random.angle()) });
+    const direction = this.avoidAxisLockedDirection(
+      options.direction ?? {
+        x: Math.cos(this.random.angle()),
+        y: Math.sin(this.random.angle()),
+      },
+    );
     const definition = options.definition;
     const radius = definition.radius * (this.board.unitScale ?? 1);
     const unit: RuntimeUnit = {
@@ -382,6 +393,7 @@ export class BattleSimulation {
       springHealPerSecond: 0,
       nextBurnFeedbackAt: 0,
       nextSpringFeedbackAt: 0,
+      stunnedUntil: 0,
       moduleCooldowns: Object.fromEntries(
         definition.abilities.map((ability) => [
           ability.id,
@@ -408,8 +420,13 @@ export class BattleSimulation {
       const definition = this.definitions.get(unit.definitionId);
       if (!definition) continue;
 
-      if (unit.action !== "tunneling") this.runIntervalModules(unit);
-      this.updateSpecialAbility(unit, definition, dt);
+      const controlled =
+        unit.action === "knockback" || unit.action === "stunned";
+      if (unit.action === "knockback") this.updateKnockbackPosition(unit);
+      if (unit.action !== "tunneling" && !controlled) {
+        this.runIntervalModules(unit);
+      }
+      if (!controlled) this.updateSpecialAbility(unit, definition, dt);
 
       const immobilized = [
         "eating",
@@ -417,6 +434,8 @@ export class BattleSimulation {
         "digging",
         "tunneling",
         "kick",
+        "knockback",
+        "stunned",
         "merge",
         "victory",
       ].includes(unit.action);
@@ -735,9 +754,9 @@ export class BattleSimulation {
     const attack = definition.attack;
     const shotCount = Math.min(
       MAX_SHOTS_PER_BURST,
-      Math.max(1, Math.round(attack.burstCount ?? 15)),
+      Math.max(1, Math.round(attack.burstCount ?? 18)),
     );
-    const shotGap = Math.max(EPSILON, attack.burstGap ?? 0.33);
+    const shotGap = Math.max(EPSILON, attack.burstGap ?? 0.2);
 
     gatling.nextRoundIn = Math.max(0, gatling.nextRoundIn - dt);
     if (gatling.shotsRemaining <= 0) {
@@ -878,6 +897,33 @@ export class BattleSimulation {
         unit.tunnelData = undefined;
         this.emit("sound", `${unit.name} 钻出地面`, unit, undefined, "tunnel");
         this.resetAction(unit);
+      } else if (unit.action === "knockback") {
+        const knockback = unit.knockbackData;
+        if (knockback) {
+          unit.x = knockback.destination.x;
+          unit.y = knockback.destination.y;
+        }
+        unit.knockbackData = undefined;
+        if (knockback?.hitBoundary) {
+          const stunDuration = knockback.wallStunDuration;
+          unit.action = "stunned";
+          unit.actionStartedAt = this.time;
+          unit.stunnedUntil = this.time + Math.max(0, stunDuration);
+          unit.actionUntil = unit.stunnedUntil;
+          this.emit(
+            "skill",
+            `${unit.name} 被踹到边界，眩晕 ${stunDuration.toFixed(1)} 秒`,
+            unit,
+            undefined,
+            "kick",
+          );
+          if (stunDuration <= EPSILON) this.resetAction(unit);
+        } else {
+          this.resetAction(unit);
+        }
+      } else if (unit.action === "stunned") {
+        unit.stunnedUntil = 0;
+        this.resetAction(unit);
       } else if (
         unit.action === "kick" ||
         unit.action === "attack" ||
@@ -892,9 +938,46 @@ export class BattleSimulation {
   }
 
   private resetAction(unit: RuntimeUnit): void {
+    this.perturbMovementDirection(unit);
     unit.action = "move";
     unit.actionStartedAt = this.time;
     unit.actionUntil = 0;
+  }
+
+  private avoidAxisLockedDirection(value: Vec2): Vec2 {
+    const direction = normalize(value);
+    const angle = Math.atan2(direction.y, direction.x);
+    const nearestAxis = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
+    const delta = angle - nearestAxis;
+    if (Math.abs(delta) >= INITIAL_AXIS_CLEARANCE_RADIANS) return direction;
+
+    const sign =
+      Math.abs(delta) > EPSILON
+        ? Math.sign(delta)
+        : this.random.next() < 0.5
+          ? -1
+          : 1;
+    const safeAngle =
+      nearestAxis +
+      sign *
+        (INITIAL_AXIS_CLEARANCE_RADIANS +
+          this.random.next() * ((2 * Math.PI) / 180));
+    return { x: Math.cos(safeAngle), y: Math.sin(safeAngle) };
+  }
+
+  private perturbMovementDirection(unit: RuntimeUnit): void {
+    const definition = this.definitions.get(unit.definitionId);
+    if (!definition || definition.speed <= EPSILON) return;
+    const current = normalize({ x: unit.vx, y: unit.vy });
+    const offset =
+      (this.random.next() * 2 - 1) * RESUME_DIRECTION_JITTER_RADIANS;
+    const angle = Math.atan2(current.y, current.x) + offset;
+    const direction = this.avoidAxisLockedDirection({
+      x: Math.cos(angle),
+      y: Math.sin(angle),
+    });
+    unit.vx = direction.x * definition.speed;
+    unit.vy = direction.y * definition.speed;
   }
 
   private moveUnit(unit: RuntimeUnit, dt: number, speed: number): void {
@@ -920,6 +1003,26 @@ export class BattleSimulation {
     }
   }
 
+  private updateKnockbackPosition(unit: RuntimeUnit): void {
+    const knockback = unit.knockbackData;
+    if (!knockback) return;
+    const duration = Math.max(
+      EPSILON,
+      knockback.arrivalAt - knockback.startedAt,
+    );
+    const progress = Math.max(
+      0,
+      Math.min(1, (this.time - knockback.startedAt) / duration),
+    );
+    const eased = 1 - (1 - progress) ** 3;
+    unit.x =
+      knockback.origin.x +
+      (knockback.destination.x - knockback.origin.x) * eased;
+    unit.y =
+      knockback.origin.y +
+      (knockback.destination.y - knockback.origin.y) * eased;
+  }
+
   private canBeginAttack(unit: RuntimeUnit): boolean {
     return (
       unit.targetable &&
@@ -928,6 +1031,8 @@ export class BattleSimulation {
       unit.action !== "digging" &&
       unit.action !== "tunneling" &&
       unit.action !== "kick" &&
+      unit.action !== "knockback" &&
+      unit.action !== "stunned" &&
       this.time >= unit.nextAttackAt
     );
   }
@@ -970,7 +1075,14 @@ export class BattleSimulation {
       processed += 1;
       const source = this.units.get(shot.sourceId);
       const target = this.units.get(shot.targetId);
-      if (!source || source.action === "dead") continue;
+      if (
+        !source ||
+        source.action === "dead" ||
+        source.action === "knockback" ||
+        source.action === "stunned"
+      ) {
+        continue;
+      }
       const definition = this.definitions.get(source.definitionId);
       if (!definition) continue;
 
@@ -1300,33 +1412,68 @@ export class BattleSimulation {
       if (
         attacker &&
         attacker.targetable &&
+        target.action !== "knockback" &&
+        target.action !== "stunned" &&
         gatling &&
         this.time >= gatling.nextKickAt &&
         distance(target, attacker) <= (parameters?.kickRange ?? 160) + attacker.radius
       ) {
         gatling.nextKickAt = this.time + (parameters?.kickCooldown ?? 0.5);
         const direction = normalize({ x: attacker.x - target.x, y: attacker.y - target.y });
-        attacker.x = Math.max(
+        const desiredX =
+          attacker.x + direction.x * (parameters?.kickDistance ?? 140);
+        const desiredY =
+          attacker.y + direction.y * (parameters?.kickDistance ?? 140);
+        const destinationX = Math.max(
           attacker.radius,
           Math.min(
             this.board.width - attacker.radius,
-            attacker.x + direction.x * (parameters?.kickDistance ?? 140),
+            desiredX,
           ),
         );
-        attacker.y = Math.max(
+        const destinationY = Math.max(
           attacker.radius,
           Math.min(
             this.board.height - attacker.radius,
-            attacker.y + direction.y * (parameters?.kickDistance ?? 140),
+            desiredY,
           ),
         );
         const attackerDefinition = this.definitions.get(attacker.definitionId);
         const speed = attackerDefinition?.speed ?? Math.hypot(attacker.vx, attacker.vy);
         attacker.vx = direction.x * speed;
         attacker.vy = direction.y * speed;
+        const kickDuration = Math.max(
+          0.05,
+          parameters?.kickDuration ?? 0.35,
+        );
+        attacker.action = "knockback";
+        attacker.actionStartedAt = this.time;
+        attacker.actionUntil = this.time + kickDuration;
+        attacker.knockbackData = {
+          origin: { x: attacker.x, y: attacker.y },
+          destination: { x: destinationX, y: destinationY },
+          startedAt: this.time,
+          arrivalAt: this.time + kickDuration,
+          hitBoundary:
+            Math.abs(destinationX - desiredX) > EPSILON ||
+            Math.abs(destinationY - desiredY) > EPSILON,
+          wallStunDuration: Math.max(
+            0,
+            parameters?.kickWallStunDuration ?? 0.5,
+          ),
+        };
+        const kickDamage = Math.max(0, parameters?.kickDamage ?? 25);
+        if (kickDamage > EPSILON) {
+          this.damageUnit(
+            attacker.id,
+            kickDamage,
+            target.id,
+            "directAttack",
+          );
+        }
         target.action = "kick";
         target.actionStartedAt = this.time;
-        target.actionUntil = this.time + (parameters?.kickDuration ?? 0.35);
+        target.actionUntil = this.time + kickDuration;
         this.emit("skill", `${target.name} 一脚踹开 ${attacker.name}`, target, attacker, "kick");
       }
     }
@@ -1437,9 +1584,6 @@ export class BattleSimulation {
       const merged = this.createUnit({
         id: mergedId,
         definition,
-        appearanceDefinitionId: (
-          left.main ? left : right.main ? right : left
-        ).appearanceDefinitionId,
         ownerId: main ? mergedId : inheritedOwnerId,
         factionId: left.factionId,
         main,
@@ -1544,7 +1688,13 @@ export class BattleSimulation {
     }
     const removedUnitIds = new Set([target.id]);
     const source = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
-    if (source && source.action !== "dead") {
+    if (
+      source &&
+      source.action !== "dead" &&
+      source.action !== "tunneling" &&
+      source.action !== "knockback" &&
+      source.action !== "stunned"
+    ) {
       source.action = "kill";
       source.actionStartedAt = this.time;
       source.actionUntil = Math.max(source.actionUntil, this.time + 0.58);
@@ -1644,6 +1794,7 @@ export class BattleSimulation {
     const nextRadius = definition.radius * (this.board.unitScale ?? 1);
     this.purgeScheduledShots(new Set([source.id]));
     source.definitionId = definition.id;
+    source.appearanceDefinitionId = definition.id;
     source.policeStar = nextStar;
     source.policeKillProgress = 0;
     source.maxHp = definition.maxHp;

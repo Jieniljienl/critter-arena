@@ -46,7 +46,10 @@ import { ArenaCanvas, type ArenaHandle } from "./ArenaCanvas";
 import { BoardPropsPanel } from "./BoardPropsPanel";
 import { FormationEditor } from "./FormationEditor";
 import { NameLibraryEditor } from "./NameLibraryEditor";
-import { createDefaultManifest } from "@/lib/game/defaultContent";
+import {
+  createDefaultManifest,
+  createShowcaseContestants,
+} from "@/lib/game/defaultContent";
 import {
   exportBundle,
   exportJson,
@@ -157,6 +160,15 @@ const spawnRatios = [
   { x: 0.92, y: 0.5 },
 ];
 
+const avoidCardinalAngle = (angle: number, fallbackSign = 1) => {
+  const quarterTurn = Math.PI / 2;
+  const clearance = (8 * Math.PI) / 180;
+  const nearestAxis = Math.round(angle / quarterTurn) * quarterTurn;
+  const delta = angle - nearestAxis;
+  if (Math.abs(delta) >= clearance) return angle;
+  return nearestAxis + (delta === 0 ? fallbackSign : Math.sign(delta)) * clearance;
+};
+
 let contestantIdCounter = 0;
 const createContestantId = () => {
   contestantIdCounter += 1;
@@ -184,7 +196,9 @@ export function GameApp() {
   const [savedAt, setSavedAt] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [selectedCharacterId, setSelectedCharacterId] = useState("panda-lazy");
-  const [selectedBoardId, setSelectedBoardId] = useState("stream-landscape");
+  const [selectedBoardId, setSelectedBoardId] = useState(
+    "portrait-aurora-platform",
+  );
   const [pendingAutoStart, setPendingAutoStart] = useState(false);
   const [cleanView, setCleanView] = useState(false);
   const [fullscreenControlsVisible, setFullscreenControlsVisible] = useState(false);
@@ -521,7 +535,10 @@ export function GameApp() {
       x: ratio.x * (activeBoard?.width ?? 1600),
       y: ratio.y * (activeBoard?.height ?? 900),
     };
-    const angle = (index * 2.3999632297 + 0.65) % (Math.PI * 2);
+    const angle = avoidCardinalAngle(
+      (index * 2.3999632297 + 0.65) % (Math.PI * 2),
+      index % 2 === 0 ? 1 : -1,
+    );
     const library =
       manifest.nameLibraries.find((candidate) => candidate.definitionId === definitionId)?.names
         .map((name) => name.trim())
@@ -569,6 +586,30 @@ export function GameApp() {
     setPendingAutoStart(false);
     setBattleKey((key) => key + 1);
     setNotice(message);
+  };
+
+  const applyShowcaseFormation = () => {
+    if (!activeBoard) return;
+    const availableDefinitions = new Set(
+      manifest.characters.map((character) => character.id),
+    );
+    const contestants = createShowcaseContestants(
+      activeBoard.width,
+      activeBoard.height,
+    ).filter((contestant) =>
+      availableDefinitions.has(contestant.definitionId),
+    );
+    if (contestants.length < 2) {
+      setNotice("缺少默认角色模板，无法部署观赏阵容");
+      return;
+    }
+    const next = structuredClone(manifest);
+    next.setup.seed = 20260726;
+    next.setup.contestants = contestants;
+    replaceManifestAndResetPreview(
+      next,
+      "已部署观赏阵容：四阵营将展示升星、钻洞、RPG 与定向连发",
+    );
   };
 
   const clearContestants = () => {
@@ -650,7 +691,10 @@ export function GameApp() {
       contestants: manifest.setup.contestants.map((contestant, index) => {
         const ratio = spawnRatios[index % spawnRatios.length];
         const point = { x: ratio.x * boardWidth, y: ratio.y * boardHeight };
-        const angle = Math.random() * Math.PI * 2;
+        const angle = avoidCardinalAngle(
+          Math.random() * Math.PI * 2,
+          Math.random() < 0.5 ? -1 : 1,
+        );
         return {
           ...contestant,
           position: {
@@ -1110,6 +1154,14 @@ export function GameApp() {
                   <h2>参赛阵容</h2>
                 </div>
                 <div className="sidebar-heading-actions">
+                  <button
+                    type="button"
+                    className="text-button"
+                    onClick={applyShowcaseFormation}
+                    title="部署包含熊猫呼警、警察升星、地鼠钻洞、RPG 和加特林的四阵营阵容"
+                  >
+                    <Swords size={14} /> 观赏阵容
+                  </button>
                   <button type="button" className="text-button" onClick={randomizeFormation}>
                     <Sparkles size={14} /> 打乱
                   </button>

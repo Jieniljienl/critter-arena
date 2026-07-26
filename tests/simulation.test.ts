@@ -1,9 +1,18 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createDefaultManifest, upgradeManifest } from "../lib/game/defaultContent";
+import {
+  createDefaultManifest,
+  upgradeManifest,
+} from "../lib/game/defaultContent";
 import { BattleSimulation, circleOverlapsRegion } from "../lib/game/simulation";
-import type { BoardDefinition, CharacterDefinition, ProjectManifest } from "../lib/game/types";
+import { actionClipName } from "../lib/game/unitAnimation";
+import type {
+  BoardDefinition,
+  CharacterDefinition,
+  ProjectManifest,
+  RuntimeUnit,
+} from "../lib/game/types";
 
 const runSteps = (simulation: BattleSimulation, count: number, dt = 1 / 60): void => {
   for (let index = 0; index < count; index += 1) simulation.step(dt);
@@ -23,10 +32,28 @@ const definition = (manifest: ProjectManifest, id: string): CharacterDefinition 
 
 const twoFighterManifest = (): ProjectManifest => {
   const manifest = createDefaultManifest();
+  manifest.setup.boardId = "stream-landscape";
   const board = selectedBoard(manifest);
   board.props = [];
   board.unitScale = 1;
-  manifest.setup.contestants = structuredClone(manifest.setup.contestants.slice(0, 2));
+  manifest.setup.contestants = [
+    {
+      id: "test-panda",
+      definitionId: "panda-lazy",
+      displayName: "测试熊猫",
+      position: { x: 180, y: 180 },
+      direction: { x: 0.82, y: 0.57 },
+      color: "#f6d85f",
+    },
+    {
+      id: "test-mole",
+      definitionId: "mole",
+      displayName: "测试地鼠",
+      position: { x: 1_420, y: 720 },
+      direction: { x: -0.76, y: -0.65 },
+      color: "#ff8b62",
+    },
+  ];
   return manifest;
 };
 
@@ -79,6 +106,79 @@ test("fixed-step simulation is deterministic for a repeated seed", () => {
   runSteps(first, 900);
   runSteps(second, 900);
   assert.deepEqual(first.getSnapshot(), second.getSnapshot());
+});
+
+test("cardinal starting directions are nudged and movement resumes with seeded angular variation", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  const panda = definition(manifest, "panda-lazy");
+  const mole = definition(manifest, "mole");
+  panda.pluginId = undefined;
+  panda.speed = 120;
+  panda.attack = {
+    range: 2_000,
+    damage: 0,
+    cooldown: 100,
+    windup: 0,
+    mode: "melee",
+  };
+  mole.pluginId = undefined;
+  mole.speed = 0;
+  mole.attack.range = 0;
+  mole.attack.damage = 0;
+  manifest.setup.contestants[0].position = { x: 300, y: 300 };
+  manifest.setup.contestants[0].direction = { x: 1, y: 0 };
+  manifest.setup.contestants[1].position = { x: 900, y: 500 };
+
+  const first = new BattleSimulation(structuredClone(manifest));
+  const second = new BattleSimulation(structuredClone(manifest));
+  const initialFirst = first.getSnapshot().units.find((unit) => unit.definitionId === "panda-lazy");
+  const initialSecond = second.getSnapshot().units.find((unit) => unit.definitionId === "panda-lazy");
+  assert.ok(initialFirst);
+  assert.ok(initialSecond);
+  assert.ok(Math.abs(initialFirst.vy) > 10, "an exact horizontal heading should be nudged off-axis");
+  assert.equal(initialFirst.vx, initialSecond.vx);
+  assert.equal(initialFirst.vy, initialSecond.vy);
+
+  first.start();
+  runSteps(first, 90);
+  const resumed = first.getSnapshot().units.find((unit) => unit.id === initialFirst.id);
+  assert.ok(resumed);
+  const initialAngle = Math.atan2(initialFirst.vy, initialFirst.vx);
+  const resumedAngle = Math.atan2(resumed.vy, resumed.vx);
+  const difference = Math.atan2(
+    Math.sin(resumedAngle - initialAngle),
+    Math.cos(resumedAngle - initialAngle),
+  );
+  assert.ok(Math.abs(difference) > 0.0001);
+  assert.ok(Math.abs(difference) <= (9 * Math.PI) / 180);
+});
+
+test("mole tunneling uses travel art underground and attack art only after a successful ambush", () => {
+  const unit: Pick<RuntimeUnit, "action" | "tunnelData"> = {
+    action: "tunneling" as const,
+    tunnelData: {
+      mode: "ambush" as const,
+      origin: { x: 0, y: 0 },
+      destination: { x: 100, y: 100 },
+      travelStartedAt: 0.12,
+      arrivalAt: 0.9,
+      attackAt: 1,
+      hitSucceeded: false,
+    },
+  };
+  assert.equal(actionClipName(unit, 0.05), "tunnelEnter");
+  assert.equal(actionClipName(unit, 0.5), "tunnelMove");
+  assert.equal(actionClipName(unit, 0.95), "tunnelEmerge");
+  assert.equal(actionClipName(unit, 1.02), "tunnelEmerge");
+
+  unit.tunnelData.hitSucceeded = true;
+  assert.equal(actionClipName(unit, 1.02), "tunnelAttack");
+  unit.tunnelData.returnStartedAt = 1.12;
+  unit.tunnelData.returnArrivalAt = 1.8;
+  assert.equal(actionClipName(unit, 1.3), "tunnelMove");
+  assert.equal(actionClipName(unit, 1.81), "tunnelEmerge");
 });
 
 test("units mirror their velocity at a rectangular boundary and remain inside it", () => {
@@ -473,6 +573,103 @@ test("five-star police keeps one round direction while applying configurable spr
   runSteps(simulation, 35);
   projectiles = simulation.getSnapshot().projectiles;
   assert.ok(projectiles.length > 4, "the next round should begin only after its period");
+});
+
+test("five-star kick moves the attacker over time and stuns it after a boundary impact", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.width = 500;
+  board.height = 600;
+  board.props = [];
+  const officer = definition(manifest, "police-5");
+  const attacker = definition(manifest, "panda-lazy");
+  officer.speed = 0;
+  officer.attack.damage = 0;
+  officer.attack.cooldown = 100;
+  officer.skillParameters!.police!.kickDistance = 180;
+  officer.skillParameters!.police!.kickDamage = 25;
+  officer.skillParameters!.police!.kickDuration = 0.35;
+  officer.skillParameters!.police!.kickWallStunDuration = 0.5;
+  attacker.pluginId = undefined;
+  attacker.speed = 80;
+  attacker.attack = {
+    range: 300,
+    damage: 1,
+    cooldown: 100,
+    windup: 0,
+    mode: "melee",
+  };
+  manifest.setup.contestants = [
+    {
+      id: "wall-kicker",
+      definitionId: "police-5",
+      displayName: "边界测试无畏",
+      position: { x: 330, y: 300 },
+      direction: { x: -0.8, y: 0.6 },
+      color: "#b58aff",
+    },
+    {
+      id: "wall-kick-target",
+      definitionId: "panda-lazy",
+      displayName: "撞墙测试员",
+      position: { x: 430, y: 300 },
+      direction: { x: -0.9, y: 0.3 },
+      color: "#f6d85f",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  let knockedAt: number | undefined;
+  let knockedX = 0;
+  for (let index = 0; index < 120; index += 1) {
+    simulation.step();
+    const unit = simulation
+      .getSnapshot()
+      .units.find((candidate) => candidate.id === "wall-kick-target");
+    assert.ok(unit);
+    if (unit.action === "knockback") {
+      knockedAt = simulation.getSnapshot().time;
+      knockedX = unit.x;
+      assert.equal(unit.knockbackData?.hitBoundary, true);
+      break;
+    }
+  }
+  assert.ok(knockedAt !== undefined, "the close-range attacker should be kicked");
+
+  runSteps(simulation, 6);
+  const moving = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "wall-kick-target");
+  assert.ok(moving);
+  assert.equal(moving.action, "knockback");
+  assert.ok(moving.x > knockedX, "knockback should visibly move across multiple steps");
+  assert.equal(moving.hp, moving.maxHp - 25);
+
+  let stunned;
+  for (let index = 0; index < 30; index += 1) {
+    simulation.step();
+    const unit = simulation
+      .getSnapshot()
+      .units.find((candidate) => candidate.id === "wall-kick-target");
+    assert.ok(unit);
+    if (unit.action === "stunned") {
+      stunned = unit;
+      break;
+    }
+  }
+  assert.ok(stunned);
+  assert.equal(stunned.x, board.width - stunned.radius);
+  assert.ok(stunned.stunnedUntil - simulation.getSnapshot().time > 0.45);
+
+  const stunnedPosition = stunned.x;
+  runSteps(simulation, 20);
+  const stillStunned = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "wall-kick-target");
+  assert.ok(stillStunned);
+  assert.equal(stillStunned.action, "stunned");
+  assert.equal(stillStunned.x, stunnedPosition);
 });
 
 test("burning and spring buffs settle exactly once per second", () => {
@@ -1223,8 +1420,8 @@ test("allied selectable police merge on contact and play a star-up action", () =
   assert.equal(merged.action, "merge");
   assert.equal(
     merged.appearanceDefinitionId,
-    "police-1",
-    "collision promotions should keep one original officer appearance",
+    "police-2",
+    "collision promotions should switch to the promoted officer appearance",
   );
   assert.ok(merged.promotionUntil > merged.promotionStartedAt);
   assert.ok(snapshot.events.some((event) => event.type === "merge" && event.announcement));
@@ -1290,8 +1487,8 @@ test("a police officer promotes after every two personal kills and stops at five
   assert.equal(officer.definitionId, "police-5");
   assert.equal(
     officer.appearanceDefinitionId,
-    "police-1",
-    "personal kill promotions should retain the officer's original appearance",
+    "police-5",
+    "personal kill promotions should switch to the promoted officer appearance",
   );
   assert.equal(officer.policeKillProgress, 0);
   assert.equal(officer.factionId, "team:red");
@@ -1420,8 +1617,10 @@ test("legacy team HUD colors gain clear defaults and obsolete name positions are
   const manifest = createDefaultManifest();
   manifest.setup.contestants[0].teamId = "red";
   manifest.setup.contestants[0].color = "#111111";
+  delete manifest.setup.contestants[0].nameColor;
   manifest.setup.contestants[1].teamId = "blue";
   manifest.setup.contestants[1].color = "#222222";
+  delete manifest.setup.contestants[1].nameColor;
 
   const upgraded = upgradeManifest(manifest);
   assert.equal(upgraded.setup.contestants[0].color, "#ff5968");
@@ -1462,6 +1661,61 @@ test("the default board library includes three restrained new portrait arenas", 
     assert.ok(board.props.some((prop) => prop.type === "hotSpring"));
     assert.ok(board.props.some((prop) => prop.type === "lava"));
   }
+});
+
+test("the default project opens on a simple portrait showcase with updated gatling defaults", () => {
+  const manifest = createDefaultManifest();
+  const board = selectedBoard(manifest);
+  assert.equal(board.id, "portrait-aurora-platform");
+  assert.equal(board.width, 900);
+  assert.equal(board.height, 1600);
+  assert.equal(manifest.setup.contestants.length, 8);
+  assert.deepEqual(
+    new Set(manifest.setup.contestants.map((contestant) => contestant.teamId)),
+    new Set(["gold", "blue", "red", "purple"]),
+  );
+  assert.ok(
+    ["panda-lazy", "mole", "police-1", "police-3", "police-4", "police-5"].every(
+      (definitionId) =>
+        manifest.setup.contestants.some(
+          (contestant) => contestant.definitionId === definitionId,
+        ),
+    ),
+  );
+
+  const gatling = definition(manifest, "police-5");
+  assert.equal(gatling.maxHp, 1_000);
+  assert.equal(gatling.attack.cooldown, 7);
+  assert.equal(gatling.attack.burstCount, 18);
+  assert.equal(gatling.attack.burstGap, 0.2);
+  assert.ok(
+    manifest.characters.every(
+      (character) => (character.victoryStyle ?? "cool") !== "spotlight",
+    ),
+  );
+});
+
+test("legacy built-in gatling defaults migrate to the new health and firing cadence", () => {
+  const manifest = createDefaultManifest();
+  const gatling = definition(manifest, "police-5");
+  gatling.maxHp = 200;
+  gatling.attack.cooldown = 10;
+  gatling.attack.burstCount = 15;
+  gatling.attack.burstGap = 0.33;
+  gatling.victoryStyle = "spotlight";
+
+  const upgraded = upgradeManifest(manifest);
+  const upgradedGatling = definition(upgraded, "police-5");
+  assert.equal(upgradedGatling.maxHp, 1_000);
+  assert.equal(upgradedGatling.attack.cooldown, 7);
+  assert.equal(upgradedGatling.attack.burstCount, 18);
+  assert.equal(upgradedGatling.attack.burstGap, 0.2);
+  assert.equal(upgradedGatling.victoryStyle, "cool");
+  assert.equal(
+    upgradedGatling.skillParameters?.police?.kickWallStunDuration,
+    0.5,
+  );
+  assert.equal(upgradedGatling.skillParameters?.police?.kickDamage, 25);
 });
 
 test("extreme sub-frame burst settings stay deterministic and within runtime budgets", () => {

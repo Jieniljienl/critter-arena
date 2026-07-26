@@ -138,8 +138,10 @@ const skillFields: Record<
     },
     { key: "kickRange", label: "五星踹击范围", fallback: 160, min: 0 },
     { key: "kickDistance", label: "五星踹飞距离", fallback: 140, min: 0 },
+    { key: "kickDamage", label: "五星踹击伤害", fallback: 25, min: 0 },
     { key: "kickCooldown", label: "踹击冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
     { key: "kickDuration", label: "踹击动作（秒）", fallback: 0.35, min: 0.05, step: 0.05 },
+    { key: "kickWallStunDuration", label: "撞墙眩晕（秒）", fallback: 0.5, min: 0, step: 0.05 },
   ],
 };
 
@@ -543,7 +545,7 @@ export function CharacterEditor({
               <label>
                 获胜姿势
                 <select
-                  value={selected.victoryStyle ?? "spotlight"}
+                  value={selected.victoryStyle ?? "cool"}
                   onChange={(event) =>
                     updateCharacter(
                       (character) =>
@@ -555,10 +557,10 @@ export function CharacterEditor({
                     )
                   }
                 >
-                  <option value="spotlight">聚光灯</option>
                   <option value="dance">跳舞</option>
                   <option value="cool">装酷</option>
                   <option value="taunt">嘲讽</option>
+                  <option value="spotlight">聚光灯</option>
                 </select>
               </label>
             </div>
@@ -732,7 +734,7 @@ export function CharacterEditor({
                     type="number"
                     min={1}
                     step={1}
-                    value={selected.attack.burstCount ?? (selected.attack.mode === "gatling" ? 15 : 3)}
+                    value={selected.attack.burstCount ?? (selected.attack.mode === "gatling" ? 18 : 3)}
                     onChange={(event) =>
                       updateCharacter(
                         (character) =>
@@ -742,7 +744,7 @@ export function CharacterEditor({
                               numeric(
                                 event.target.value,
                                 character.attack.burstCount ??
-                                  (character.attack.mode === "gatling" ? 15 : 3),
+                                  (character.attack.mode === "gatling" ? 18 : 3),
                               ),
                             ),
                           )),
@@ -756,14 +758,14 @@ export function CharacterEditor({
                     type="number"
                     min={0}
                     step={0.001}
-                    value={selected.attack.burstGap ?? (selected.attack.mode === "gatling" ? 0.33 : 0.3)}
+                    value={selected.attack.burstGap ?? (selected.attack.mode === "gatling" ? 0.2 : 0.3)}
                     onChange={(event) =>
                       updateCharacter(
                         (character) =>
                           (character.attack.burstGap = numeric(
                             event.target.value,
                             character.attack.burstGap ??
-                              (character.attack.mode === "gatling" ? 0.33 : 0.3),
+                              (character.attack.mode === "gatling" ? 0.2 : 0.3),
                           )),
                       )
                     }

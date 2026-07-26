@@ -145,6 +145,7 @@ export type MoleSkillParameters = {
   stompsToFlatten: number;
   ambushRange: number;
   ambushCooldown: number;
+  tunnelSpeedMultiplier: number;
   tunnelDuration: number;
   tunnelChance: number;
 };
@@ -306,9 +307,14 @@ export type RuntimeUnit = {
     mode: "ambush" | "travel";
     origin: Vec2;
     destination: Vec2;
+    travelStartedAt: number;
+    arrivalAt: number;
+    attackAt?: number;
     destinationHoleId?: string;
     targetId?: string;
     hitSucceeded?: boolean;
+    returnStartedAt?: number;
+    returnArrivalAt?: number;
     returnDestination?: Vec2;
     returnHoleId?: string;
   };

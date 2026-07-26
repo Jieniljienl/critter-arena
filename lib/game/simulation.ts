@@ -47,6 +47,11 @@ const MAX_SHOTS_PER_BURST = 240;
 const MAX_GATLING_SHOTS_PER_STEP = 24;
 const MAX_MERGES_PER_STEP = 64;
 const MAX_MODULE_EXECUTIONS_PER_STEP = 128;
+const MOLE_TUNNEL_ENTRY_DURATION = 0.12;
+const MOLE_TUNNEL_ATTACK_WINDUP = 0.08;
+const MOLE_TUNNEL_RETURN_DELAY = 0.12;
+const MOLE_TUNNEL_EXIT_DURATION = 0.18;
+const MIN_MOLE_TUNNEL_TRAVEL_DURATION = 1 / 60;
 
 export type SimulationDiagnostics = {
   activeUnits: number;
@@ -573,26 +578,38 @@ export class BattleSimulation {
           );
         const selection = this.random.pick(candidates);
         if (selection) {
+          const origin = { x: unit.x, y: unit.y };
+          const destination = { x: selection.hole.x, y: selection.hole.y };
+          const travelStartedAt = this.time + MOLE_TUNNEL_ENTRY_DURATION;
+          const arrivalAt =
+            travelStartedAt +
+            this.moleTunnelTravelDuration(definition, origin, destination);
+          const attackAt = arrivalAt + MOLE_TUNNEL_ATTACK_WINDUP;
           unit.action = "tunneling";
           unit.actionStartedAt = this.time;
-          const tunnelDuration = parameters?.tunnelDuration ?? 1;
-          unit.actionUntil = this.time + tunnelDuration;
+          unit.actionUntil = Math.max(
+            attackAt + MOLE_TUNNEL_EXIT_DURATION,
+            this.time + (parameters?.tunnelDuration ?? 1),
+          );
           unit.targetable = false;
           unit.nextAmbushAt = this.time + (parameters?.ambushCooldown ?? 3);
           unit.tunnelData = {
             mode: "ambush",
-            origin: { x: unit.x, y: unit.y },
-            destination: { x: selection.hole.x, y: selection.hole.y },
+            origin,
+            destination,
+            travelStartedAt,
+            arrivalAt,
+            attackAt,
             destinationHoleId: selection.hole.id,
             targetId: selection.target.id,
             hitSucceeded: false,
           };
           this.enqueueShot({
             id: this.nextId("ambush"),
-            at: this.time + tunnelDuration * 0.54,
+            at: attackAt,
             sourceId: unit.id,
             targetId: selection.target.id,
-            from: { x: selection.hole.x, y: selection.hole.y },
+            from: destination,
             damage: definition.attack.damage,
             range: parameters?.ambushRange ?? definition.attack.range,
             ambush: true,
@@ -619,14 +636,29 @@ export class BattleSimulation {
           availableHoles.filter((hole) => hole.id !== currentHole.id),
         );
         if (destination) {
+          const origin = { x: unit.x, y: unit.y };
+          const destinationPosition = { x: destination.x, y: destination.y };
+          const travelStartedAt = this.time + MOLE_TUNNEL_ENTRY_DURATION;
+          const arrivalAt =
+            travelStartedAt +
+            this.moleTunnelTravelDuration(
+              definition,
+              origin,
+              destinationPosition,
+            );
           unit.action = "tunneling";
           unit.actionStartedAt = this.time;
-          unit.actionUntil = this.time + (parameters?.tunnelDuration ?? 1);
+          unit.actionUntil = Math.max(
+            arrivalAt + MOLE_TUNNEL_EXIT_DURATION,
+            this.time + (parameters?.tunnelDuration ?? 1),
+          );
           unit.targetable = false;
           unit.tunnelData = {
             mode: "travel",
-            origin: { x: unit.x, y: unit.y },
-            destination: { x: destination.x, y: destination.y },
+            origin,
+            destination: destinationPosition,
+            travelStartedAt,
+            arrivalAt,
             destinationHoleId: destination.id,
           };
           this.emit("skill", `${unit.name} 随机钻向另一处洞口`, unit, undefined, "tunnel");
@@ -651,15 +683,7 @@ export class BattleSimulation {
   private updateMoleTunnelPosition(unit: RuntimeUnit): void {
     const tunnel = unit.tunnelData;
     if (!tunnel) return;
-    const duration = Math.max(EPSILON, unit.actionUntil - unit.actionStartedAt);
-    const progress = Math.max(0, Math.min(1, (this.time - unit.actionStartedAt) / duration));
-    if (tunnel.mode === "travel") {
-      const position = progress >= 0.62 ? tunnel.destination : tunnel.origin;
-      unit.x = position.x;
-      unit.y = position.y;
-      return;
-    }
-    if (progress < 0.34) {
+    if (this.time < tunnel.arrivalAt) {
       unit.x = tunnel.origin.x;
       unit.y = tunnel.origin.y;
       return;
@@ -667,7 +691,8 @@ export class BattleSimulation {
     if (
       tunnel.hitSucceeded &&
       tunnel.returnDestination &&
-      progress >= 0.72
+      tunnel.returnArrivalAt !== undefined &&
+      this.time >= tunnel.returnArrivalAt
     ) {
       unit.x = tunnel.returnDestination.x;
       unit.y = tunnel.returnDestination.y;
@@ -675,6 +700,29 @@ export class BattleSimulation {
     }
     unit.x = tunnel.destination.x;
     unit.y = tunnel.destination.y;
+  }
+
+  private moleTunnelTravelDuration(
+    definition: CharacterDefinition,
+    origin: Vec2,
+    destination: Vec2,
+  ): number {
+    const parameters = definition.skillParameters?.mole;
+    const multiplier = Math.max(
+      0.1,
+      parameters?.tunnelSpeedMultiplier ?? 2.5,
+    );
+    const tunnelSpeed = definition.speed * multiplier;
+    if (tunnelSpeed <= EPSILON) {
+      return Math.max(
+        MIN_MOLE_TUNNEL_TRAVEL_DURATION,
+        parameters?.tunnelDuration ?? 1,
+      );
+    }
+    return Math.max(
+      MIN_MOLE_TUNNEL_TRAVEL_DURATION,
+      distance(origin, destination) / tunnelSpeed,
+    );
   }
 
   private updateGatling(
@@ -936,7 +984,6 @@ export class BattleSimulation {
         ) {
           if (tunnel?.mode === "ambush") {
             tunnel.hitSucceeded = false;
-            source.targetable = true;
             source.actionUntil = Math.min(source.actionUntil, this.time + 0.18);
           }
           continue;
@@ -956,10 +1003,21 @@ export class BattleSimulation {
           if (returnHole) {
             tunnel.returnDestination = { x: returnHole.x, y: returnHole.y };
             tunnel.returnHoleId = returnHole.id;
+            tunnel.returnStartedAt = this.time + MOLE_TUNNEL_RETURN_DELAY;
+            tunnel.returnArrivalAt =
+              tunnel.returnStartedAt +
+              this.moleTunnelTravelDuration(
+                definition,
+                tunnel.destination,
+                tunnel.returnDestination,
+              );
+            source.actionUntil = Math.max(
+              source.actionUntil,
+              tunnel.returnArrivalAt + MOLE_TUNNEL_EXIT_DURATION,
+            );
           }
         } else {
           tunnel.hitSucceeded = false;
-          source.targetable = true;
           source.actionUntil = Math.min(source.actionUntil, this.time + 0.18);
         }
         continue;

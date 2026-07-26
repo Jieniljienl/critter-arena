@@ -123,7 +123,8 @@ const skillFields: Record<
     { key: "stompsToFlatten", label: "踩平所需进入次数", fallback: 3, min: 1, max: 99, step: 1 },
     { key: "ambushRange", label: "钻洞偷袭范围", fallback: 150, min: 0 },
     { key: "ambushCooldown", label: "偷袭冷却（秒）", fallback: 3, min: 0, step: 0.1 },
-    { key: "tunnelDuration", label: "地道移动耗时（秒）", fallback: 1, min: 0.1, step: 0.1 },
+    { key: "tunnelSpeedMultiplier", label: "钻地速度倍率（相对移速）", fallback: 2.5, min: 0.1, max: 50, step: 0.1 },
+    { key: "tunnelDuration", label: "钻洞最短动作时长（秒）", fallback: 1, min: 0.1, step: 0.1 },
     { key: "tunnelChance", label: "随机钻洞概率", fallback: 0.2, min: 0, max: 1, step: 0.05 },
   ],
   police: [

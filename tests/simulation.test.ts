@@ -690,6 +690,79 @@ test("a mole can ambush through a single nearby hole and stays immune to new dam
   );
 });
 
+test("mole tunnel travel uses the editable movement-speed multiplier", () => {
+  const tunnelTravelDuration = (multiplier: number): number => {
+    const manifest = twoFighterManifest();
+    const mole = definition(manifest, "mole");
+    const panda = definition(manifest, "panda-lazy");
+    disableCombat(manifest);
+    mole.speed = 100;
+    mole.skillParameters!.mole!.digCooldown = 100;
+    mole.skillParameters!.mole!.tunnelDuration = 0.1;
+    mole.skillParameters!.mole!.tunnelChance = 0;
+    mole.skillParameters!.mole!.tunnelSpeedMultiplier = multiplier;
+    panda.pluginId = undefined;
+    panda.speed = 0;
+    manifest.setup.contestants = [
+      {
+        id: "speed-mole",
+        definitionId: "mole",
+        displayName: "测速地鼠",
+        position: { x: 250, y: 450 },
+        direction: { x: 1, y: 0 },
+        color: "#ff8b62",
+        teamId: "red",
+      },
+      {
+        id: "speed-helper",
+        definitionId: "mole",
+        displayName: "测速洞友",
+        position: { x: 750, y: 450 },
+        direction: { x: -1, y: 0 },
+        color: "#ff8b62",
+        teamId: "red",
+      },
+      {
+        id: "speed-target",
+        definitionId: "panda-lazy",
+        displayName: "洞边测速靶",
+        position: { x: 750, y: 450 },
+        direction: { x: 1, y: 0 },
+        color: "#55a7ff",
+        teamId: "blue",
+      },
+    ];
+
+    const simulation = new BattleSimulation(manifest);
+    simulation.start();
+    for (let step = 0; step < 120; step += 1) {
+      simulation.step(1 / 60);
+      const runtimeMole = simulation
+        .getSnapshot()
+        .units.find((unit) => unit.id === "speed-mole");
+      assert.ok(runtimeMole);
+      if (runtimeMole.action === "tunneling" && runtimeMole.tunnelData) {
+        return (
+          runtimeMole.tunnelData.arrivalAt -
+          runtimeMole.tunnelData.travelStartedAt
+        );
+      }
+    }
+    assert.fail("mole should start a cross-hole tunnel");
+  };
+
+  const defaultManifest = createDefaultManifest();
+  assert.equal(
+    definition(defaultManifest, "mole").skillParameters?.mole
+      ?.tunnelSpeedMultiplier,
+    2.5,
+  );
+  const defaultDuration = tunnelTravelDuration(2.5);
+  const fasterDuration = tunnelTravelDuration(5);
+  assert.ok(Math.abs(defaultDuration - 2) < 0.001);
+  assert.ok(Math.abs(fasterDuration - 1) < 0.001);
+});
+
 test("a missed cross-hole ambush emerges at its destination and becomes targetable", () => {
   const manifest = twoFighterManifest();
   const mole = definition(manifest, "mole");
@@ -814,7 +887,7 @@ test("a successful cross-hole ambush returns to a random surviving hole", () => 
   let returned:
     | ReturnType<BattleSimulation["getSnapshot"]>["units"][number]
     | undefined;
-  for (let step = 0; step < 180; step += 1) {
+  for (let step = 0; step < 360; step += 1) {
     simulation.step(1 / 60);
     const current = simulation
       .getSnapshot()
@@ -1308,6 +1381,39 @@ test("legacy panda entries migrate to the single lazy panda definition", () => {
   assert.equal(upgradedPanda.name, "熊猫");
   assert.equal(upgradedPanda.skillParameters?.panda?.policeCallDuration, 0.7);
   assert.ok(upgradedPanda.animations.callPolice);
+});
+
+test("legacy and custom mole definitions gain the default tunnel speed multiplier", () => {
+  const manifest = createDefaultManifest();
+  const canonical = definition(manifest, "mole");
+  const custom = {
+    ...structuredClone(canonical),
+    id: "mole-custom",
+    name: "自定义地鼠",
+  };
+  delete (
+    canonical.skillParameters!.mole as {
+      tunnelSpeedMultiplier?: number;
+    }
+  ).tunnelSpeedMultiplier;
+  delete (
+    custom.skillParameters!.mole as {
+      tunnelSpeedMultiplier?: number;
+    }
+  ).tunnelSpeedMultiplier;
+  manifest.characters.push(custom);
+
+  const upgraded = upgradeManifest(manifest);
+  assert.equal(
+    definition(upgraded, "mole").skillParameters?.mole
+      ?.tunnelSpeedMultiplier,
+    2.5,
+  );
+  assert.equal(
+    definition(upgraded, "mole-custom").skillParameters?.mole
+      ?.tunnelSpeedMultiplier,
+    2.5,
+  );
 });
 
 test("legacy team HUD colors gain clear defaults and obsolete name positions are removed", () => {

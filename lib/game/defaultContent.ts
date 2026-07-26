@@ -151,6 +151,7 @@ const moleSkillParameters = {
   stompsToFlatten: 3,
   ambushRange: 150,
   ambushCooldown: 3,
+  tunnelSpeedMultiplier: 2.5,
   tunnelDuration: 1,
   tunnelChance: 0.2,
 };
@@ -956,6 +957,14 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.skillParameters.police.killsPerPromotion ??=
         defaultCharacter.skillParameters.police.killsPerPromotion;
     }
+    if (defaultCharacter.skillParameters?.mole) {
+      character.skillParameters ??= {};
+      character.skillParameters.mole ??= structuredClone(
+        defaultCharacter.skillParameters.mole,
+      );
+      character.skillParameters.mole.tunnelSpeedMultiplier ??=
+        defaultCharacter.skillParameters.mole.tunnelSpeedMultiplier;
+    }
     character.victoryStyle ??= defaultCharacter.victoryStyle ?? "spotlight";
     character.attack.spreadDegrees ??= defaultCharacter.attack.spreadDegrees ?? 0;
     if (defaultCharacter.id === "mole" && character.radius === 32) {
@@ -1007,6 +1016,12 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     }
   }
   for (const character of upgraded.characters) {
+    if (character.pluginId === "mole") {
+      character.skillParameters ??= {};
+      character.skillParameters.mole ??= structuredClone(moleSkillParameters);
+      character.skillParameters.mole.tunnelSpeedMultiplier ??=
+        moleSkillParameters.tunnelSpeedMultiplier;
+    }
     if (!upgraded.nameLibraries.some((item) => item.definitionId === character.id)) {
       upgraded.nameLibraries.push({
         definitionId: character.id,

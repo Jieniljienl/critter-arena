@@ -1161,14 +1161,22 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             let visualX = unit.x;
             let visualY = unit.y;
             if (unit.action === "tunneling" && unit.tunnelData) {
-              const duration = Math.max(0.001, unit.actionUntil - unit.actionStartedAt);
-              const progress = Math.max(0, Math.min(1, (time - unit.actionStartedAt) / duration));
               const origin = unit.tunnelData.origin;
               const destination = unit.tunnelData.destination;
-              if (unit.tunnelData.mode === "travel") {
+              const travelDuration = Math.max(
+                0.001,
+                unit.tunnelData.arrivalAt - unit.tunnelData.travelStartedAt,
+              );
+              if (time < unit.tunnelData.travelStartedAt) {
+                visualX = origin.x;
+                visualY = origin.y;
+              } else if (time < unit.tunnelData.arrivalAt) {
                 const travelProgress = Math.max(
                   0,
-                  Math.min(1, (progress - 0.12) / 0.72),
+                  Math.min(
+                    1,
+                    (time - unit.tunnelData.travelStartedAt) / travelDuration,
+                  ),
                 );
                 const eased =
                   travelProgress *
@@ -1176,29 +1184,28 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                   (3 - 2 * travelProgress);
                 visualX = origin.x + (destination.x - origin.x) * eased;
                 visualY = origin.y + (destination.y - origin.y) * eased;
-              } else if (progress < 0.16) {
-                visualX = origin.x;
-                visualY = origin.y;
-              } else if (progress < 0.36) {
-                const travelProgress = (progress - 0.16) / 0.2;
-                const eased =
-                  travelProgress *
-                  travelProgress *
-                  (3 - 2 * travelProgress);
-                visualX = origin.x + (destination.x - origin.x) * eased;
-                visualY = origin.y + (destination.y - origin.y) * eased;
               } else if (
-                progress < 0.68 ||
                 !unit.tunnelData.hitSucceeded ||
-                !unit.tunnelData.returnDestination
+                !unit.tunnelData.returnDestination ||
+                unit.tunnelData.returnStartedAt === undefined ||
+                unit.tunnelData.returnArrivalAt === undefined ||
+                time < unit.tunnelData.returnStartedAt
               ) {
                 visualX = destination.x;
                 visualY = destination.y;
-              } else {
+              } else if (time < unit.tunnelData.returnArrivalAt) {
                 const returnDestination = unit.tunnelData.returnDestination;
+                const returnDuration = Math.max(
+                  0.001,
+                  unit.tunnelData.returnArrivalAt -
+                    unit.tunnelData.returnStartedAt,
+                );
                 const returnProgress = Math.max(
                   0,
-                  Math.min(1, (progress - 0.68) / 0.2),
+                  Math.min(
+                    1,
+                    (time - unit.tunnelData.returnStartedAt) / returnDuration,
+                  ),
                 );
                 const eased =
                   returnProgress *
@@ -1210,6 +1217,10 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 visualY =
                   destination.y +
                   (returnDestination.y - destination.y) * eased;
+              } else {
+                const returnDestination = unit.tunnelData.returnDestination;
+                visualX = returnDestination.x;
+                visualY = returnDestination.y;
               }
             }
             if (callingForHelp) {

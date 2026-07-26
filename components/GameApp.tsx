@@ -63,6 +63,48 @@ import type {
 } from "@/lib/game/types";
 
 type WorkspaceView = "battle" | "characters" | "boards";
+type MobileSidebarPanel = "lineup" | "props" | "feed";
+
+type WebkitFullscreenDocument = Document & {
+  webkitExitFullscreen?: () => Promise<void> | void;
+  webkitFullscreenElement?: Element | null;
+};
+
+type WebkitFullscreenElement = HTMLElement & {
+  webkitRequestFullscreen?: () => Promise<void> | void;
+};
+
+const getFullscreenElement = () =>
+  document.fullscreenElement ??
+  (document as WebkitFullscreenDocument).webkitFullscreenElement ??
+  null;
+
+const requestNativeFullscreen = async () => {
+  const element = document.documentElement as WebkitFullscreenElement;
+  try {
+    if (element.requestFullscreen) {
+      await element.requestFullscreen({ navigationUI: "hide" });
+    } else if (element.webkitRequestFullscreen) {
+      await element.webkitRequestFullscreen();
+    } else {
+      return false;
+    }
+    return true;
+  } catch {
+    return false;
+  }
+};
+
+const exitNativeFullscreen = async () => {
+  const webkitDocument = document as WebkitFullscreenDocument;
+  const exit = document.exitFullscreen ?? webkitDocument.webkitExitFullscreen;
+  if (!exit || !getFullscreenElement()) return;
+  try {
+    await exit.call(document);
+  } catch {
+    // The CSS immersive view still exits even if the browser rejects its native API.
+  }
+};
 
 const CharacterEditor = lazy(() =>
   import("./CharacterEditor").then((module) => ({ default: module.CharacterEditor })),
@@ -146,12 +188,52 @@ export function GameApp() {
   const [pendingAutoStart, setPendingAutoStart] = useState(false);
   const [cleanView, setCleanView] = useState(false);
   const [fullscreenControlsVisible, setFullscreenControlsVisible] = useState(false);
+  const [mobileSidebarPanel, setMobileSidebarPanel] =
+    useState<MobileSidebarPanel>("lineup");
   const arenaRef = useRef<ArenaHandle>(null);
+  const battleControlBarRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
   const musicImportRef = useRef<HTMLInputElement>(null);
   const pendingPreviewSetupRef = useRef<MatchSetup | undefined>(undefined);
   const previewSyncFrameRef = useRef<number | undefined>(undefined);
   const fullscreenControlsTimerRef = useRef<number | undefined>(undefined);
+  const nativeFullscreenRef = useRef(false);
+
+  const revealFullscreenControls = useCallback(() => {
+    if (fullscreenControlsTimerRef.current !== undefined) {
+      window.clearTimeout(fullscreenControlsTimerRef.current);
+      fullscreenControlsTimerRef.current = undefined;
+    }
+    setFullscreenControlsVisible(true);
+  }, []);
+
+  const scheduleFullscreenControlsHide = useCallback((delay = 900) => {
+    if (fullscreenControlsTimerRef.current !== undefined) {
+      window.clearTimeout(fullscreenControlsTimerRef.current);
+    }
+    fullscreenControlsTimerRef.current = window.setTimeout(() => {
+      setFullscreenControlsVisible(false);
+      fullscreenControlsTimerRef.current = undefined;
+    }, delay);
+  }, []);
+
+  const enterCleanView = useCallback(async () => {
+    setCleanView(true);
+    revealFullscreenControls();
+    scheduleFullscreenControlsHide(2600);
+    const enteredNative = await requestNativeFullscreen();
+    nativeFullscreenRef.current = enteredNative || Boolean(getFullscreenElement());
+    if (!enteredNative) {
+      setNotice("已进入沉浸式观看；当前手机浏览器不提供网页原生全屏");
+    }
+  }, [revealFullscreenControls, scheduleFullscreenControlsHide]);
+
+  const exitCleanView = useCallback(async () => {
+    setCleanView(false);
+    setFullscreenControlsVisible(false);
+    nativeFullscreenRef.current = false;
+    await exitNativeFullscreen();
+  }, []);
 
   useEffect(() => {
     let alive = true;
@@ -212,14 +294,38 @@ export function GameApp() {
 
   useEffect(() => {
     const syncFullscreenState = () => {
-      if (!document.fullscreenElement) {
+      if (getFullscreenElement()) {
+        nativeFullscreenRef.current = true;
+        setCleanView(true);
+        return;
+      }
+      if (nativeFullscreenRef.current) {
+        nativeFullscreenRef.current = false;
         setCleanView(false);
         setFullscreenControlsVisible(false);
       }
     };
     document.addEventListener("fullscreenchange", syncFullscreenState);
-    return () => document.removeEventListener("fullscreenchange", syncFullscreenState);
+    document.addEventListener("webkitfullscreenchange", syncFullscreenState);
+    return () => {
+      document.removeEventListener("fullscreenchange", syncFullscreenState);
+      document.removeEventListener("webkitfullscreenchange", syncFullscreenState);
+    };
   }, []);
+
+  useEffect(() => {
+    document.documentElement.classList.toggle("clean-view-active", cleanView);
+    document.body.classList.toggle("clean-view-active", cleanView);
+    if (!cleanView) {
+      window.requestAnimationFrame(() => {
+        battleControlBarRef.current?.scrollTo({ left: 0 });
+      });
+    }
+    return () => {
+      document.documentElement.classList.remove("clean-view-active");
+      document.body.classList.remove("clean-view-active");
+    };
+  }, [cleanView]);
 
   useEffect(
     () => () => {
@@ -240,21 +346,16 @@ export function GameApp() {
       if (event.key === "." && view === "battle") arenaRef.current?.step();
       if (event.key.toLowerCase() === "f" && view === "battle") {
         event.preventDefault();
-        setFullscreenControlsVisible(false);
-        if (document.fullscreenElement) {
-          void document.exitFullscreen();
-        } else {
-          setCleanView(true);
-          void document.documentElement.requestFullscreen().catch(() => {
-            setCleanView(false);
-            setNotice("浏览器未允许进入全屏，请再点击一次“纯净全屏”");
-          });
-        }
+        void (cleanView ? exitCleanView() : enterCleanView());
+      }
+      if (event.key === "Escape" && cleanView && !getFullscreenElement()) {
+        event.preventDefault();
+        void exitCleanView();
       }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [view]);
+  }, [cleanView, enterCleanView, exitCleanView, view]);
 
   const showNotice = useCallback((message: string) => setNotice(message), []);
 
@@ -409,44 +510,6 @@ export function GameApp() {
     setBattleKey((key) => key + 1);
     setSelectedBoardId(boardId);
     setNotice(`已切换为${nextBoard.name}`);
-  };
-
-  const enterCleanView = async () => {
-    setCleanView(true);
-    setFullscreenControlsVisible(false);
-    if (document.fullscreenElement) return;
-    try {
-      await document.documentElement.requestFullscreen();
-    } catch {
-      setCleanView(false);
-      setNotice("浏览器未允许进入全屏，请检查全屏权限后重试");
-    }
-  };
-
-  const exitCleanView = async () => {
-    setCleanView(false);
-    setFullscreenControlsVisible(false);
-    if (document.fullscreenElement) {
-      await document.exitFullscreen().catch(() => undefined);
-    }
-  };
-
-  const revealFullscreenControls = () => {
-    if (fullscreenControlsTimerRef.current !== undefined) {
-      window.clearTimeout(fullscreenControlsTimerRef.current);
-      fullscreenControlsTimerRef.current = undefined;
-    }
-    setFullscreenControlsVisible(true);
-  };
-
-  const scheduleFullscreenControlsHide = () => {
-    if (fullscreenControlsTimerRef.current !== undefined) {
-      window.clearTimeout(fullscreenControlsTimerRef.current);
-    }
-    fullscreenControlsTimerRef.current = window.setTimeout(() => {
-      setFullscreenControlsVisible(false);
-      fullscreenControlsTimerRef.current = undefined;
-    }, 900);
   };
 
   const addContestant = (definitionId: string) => {
@@ -763,6 +826,12 @@ export function GameApp() {
               style={{
                 aspectRatio: `${currentBoard?.width ?? 1600} / ${currentBoard?.height ?? 900}`,
               }}
+              onPointerUp={(event) => {
+                if (!cleanView || event.pointerType === "mouse") return;
+                const target = event.target as HTMLElement;
+                if (target.closest("button, input, select, label")) return;
+                setFullscreenControlsVisible((visible) => !visible);
+              }}
             >
               <ArenaCanvas
                 key={`${battleKey}-${battleManifest.setup.seed}`}
@@ -777,14 +846,30 @@ export function GameApp() {
                 <span />
                 {statusLabel(snapshot?.status)}
               </div>
+              <button
+                type="button"
+                className="mobile-stage-fullscreen"
+                onClick={() => void enterCleanView()}
+                aria-label="全屏观看对战"
+              >
+                <Maximize2 size={17} />
+                全屏观看
+              </button>
             </div>
 
             <div
+              ref={battleControlBarRef}
               className={`battle-control-bar ${
                 fullscreenControlsVisible ? "is-fullscreen-visible" : ""
               }`}
               onPointerEnter={revealFullscreenControls}
-              onPointerLeave={scheduleFullscreenControlsHide}
+              onPointerLeave={() => scheduleFullscreenControlsHide()}
+              onPointerDown={revealFullscreenControls}
+              onPointerUp={(event) => {
+                if (cleanView && event.pointerType !== "mouse") {
+                  scheduleFullscreenControlsHide(2600);
+                }
+              }}
               onFocusCapture={revealFullscreenControls}
             >
               <button
@@ -854,7 +939,7 @@ export function GameApp() {
                 title="隐藏全部界面，只保留对战画面（快捷键 F）"
               >
                 {cleanView ? <Minimize2 size={17} /> : <Maximize2 size={17} />}
-                纯净全屏 <kbd>F</kbd>
+                {cleanView ? "退出全屏" : "纯净全屏"} <kbd>F</kbd>
               </button>
               <div className="control-divider" />
               <button
@@ -967,9 +1052,12 @@ export function GameApp() {
               </div>
               <span className="seed-label">SEED {battleManifest.setup.seed}</span>
             </div>
-            <div
+            <button
+              type="button"
               className="fullscreen-control-hotzone"
-              aria-hidden="true"
+              aria-label={
+                fullscreenControlsVisible ? "隐藏全屏控制台" : "显示全屏控制台"
+              }
               onPointerEnter={(event) => {
                 if (event.pointerType === "mouse") revealFullscreenControls();
               }}
@@ -980,10 +1068,41 @@ export function GameApp() {
                   setFullscreenControlsVisible((visible) => !visible);
                 }
               }}
-            />
+            >
+              <span>控制台</span>
+            </button>
           </section>
 
-          <aside className="battle-sidebar">
+          <aside className={`battle-sidebar mobile-panel-${mobileSidebarPanel}`}>
+            <nav className="mobile-sidebar-tabs" aria-label="战场设置">
+              <button
+                type="button"
+                className={mobileSidebarPanel === "lineup" ? "is-active" : ""}
+                aria-pressed={mobileSidebarPanel === "lineup"}
+                onClick={() => setMobileSidebarPanel("lineup")}
+              >
+                <UsersRound size={17} />
+                阵容
+              </button>
+              <button
+                type="button"
+                className={mobileSidebarPanel === "props" ? "is-active" : ""}
+                aria-pressed={mobileSidebarPanel === "props"}
+                onClick={() => setMobileSidebarPanel("props")}
+              >
+                <Boxes size={17} />
+                道具
+              </button>
+              <button
+                type="button"
+                className={mobileSidebarPanel === "feed" ? "is-active" : ""}
+                aria-pressed={mobileSidebarPanel === "feed"}
+                onClick={() => setMobileSidebarPanel("feed")}
+              >
+                <AudioLines size={17} />
+                战报
+              </button>
+            </nav>
             <section className="sidebar-section lineup-section">
               <div className="sidebar-heading">
                 <div>

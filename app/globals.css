@@ -36,6 +36,15 @@ body {
   font-size: 14px;
 }
 
+html.clean-view-active,
+html.clean-view-active body,
+body.clean-view-active {
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
 button,
 input,
 select,
@@ -62,6 +71,7 @@ textarea:focus-visible {
 
 .app-shell {
   min-height: 100vh;
+  min-height: 100dvh;
   overflow-x: hidden;
 }
 
@@ -458,6 +468,11 @@ textarea:focus-visible {
   background: var(--lime);
 }
 
+.mobile-stage-fullscreen,
+.mobile-sidebar-tabs {
+  display: none;
+}
+
 @keyframes pulse-dot {
   50% {
     opacity: 0.42;
@@ -675,17 +690,24 @@ textarea:focus-visible {
 
 .fullscreen-control-hotzone {
   display: none;
+  padding: 0;
+  border: 0;
+  background: transparent;
+  color: transparent;
 }
 
 .clean-spectator .arena-panel .battle-control-bar {
   position: fixed;
-  right: 12px;
-  bottom: 12px;
-  left: 12px;
+  right: max(12px, env(safe-area-inset-right));
+  bottom: max(12px, env(safe-area-inset-bottom));
+  left: max(12px, env(safe-area-inset-left));
   z-index: 70;
   display: flex;
-  max-width: calc(100vw - 24px);
-  max-height: min(132px, calc(100vh - 36px));
+  max-width: calc(
+    100vw - max(12px, env(safe-area-inset-left)) -
+      max(12px, env(safe-area-inset-right))
+  );
+  max-height: min(132px, calc(100dvh - 36px));
   margin: 0;
   overflow-x: auto;
   overflow-y: hidden;
@@ -727,8 +749,10 @@ textarea:focus-visible {
   inset: 0;
   z-index: 1000;
   min-height: 100vh;
+  min-height: 100dvh;
   overflow: hidden;
   background: #000;
+  overscroll-behavior: none;
 }
 
 .clean-spectator .topbar,
@@ -745,6 +769,7 @@ textarea:focus-visible {
   display: block;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   min-height: 0;
   padding: 0;
 }
@@ -754,6 +779,7 @@ textarea:focus-visible {
   inset: 0;
   width: 100vw;
   height: 100vh;
+  height: 100dvh;
   border: 0;
   border-radius: 0;
   background: #000;
@@ -761,6 +787,10 @@ textarea:focus-visible {
 }
 
 .clean-spectator .arena-stage::after {
+  display: none;
+}
+
+.clean-spectator .mobile-stage-fullscreen {
   display: none;
 }
 
@@ -772,6 +802,10 @@ textarea:focus-visible {
   background: rgba(19, 18, 24, 0.75);
   overscroll-behavior-y: contain;
   scrollbar-gutter: stable;
+}
+
+.mobile-sidebar-tabs {
+  min-height: 52px;
 }
 
 @media (min-width: 981px) {
@@ -2704,6 +2738,7 @@ textarea:focus-visible {
   }
 
   .battle-sidebar {
+    display: grid;
     grid-template-columns: 1fr 1fr;
     grid-template-rows: auto;
     min-height: 0;
@@ -2738,11 +2773,20 @@ textarea:focus-visible {
   }
 }
 
-@media (max-width: 720px) {
+@media (max-width: 900px) {
   .topbar {
     position: static;
     min-height: 0;
-    padding: 10px;
+    padding:
+      max(8px, env(safe-area-inset-top))
+      max(10px, env(safe-area-inset-right))
+      8px
+      max(10px, env(safe-area-inset-left));
+  }
+
+  .brand-mark {
+    width: 42px;
+    height: 42px;
   }
 
   .brand > span:last-child {
@@ -2750,13 +2794,15 @@ textarea:focus-visible {
   }
 
   .top-actions .header-button {
-    width: 38px;
+    width: 44px;
+    height: 44px;
     overflow: hidden;
     padding: 0 10px;
     white-space: nowrap;
   }
 
   .top-nav button {
+    min-height: 44px;
     padding-inline: 6px;
   }
 
@@ -2765,11 +2811,23 @@ textarea:focus-visible {
   }
 
   .arena-panel {
-    padding: 12px 8px;
+    padding: 12px max(8px, env(safe-area-inset-right)) 0
+      max(8px, env(safe-area-inset-left));
   }
 
   .arena-panel-header {
     align-items: flex-end;
+    min-height: 58px;
+    gap: 8px;
+    padding-bottom: 10px;
+  }
+
+  .arena-panel-header h1 {
+    max-width: 68vw;
+    overflow: hidden;
+    font-size: 20px;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .arena-metrics > span:not(:first-child) {
@@ -2777,25 +2835,130 @@ textarea:focus-visible {
   }
 
   .battle-control-bar {
-    flex-wrap: wrap;
+    position: sticky;
+    bottom: 0;
+    z-index: 55;
+    flex-wrap: nowrap;
+    min-height: 64px;
+    margin-inline: calc(-1 * max(8px, env(safe-area-inset-left)));
+    padding:
+      9px
+      max(10px, env(safe-area-inset-right))
+      calc(9px + env(safe-area-inset-bottom))
+      max(10px, env(safe-area-inset-left));
+    overflow-x: auto;
+    overflow-y: hidden;
+    border-right: 0;
+    border-bottom: 0;
+    border-left: 0;
+    border-radius: 14px 14px 0 0;
+    overscroll-behavior-x: contain;
+    scrollbar-width: none;
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .battle-control-bar > * {
+    flex-shrink: 0;
+  }
+
+  .battle-control-bar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .icon-control {
+    width: 44px;
+    height: 44px;
+    flex-basis: 44px;
+  }
+
+  .clean-view-control {
+    height: 44px;
+  }
+
+  .speed-switcher button {
+    min-width: 40px;
+    height: 38px;
   }
 
   .board-quick-select {
-    min-width: 140px;
+    flex: 0 0 154px;
+    min-width: 154px;
+    min-height: 40px;
+    justify-content: center;
   }
 
   .seed-label,
   .volume-slider,
-  .control-divider {
+  .control-divider,
+  .announcer-controls input,
+  .music-volume-slider,
+  .music-file-button,
+  .music-controls > span {
     display: none;
   }
 
   .primary-control {
-    flex: 1;
+    flex: 0 0 auto;
+    min-width: 132px;
   }
 
   .battle-sidebar {
     display: block;
+    min-height: 0;
+    overflow: visible;
+    padding-bottom: env(safe-area-inset-bottom);
+    border-top: 1px solid var(--line);
+    background: var(--bg);
+  }
+
+  .mobile-sidebar-tabs {
+    position: sticky;
+    top: 0;
+    z-index: 65;
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 5px;
+    padding: 7px max(8px, env(safe-area-inset-right)) 7px
+      max(8px, env(safe-area-inset-left));
+    border-bottom: 1px solid var(--line);
+    background: rgba(15, 14, 19, 0.94);
+    backdrop-filter: blur(18px);
+  }
+
+  .mobile-sidebar-tabs button {
+    display: inline-flex;
+    min-width: 0;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 7px;
+    padding: 0 8px;
+    border: 1px solid transparent;
+    border-radius: 10px;
+    background: var(--panel);
+    color: var(--muted);
+    font-size: 11px;
+    font-weight: 800;
+  }
+
+  .mobile-sidebar-tabs button.is-active {
+    border-color: rgba(223, 246, 106, 0.24);
+    background: var(--lime-soft);
+    color: var(--lime);
+  }
+
+  .mobile-panel-lineup .current-props-section,
+  .mobile-panel-lineup .event-section,
+  .mobile-panel-props .lineup-section,
+  .mobile-panel-props .event-section,
+  .mobile-panel-feed .lineup-section,
+  .mobile-panel-feed .current-props-section {
+    display: none;
+  }
+
+  .sidebar-section {
+    padding: 16px max(12px, env(safe-area-inset-right)) 24px
+      max(12px, env(safe-area-inset-left));
   }
 
   .sidebar-section + .sidebar-section {
@@ -2805,6 +2968,90 @@ textarea:focus-visible {
 
   .event-section {
     border-left: 0;
+  }
+
+  .mobile-stage-fullscreen {
+    position: absolute;
+    top: 10px;
+    right: 10px;
+    z-index: 16;
+    display: inline-flex;
+    min-height: 44px;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    padding: 0 11px;
+    border: 1px solid rgba(223, 246, 106, 0.28);
+    border-radius: 11px;
+    background: rgba(15, 14, 19, 0.8);
+    color: var(--lime);
+    font-size: 10px;
+    font-weight: 800;
+    backdrop-filter: blur(12px);
+  }
+
+  .arena-stage.is-portrait-board .mobile-stage-fullscreen {
+    width: 44px;
+    padding: 0;
+    overflow: hidden;
+    color: transparent;
+    font-size: 0;
+  }
+
+  .arena-stage.is-portrait-board .mobile-stage-fullscreen svg {
+    flex: 0 0 auto;
+    color: var(--lime);
+  }
+
+  .match-status-badge {
+    top: 10px;
+    left: 10px;
+    min-height: 36px;
+  }
+
+  .formation-board.is-portrait-board {
+    width: min(100%, 190px);
+  }
+
+  .formation-token {
+    width: 44px;
+    height: 44px;
+  }
+
+  .formation-token-icon {
+    font-size: 17px;
+  }
+
+  .contestant-row button,
+  .add-fighter-grid button,
+  .sidebar-danger-button,
+  .text-button,
+  .icon-button {
+    min-height: 44px;
+  }
+
+  .icon-button {
+    min-width: 44px;
+  }
+
+  .contestant-entry input:not([type="color"]),
+  .contestant-entry select {
+    min-height: 40px;
+    font-size: 16px;
+  }
+
+  .contestant-instance-controls {
+    padding-left: 4px;
+  }
+
+  .contestant-hud-controls {
+    padding-left: 4px;
+  }
+
+  .add-fighter-grid button {
+    height: auto;
+    padding-block: 8px;
+    white-space: normal;
   }
 
   .editor-layout,
@@ -2827,7 +3074,9 @@ textarea:focus-visible {
 
   .editor-main,
   .board-workspace {
-    padding: 20px 12px 40px;
+    padding: 20px max(12px, env(safe-area-inset-right))
+      calc(40px + env(safe-area-inset-bottom))
+      max(12px, env(safe-area-inset-left));
   }
 
   .form-grid.two-columns {
@@ -2855,6 +3104,38 @@ textarea:focus-visible {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
+  .board-toolbar button,
+  .toolbar-upload,
+  .point-draw-actions button {
+    min-height: 44px;
+  }
+
+  .board-shape-handle {
+    width: 30px;
+    height: 30px;
+  }
+
+  .board-shape-handle.handle-polygonPoint {
+    width: 34px;
+    height: 34px;
+  }
+
+  .point-draw-guide {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .point-draw-actions {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+
+  input:not([type="range"]):not([type="color"]),
+  select,
+  textarea {
+    font-size: 16px;
+  }
+
   .sound-editor-heading {
     grid-template-columns: 1fr auto;
   }
@@ -2866,6 +3147,112 @@ textarea:focus-visible {
   .sound-detail-grid.speech-grid,
   .ability-editor-fields {
     grid-template-columns: 1fr;
+  }
+
+  .toast {
+    right: max(10px, env(safe-area-inset-right));
+    bottom: calc(10px + env(safe-area-inset-bottom));
+    left: max(10px, env(safe-area-inset-left));
+    max-width: none;
+  }
+
+  .clean-spectator .arena-panel {
+    padding: 0;
+  }
+
+  .clean-spectator .arena-panel .battle-control-bar {
+    right: max(8px, env(safe-area-inset-right));
+    bottom: calc(8px + env(safe-area-inset-bottom));
+    left: max(8px, env(safe-area-inset-left));
+    max-width: calc(
+      100vw - max(8px, env(safe-area-inset-left)) -
+        max(8px, env(safe-area-inset-right))
+    );
+    min-height: 62px;
+    max-height: min(106px, calc(100dvh - 24px));
+    margin: 0;
+    padding: 8px;
+    border: 1px solid var(--line-strong);
+    border-radius: 15px;
+  }
+
+  .clean-spectator .arena-panel .fullscreen-control-hotzone {
+    display: flex;
+    height: calc(44px + env(safe-area-inset-bottom));
+    align-items: flex-start;
+    justify-content: center;
+    padding-top: 8px;
+    cursor: pointer;
+  }
+
+  .clean-spectator .arena-panel .fullscreen-control-hotzone::before {
+    width: 42px;
+    height: 5px;
+    border-radius: 999px;
+    background: rgba(255, 255, 255, 0.52);
+    content: "";
+  }
+
+  .clean-spectator .arena-panel .fullscreen-control-hotzone span {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+}
+
+@media (hover: none) and (pointer: coarse) {
+  .icon-control,
+  .clean-view-control,
+  .speed-switcher button {
+    min-width: 44px;
+    height: 44px;
+  }
+
+  .clean-view-control kbd {
+    display: none;
+  }
+
+  .name-library-row button {
+    width: 36px;
+    height: 36px;
+  }
+
+  .name-library-row {
+    grid-template-columns: 20px minmax(0, 1fr) 36px 36px 36px;
+    min-height: 44px;
+  }
+}
+
+@media (max-height: 500px) and (orientation: landscape) and (max-width: 980px) {
+  .topbar {
+    grid-template-columns: 44px minmax(0, 1fr) auto;
+    min-height: 60px;
+    padding-block: 7px;
+  }
+
+  .top-nav {
+    order: initial;
+    grid-column: auto;
+    margin-top: 0;
+  }
+
+  .top-nav button {
+    min-height: 44px;
+    padding-block: 5px;
+  }
+
+  .top-actions {
+    grid-column: auto;
+  }
+
+  .arena-panel-header {
+    display: none;
+  }
+
+  .arena-stage.is-portrait-board {
+    width: min(100%, 35dvh);
   }
 }
 

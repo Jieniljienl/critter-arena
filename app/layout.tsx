@@ -1,10 +1,18 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { headers } from "next/headers";
 import "./globals.css";
 
 const title = "电子斗蛐蛐 · Critter Arena Lab";
 const description =
   "可自定义角色、动作、搞笑音效、棋盘范围和技能参数，并支持横竖屏纯净观战的全自动电子斗蛐蛐模拟器。";
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
+  colorScheme: "dark",
+  themeColor: "#0f0e13",
+};
 
 export async function generateMetadata(): Promise<Metadata> {
   const requestHeaders = await headers();

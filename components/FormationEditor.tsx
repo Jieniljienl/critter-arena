@@ -65,6 +65,7 @@ export function FormationEditor({
       style={{ aspectRatio: `${board.width} / ${board.height}` }}
       onPointerMove={(event) => moveContestant(event.clientX, event.clientY)}
       onPointerUp={() => setDraggingId(undefined)}
+      onPointerCancel={() => setDraggingId(undefined)}
       onPointerLeave={() => setDraggingId(undefined)}
     >
       <span className="formation-grid-label">

@@ -236,8 +236,11 @@ test("police only merge on collision and can chain to five stars", () => {
   chain.start();
   runSteps(chain, 1_000);
   const chainSnapshot = chain.getSnapshot();
+  const fiveStarProtectionPolice = chainSnapshot.units.find(
+    (unit) => unit.policeStar === 5,
+  );
   assert.ok(
-    chainSnapshot.units.some((unit) => unit.policeStar === 5),
+    fiveStarProtectionPolice,
     `remaining police: ${JSON.stringify(
       chainSnapshot.units
         .filter((unit) => unit.policeStar)
@@ -246,6 +249,7 @@ test("police only merge on collision and can chain to five stars", () => {
       chainSnapshot.events.filter((event) => event.type === "spawn").length
     }`,
   );
+  assert.equal(fiveStarProtectionPolice.sustainsFaction, true);
   assert.ok(
     chainSnapshot.events.some(
       (event) => event.type === "spawn" && event.message.includes("人类警察赶来保护"),
@@ -552,6 +556,31 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
 
   const simulation = new BattleSimulation(manifest);
   simulation.start();
+  let callSnapshot = simulation.getSnapshot();
+  let sawPoliceCall = false;
+  for (let index = 0; index < 120; index += 1) {
+    simulation.step();
+    const currentSnapshot = simulation.getSnapshot();
+    if (currentSnapshot.events.some((event) => event.type === "spawn")) {
+      callSnapshot = currentSnapshot;
+      sawPoliceCall = true;
+      break;
+    }
+  }
+  assert.equal(sawPoliceCall, true);
+  const callingPanda = callSnapshot.units.find(
+    (unit) => unit.definitionId === "panda-lazy",
+  );
+  assert.ok(callingPanda);
+  assert.equal(callingPanda.action, "eating");
+  assert.ok(callingPanda.pandaCallUntil > callSnapshot.time);
+  const protectivePolice = callSnapshot.units.find(
+    (unit) => unit.policeStar === 1 && !unit.main,
+  );
+  assert.ok(protectivePolice);
+  assert.equal(protectivePolice.sustainsFaction, true);
+  assert.equal(protectivePolice.factionId, callingPanda.factionId);
+
   runSteps(simulation, 100);
   const runtimePanda = simulation
     .getSnapshot()
@@ -587,6 +616,14 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
   assert.deepEqual(
     pandaDefinition.animations.eatComplete.frames.map((frame) => frame.assetId),
     ["panda-lazy-skill-4"],
+  );
+  assert.deepEqual(
+    pandaDefinition.animations.callPolice.frames.map((frame) => frame.assetId),
+    [
+      "panda-lazy-attack-3",
+      "panda-lazy-attack-1",
+      "panda-lazy-attack-3",
+    ],
   );
 });
 
@@ -870,6 +907,122 @@ test("allied projectiles pass through allies and team victory waits only for ene
   assert.ok(snapshot.events.some((event) => event.type === "victory" && event.announcement));
 });
 
+test("a panda's summoned police keeps its faction alive after the panda dies", () => {
+  const manifest = createDefaultManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.unitScale = 1;
+
+  const panda = definition(manifest, "panda-lazy");
+  panda.maxHp = 2;
+  panda.speed = 0;
+  panda.attack.range = 0;
+  panda.attack.damage = 0;
+  const attacker = definition(manifest, "mole");
+  attacker.pluginId = undefined;
+  attacker.maxHp = 1_000;
+  attacker.speed = 0;
+  attacker.attack = {
+    range: 2_000,
+    damage: 1,
+    cooldown: 0.05,
+    windup: 0,
+    mode: "melee",
+  };
+  for (const police of manifest.characters.filter((character) => character.policeStar)) {
+    police.maxHp = 1_000;
+    police.speed = 0;
+    police.attack.range = 0;
+    police.attack.damage = 0;
+  }
+  manifest.setup.contestants = [
+    {
+      id: "protected-panda",
+      definitionId: "panda-lazy",
+      displayName: "受保护的熊猫",
+      position: { x: 450, y: 450 },
+      direction: { x: 1, y: 0 },
+      color: "#f4d35e",
+    },
+    {
+      id: "panda-attacker",
+      definitionId: "mole",
+      displayName: "动手的地鼠",
+      position: { x: 1_150, y: 450 },
+      direction: { x: -1, y: 0 },
+      color: "#ef5f6d",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  let survivalSnapshot = simulation.getSnapshot();
+  let foundOrphanedPolice = false;
+  for (let index = 0; index < 1_200; index += 1) {
+    simulation.step();
+    const currentSnapshot = simulation.getSnapshot();
+    const pandaAlive = currentSnapshot.units.some(
+      (unit) => unit.id === "protected-panda" && unit.hp > 0,
+    );
+    const policeAlive = currentSnapshot.units.some(
+      (unit) =>
+        !unit.main &&
+        unit.policeStar === 1 &&
+        unit.ownerId === "protected-panda" &&
+        unit.hp > 0,
+    );
+    if (!pandaAlive && policeAlive) {
+      survivalSnapshot = currentSnapshot;
+      foundOrphanedPolice = true;
+      break;
+    }
+  }
+
+  assert.equal(foundOrphanedPolice, true);
+  assert.equal(survivalSnapshot.status, "running");
+  const survivingPolice = survivalSnapshot.units.find(
+    (unit) =>
+      !unit.main &&
+      unit.policeStar === 1 &&
+      unit.ownerId === "protected-panda" &&
+      unit.hp > 0,
+  );
+  assert.ok(survivingPolice);
+  assert.equal(survivingPolice.factionId, "protected-panda");
+  assert.equal(survivingPolice.sustainsFaction, true);
+
+  runSteps(simulation, 40);
+  const afterPandaRemoval = simulation.getSnapshot();
+  assert.equal(
+    afterPandaRemoval.units.some((unit) => unit.id === "protected-panda"),
+    false,
+  );
+  const persistentPolice = afterPandaRemoval.units.find(
+    (unit) => unit.id === survivingPolice.id,
+  );
+  assert.ok(persistentPolice);
+  assert.equal(afterPandaRemoval.status, "running");
+
+  const damageHarness = simulation as unknown as {
+    damageUnit(
+      targetId: string,
+      amount: number,
+      sourceUnitId: string | undefined,
+      source: "directAttack",
+    ): void;
+  };
+  damageHarness.damageUnit(
+    persistentPolice.id,
+    persistentPolice.maxHp,
+    "panda-attacker",
+    "directAttack",
+  );
+  runSteps(simulation, 60);
+  const finishedSnapshot = simulation.getSnapshot();
+  assert.equal(finishedSnapshot.status, "finished");
+  assert.equal(finishedSnapshot.winnerId, "panda-attacker");
+});
+
 test("main-character kills use concise announcements and report rapid multi-kills", () => {
   const manifest = createDefaultManifest();
   const board = selectedBoard(manifest);
@@ -1126,6 +1279,12 @@ test("every character definition can be explicitly added as a main contestant", 
 test("legacy panda entries migrate to the single lazy panda definition", () => {
   const manifest = createDefaultManifest();
   const canonical = definition(manifest, "panda-lazy");
+  delete canonical.animations.callPolice;
+  delete (
+    canonical.skillParameters!.panda as {
+      policeCallDuration?: number;
+    }
+  ).policeCallDuration;
   manifest.characters.push({ ...structuredClone(canonical), id: "panda", name: "活力熊猫（旧版）" });
   manifest.nameLibraries.push({ definitionId: "panda", names: ["旧熊猫名字"] });
   manifest.setup.contestants[0].definitionId = "panda";
@@ -1134,7 +1293,10 @@ test("legacy panda entries migrate to the single lazy panda definition", () => {
   assert.equal(upgraded.characters.some((character) => character.id === "panda"), false);
   assert.equal(upgraded.nameLibraries.some((library) => library.definitionId === "panda"), false);
   assert.equal(upgraded.setup.contestants[0].definitionId, "panda-lazy");
-  assert.equal(definition(upgraded, "panda-lazy").name, "熊猫");
+  const upgradedPanda = definition(upgraded, "panda-lazy");
+  assert.equal(upgradedPanda.name, "熊猫");
+  assert.equal(upgradedPanda.skillParameters?.panda?.policeCallDuration, 0.7);
+  assert.ok(upgradedPanda.animations.callPolice);
 });
 
 test("legacy team HUD colors gain clear defaults and obsolete name positions are removed", () => {

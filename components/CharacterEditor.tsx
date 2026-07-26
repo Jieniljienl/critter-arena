@@ -112,6 +112,7 @@ const skillFields: Record<
     { key: "eatCooldown", label: "进食冷却（秒）", fallback: 5, min: 0, step: 0.1 },
     { key: "bambooExtraRange", label: "竹子额外触发距离", fallback: 0, min: 0 },
     { key: "policeSummonCooldown", label: "受击召警冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
+    { key: "policeCallDuration", label: "呼救动作时长（秒）", fallback: 0.7, min: 0.1, step: 0.05 },
     { key: "policeMergePadding", label: "警察碰撞合并余量", fallback: 0, min: 0 },
   ],
   mole: [
@@ -230,7 +231,7 @@ export function CharacterEditor({
 
   const uploadAnimation = async (
     files: File[],
-    clipName: "idle" | "attack" | "skill" | "tunnelAttack",
+    clipName: "idle" | "attack" | "skill" | "callPolice" | "tunnelAttack",
   ) => {
     if (!files.length) return;
     const newAssets: AssetRef[] = [];
@@ -878,8 +879,14 @@ export function CharacterEditor({
                 ["idle", "待机 / 移动", false],
                 ["attack", "普攻动作", true],
                 ["skill", "技能动作", true],
+                ["callPolice", "熊猫呼救动作", true],
                 ["tunnelAttack", "钻洞攻击动作", true],
-              ] as const).map(([clipName, label, multiple]) => (
+              ] as const)
+                .filter(
+                  ([clipName]) =>
+                    clipName !== "callPolice" || selected.pluginId === "panda",
+                )
+                .map(([clipName, label, multiple]) => (
                 <label className="upload-tile" key={clipName}>
                   <Upload size={18} />
                   <strong>{label}</strong>
@@ -896,7 +903,7 @@ export function CharacterEditor({
                     }
                   />
                 </label>
-              ))}
+                ))}
             </div>
             <div className="animation-strip">
               {(selected.animations.attack?.frames ?? []).map((frame) => {

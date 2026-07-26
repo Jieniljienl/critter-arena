@@ -327,6 +327,7 @@ export class BattleSimulation {
     ownerId: string;
     factionId: string;
     main: boolean;
+    sustainsFaction?: boolean;
     x: number;
     y: number;
     direction?: Vec2;
@@ -359,6 +360,9 @@ export class BattleSimulation {
       actionStartedAt: this.time,
       actionUntil: 0,
       nextPandaSummonAt: 0,
+      pandaCallStartedAt: 0,
+      pandaCallUntil: 0,
+      sustainsFaction: options.sustainsFaction ?? false,
       nextEatAt: 0,
       nextDigAt: definition.pluginId === "mole" ? this.time : Number.POSITIVE_INFINITY,
       nextAmbushAt: 0,
@@ -1219,7 +1223,12 @@ export class BattleSimulation {
     if (definition.pluginId === "panda" && this.time >= target.nextPandaSummonAt) {
       target.nextPandaSummonAt =
         this.time + (definition.skillParameters?.panda?.policeSummonCooldown ?? 0.5);
-      this.spawnPolice(target, 1);
+      const police = this.spawnPolice(target, 1);
+      if (police) {
+        target.pandaCallStartedAt = this.time;
+        target.pandaCallUntil =
+          this.time + (definition.skillParameters?.panda?.policeCallDuration ?? 0.7);
+      }
     }
     if (definition.pluginId === "police" && definition.policeStar === 5) {
       const attacker = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
@@ -1278,6 +1287,7 @@ export class BattleSimulation {
       ownerId: owner.ownerId,
       factionId: owner.factionId,
       main: false,
+      sustainsFaction: true,
       name: `${owner.name}的${star}星警察`,
       x: owner.x + Math.cos(angle) * spawnDistance,
       y: owner.y + Math.sin(angle) * spawnDistance,
@@ -1292,7 +1302,6 @@ export class BattleSimulation {
       `${owner.name} 是保护动物：遭到攻击后，一名人类警察赶来保护`,
       owner,
       unit,
-      "pistol",
     );
     return unit;
   }
@@ -1368,6 +1377,7 @@ export class BattleSimulation {
         ownerId: main ? mergedId : inheritedOwnerId,
         factionId: left.factionId,
         main,
+        sustainsFaction: left.sustainsFaction || right.sustainsFaction,
         name: main ? `${left.main ? left.name : right.name}★${nextStar}` : `${nextStar}星合体警察`,
         x: (left.x + right.x) / 2,
         y: (left.y + right.y) / 2,
@@ -1496,7 +1506,11 @@ export class BattleSimulation {
 
     if (target.main) {
       for (const unit of [...this.units.values()]) {
-        if (!unit.main && unit.ownerId === target.ownerId) {
+        if (
+          !unit.main &&
+          unit.ownerId === target.ownerId &&
+          !unit.sustainsFaction
+        ) {
           removedUnitIds.add(unit.id);
           this.deleteUnit(unit.id);
         }
@@ -1508,7 +1522,16 @@ export class BattleSimulation {
         }
       }
       for (const projectile of [...this.projectiles.values()]) {
-        if (projectile.ownerId === target.ownerId) this.projectiles.delete(projectile.id);
+        if (projectile.ownerId !== target.ownerId) continue;
+        const projectileSource = this.units.get(projectile.sourceUnitId);
+        if (
+          projectileSource?.sustainsFaction &&
+          projectileSource.hp > 0 &&
+          projectileSource.action !== "dead"
+        ) {
+          continue;
+        }
+        this.projectiles.delete(projectile.id);
       }
     }
     this.purgeScheduledShots(removedUnitIds);
@@ -1619,10 +1642,15 @@ export class BattleSimulation {
 
   private checkVictory(): void {
     if (this.status === "finished" || this.time < 0.5) return;
-    const livingMain = [...this.units.values()].filter(
-      (unit) => unit.main && unit.hp > 0 && unit.action !== "dead",
+    const livingCombatants = [...this.units.values()].filter(
+      (unit) => unit.hp > 0 && unit.action !== "dead",
     );
-    const livingFactions = new Set(livingMain.map((unit) => unit.factionId));
+    const livingFactionAnchors = livingCombatants.filter(
+      (unit) => unit.main || unit.sustainsFaction,
+    );
+    const livingFactions = new Set(
+      livingFactionAnchors.map((unit) => unit.factionId),
+    );
     if (livingFactions.size > 1) {
       this.finishAt = undefined;
       return;
@@ -1640,20 +1668,34 @@ export class BattleSimulation {
       return;
     }
     this.status = "finished";
-    if (livingMain.length >= 1 && livingFactions.size === 1) {
-      const factionId = livingMain[0].factionId;
+    if (livingFactionAnchors.length >= 1 && livingFactions.size === 1) {
+      const factionId = livingFactionAnchors[0].factionId;
+      const livingMain = livingFactionAnchors.filter((unit) => unit.main);
+      const winningCombatants = livingCombatants.filter(
+        (unit) => unit.factionId === factionId,
+      );
       const isTeam = factionId.startsWith("team:");
-      this.winnerId = livingMain[0].id;
+      const originalContestant = this.setup.contestants.find(
+        (contestant) => contestant.id === factionId,
+      );
+      const featuredWinner =
+        winningCombatants.find((unit) => unit.id === this.lastMainKillerId) ??
+        livingMain[0] ??
+        livingFactionAnchors[0];
+      this.winnerId = featuredWinner.id;
       this.winnerName = isTeam
-        ? `${teamName(factionId)} · ${livingMain.map((unit) => unit.name).join("、")}`
-        : livingMain[0].name;
-      for (const winner of livingMain) {
+        ? livingMain.length > 0
+          ? `${teamName(factionId)} · ${livingMain.map((unit) => unit.name).join("、")}`
+          : `${teamName(factionId)} · 警察护卫队`
+        : livingMain[0]?.name ??
+          (originalContestant
+            ? `${originalContestant.displayName}的警察护卫队`
+            : featuredWinner.name);
+      for (const winner of winningCombatants) {
         winner.action = "victory";
         winner.actionStartedAt = this.time;
         winner.actionUntil = Number.POSITIVE_INFINITY;
       }
-      const featuredWinner =
-        livingMain.find((unit) => unit.id === this.lastMainKillerId) ?? livingMain[0];
       this.emit(
         "victory",
         `${this.winnerName} 获得胜利！`,
@@ -1665,7 +1707,12 @@ export class BattleSimulation {
       );
     } else {
       this.draw = true;
-      this.emitAt("victory", "所有主角色同时倒下，本局平局", this.board.width / 2, this.board.height / 2);
+      this.emitAt(
+        "victory",
+        "所有仍可代表阵营的单位同时倒下，本局平局",
+        this.board.width / 2,
+        this.board.height / 2,
+      );
     }
   }
 

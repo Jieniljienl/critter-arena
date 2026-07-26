@@ -133,6 +133,7 @@ export type PandaSkillParameters = {
   eatCooldown: number;
   bambooExtraRange: number;
   policeSummonCooldown: number;
+  policeCallDuration: number;
   policeMergePadding: number;
 };
 
@@ -282,6 +283,10 @@ export type RuntimeUnit = {
   actionStartedAt: number;
   actionUntil: number;
   nextPandaSummonAt: number;
+  pandaCallStartedAt: number;
+  pandaCallUntil: number;
+  /** 该附属单位存活时仍代表所属阵营参与胜负判定。 */
+  sustainsFaction: boolean;
   nextEatAt: number;
   reservedBambooId?: string;
   nextDigAt: number;

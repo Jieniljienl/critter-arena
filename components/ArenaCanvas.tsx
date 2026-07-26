@@ -149,7 +149,11 @@ const frameForClip = (
   return clip.frames.at(-1)?.assetId;
 };
 
-const actionClipName = (unit: RuntimeUnit): string => {
+const actionClipName = (
+  unit: RuntimeUnit,
+  callingForHelp = false,
+): string => {
+  if (callingForHelp) return "callPolice";
   if (unit.action === "tunneling") return "tunnelAttack";
   if (unit.action === "victory") return "victory";
   if (unit.action === "eating") return "eat";
@@ -284,6 +288,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private unitFallbacks = new Map<string, PhaserType.GameObjects.Text>();
           private unitLabels = new Map<string, PhaserType.GameObjects.Text>();
           private healthLabels = new Map<string, PhaserType.GameObjects.Text>();
+          private callLabels = new Map<string, PhaserType.GameObjects.Text>();
           private holeLabels = new Map<string, PhaserType.GameObjects.Text>();
           private eventLabels = new Map<string, PhaserType.GameObjects.Text>();
           private announcementLabels = new Map<string, PhaserType.GameObjects.Text>();
@@ -479,6 +484,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!activeIds.has(id)) {
                 label.destroy();
                 this.healthLabels.delete(id);
+              }
+            }
+            for (const [id, label] of this.callLabels) {
+              if (!activeIds.has(id)) {
+                label.destroy();
+                this.callLabels.delete(id);
               }
             }
             for (const [id, label] of this.holeLabels) {
@@ -1118,15 +1129,20 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private drawUnit(unit: RuntimeUnit, time: number) {
             const definition = characterById.get(unit.definitionId);
             if (!definition) return;
-            const requestedClip = actionClipName(unit);
+            const callingForHelp =
+              unit.action !== "dead" && time < unit.pandaCallUntil;
+            const requestedClip = actionClipName(unit, callingForHelp);
             const clip =
               definition.animations[requestedClip] ??
               (unit.action === "eating" || unit.action === "satisfied"
                 ? definition.animations.skill
                 : undefined) ??
               definition.animations.idle;
+            const clipStartedAt = callingForHelp
+              ? unit.pandaCallStartedAt
+              : unit.actionStartedAt;
             const frameId =
-              frameForClip(clip, Math.max(0, (time - unit.actionStartedAt) * 1000)) ??
+              frameForClip(clip, Math.max(0, (time - clipStartedAt) * 1000)) ??
               definition.portraitAssetId;
             const textureKey = `asset:${frameId}`;
             const hasTexture = this.textures.exists(textureKey) && !this.failedTextures.has(textureKey);
@@ -1218,6 +1234,30 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 tunnelScale = 1;
               }
             }
+            if (callingForHelp) {
+              const callElapsed = Math.max(0, time - unit.pandaCallStartedAt);
+              const pulse = (Math.sin(callElapsed * 18) + 1) / 2;
+              const ringRadius = unit.radius * (1.18 + pulse * 0.28);
+              this.arenaGraphics.lineStyle(5, 0x4da9ff, 0.8 - pulse * 0.18);
+              this.arenaGraphics.strokeCircle(
+                visualX - unit.radius * 0.72,
+                visualY - unit.radius * 0.78,
+                ringRadius * 0.42,
+              );
+              this.arenaGraphics.lineStyle(5, 0xff5f64, 0.8 - pulse * 0.18);
+              this.arenaGraphics.strokeCircle(
+                visualX + unit.radius * 0.72,
+                visualY - unit.radius * 0.78,
+                ringRadius * 0.42,
+              );
+              this.arenaGraphics.lineStyle(3, 0xffef9a, 0.5 - pulse * 0.18);
+              this.arenaGraphics.strokeEllipse(
+                visualX,
+                visualY,
+                unit.radius * (3.2 + pulse * 0.45),
+                unit.radius * (2.6 + pulse * 0.35),
+              );
+            }
             const bob =
               unit.action === "victory"
                 ? 0
@@ -1231,7 +1271,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     ? 1
                     : 0.16;
             const scaleBump =
-              unit.action === "attack" || unit.action === "kick"
+              callingForHelp
+                ? 1.1
+                : unit.action === "attack" || unit.action === "kick"
                 ? 1.12
                 : unit.action === "kill"
                   ? 1.22
@@ -1317,6 +1359,38 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 .setPosition(visualX, visualY + bob)
                 .setScale(displayScale)
                 .setAlpha(alpha);
+            }
+
+            let callLabel = this.callLabels.get(unit.id);
+            if (callingForHelp) {
+              if (!callLabel) {
+                callLabel = this.add
+                  .text(visualX, visualY, "警察叔叔！", {
+                    fontSize: "16px",
+                    fontFamily: "Arial",
+                    fontStyle: "bold",
+                    color: "#19141b",
+                    backgroundColor: "#fff2c9",
+                    stroke: "#ffffff",
+                    strokeThickness: 2,
+                  })
+                  .setOrigin(0.5, 1)
+                  .setPadding(10, 5, 10, 5)
+                  .setDepth(24);
+                this.callLabels.set(unit.id, callLabel);
+              }
+              const labelPulse =
+                1 + Math.sin((time - unit.pandaCallStartedAt) * 18) * 0.035;
+              callLabel
+                .setVisible(true)
+                .setPosition(
+                  visualX,
+                  Math.max(28, visualY - unit.radius * 2.6),
+                )
+                .setScale(labelPulse)
+                .setAlpha(alpha);
+            } else {
+              callLabel?.setVisible(false);
             }
 
             const ownerContestant =

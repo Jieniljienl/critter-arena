@@ -139,6 +139,7 @@ const pandaSkillParameters = {
   eatCooldown: 5,
   bambooExtraRange: 0,
   policeSummonCooldown: 0.5,
+  policeCallDuration: 0.7,
   policeMergePadding: 0,
 };
 
@@ -263,6 +264,16 @@ export const defaultCharacters: CharacterDefinition[] = [
         ["panda-lazy-skill-2", "panda-lazy-skill-3"],
         true,
         220,
+      ),
+      callPolice: clip(
+        "callPolice",
+        [
+          "panda-lazy-attack-3",
+          "panda-lazy-attack-1",
+          "panda-lazy-attack-3",
+        ],
+        false,
+        170,
       ),
       eatComplete: clip("eatComplete", ["panda-lazy-skill-4"], false, 650),
       victory: clip("victory", ["panda-lazy-skill-4"], true, 520),
@@ -926,6 +937,17 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.subtitle = defaultCharacter.subtitle;
     }
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
+    if (defaultCharacter.skillParameters?.panda) {
+      character.skillParameters ??= {};
+      character.skillParameters.panda ??= structuredClone(
+        defaultCharacter.skillParameters.panda,
+      );
+      character.skillParameters.panda.policeCallDuration ??=
+        defaultCharacter.skillParameters.panda.policeCallDuration;
+      character.animations.callPolice ??= structuredClone(
+        defaultCharacter.animations.callPolice,
+      );
+    }
     if (defaultCharacter.skillParameters?.police) {
       character.skillParameters ??= {};
       character.skillParameters.police ??= structuredClone(

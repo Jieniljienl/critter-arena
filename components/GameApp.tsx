@@ -258,12 +258,25 @@ export function GameApp() {
 
   const showNotice = useCallback((message: string) => setNotice(message), []);
 
-  const livingMain = useMemo(
-    () =>
-      snapshot?.units.filter((unit) => unit.main && unit.hp > 0 && unit.action !== "dead").length ??
-      manifest.setup.contestants.length,
-    [manifest.setup.contestants.length, snapshot],
-  );
+  const livingFactions = useMemo(() => {
+    if (snapshot) {
+      return new Set(
+        snapshot.units
+          .filter(
+            (unit) =>
+              unit.hp > 0 &&
+              unit.action !== "dead" &&
+              (unit.main || unit.sustainsFaction),
+          )
+          .map((unit) => unit.factionId),
+      ).size;
+    }
+    return new Set(
+      manifest.setup.contestants.map((contestant) =>
+        contestant.teamId ? `team:${contestant.teamId}` : contestant.id,
+      ),
+    ).size;
+  }, [manifest.setup.contestants, snapshot]);
   const activeBoard = useMemo(
     () =>
       manifest.boards.find((board) => board.id === manifest.setup.boardId) ??
@@ -735,7 +748,7 @@ export function GameApp() {
               </div>
               <div className="arena-metrics">
                 <span><Clock3 size={15} /><strong>{formatTime(snapshot?.time)}</strong><small>局内时间</small></span>
-                <span><UsersRound size={15} /><strong>{livingMain}</strong><small>主角色存活</small></span>
+                <span><UsersRound size={15} /><strong>{livingFactions}</strong><small>存活阵营</small></span>
                 <span><Boxes size={15} /><strong>{snapshot?.units.length ?? manifest.setup.contestants.length}</strong><small>场上单位</small></span>
                 <span><Gauge size={15} /><strong>{speed}×</strong><small>模拟速度</small></span>
               </div>

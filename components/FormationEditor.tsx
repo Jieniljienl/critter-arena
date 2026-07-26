@@ -71,10 +71,31 @@ export function FormationEditor({
         {isLive ? "战斗位置 · 约 12 FPS 同步" : "赛前拖动布阵 · 左右实时同步"}
       </span>
       {setup.contestants.map((contestant, index) => {
-        const definition = characters.find(
+        const setupDefinition = characters.find(
           (candidate) => candidate.id === contestant.definitionId,
         );
         const liveUnit = liveMainById.get(contestant.id);
+        const definition =
+          (liveUnit
+            ? characters.find(
+                (candidate) => candidate.id === liveUnit.definitionId,
+              )
+            : undefined) ?? setupDefinition;
+        const policeStar = liveUnit?.policeStar ?? definition?.policeStar;
+        const icon = definition?.id.startsWith("panda")
+          ? "🐼"
+          : definition?.id === "mole"
+            ? "🦫"
+            : policeStar
+              ? "👮"
+              : "🐾";
+        const typeLabel = policeStar
+          ? `${policeStar}★`
+          : definition?.id.startsWith("panda")
+            ? "熊猫"
+            : definition?.id === "mole"
+              ? "地鼠"
+              : (definition?.name ?? "角色").slice(0, 3);
         const displayPosition =
           isLive && liveUnit ? { x: liveUnit.x, y: liveUnit.y } : contestant.position;
         const missing = isLive && !liveUnit;
@@ -97,17 +118,21 @@ export function FormationEditor({
               event.currentTarget.setPointerCapture(event.pointerId);
               setDraggingId(contestant.id);
             }}
-            aria-label={isLive ? `${contestant.displayName}战斗位置` : `拖动 ${contestant.displayName}`}
-            title={`${contestant.displayName} · ${Math.round(displayPosition.x)}, ${Math.round(displayPosition.y)}`}
+            aria-label={
+              isLive
+                ? `${contestant.displayName}（${definition?.name ?? "未知角色"}）战斗位置`
+                : `拖动 ${contestant.displayName}（${definition?.name ?? "未知角色"}）`
+            }
+            title={`${contestant.displayName} · ${definition?.name ?? "未知角色"} · ${Math.round(displayPosition.x)}, ${Math.round(displayPosition.y)}`}
           >
-            <span>
-              {definition?.id.startsWith("panda")
-                ? "🐼"
-                : definition?.id === "mole"
-                  ? "🦫"
-                  : definition?.id.startsWith("police-")
-                    ? "👮"
-                    : "🐾"}
+            <span className="formation-token-icon" aria-hidden="true">
+              {icon}
+            </span>
+            <span
+              className={`formation-token-kind ${policeStar ? "is-police" : ""}`}
+              aria-hidden="true"
+            >
+              {typeLabel}
             </span>
             <small>{index + 1}</small>
           </button>

@@ -909,10 +909,12 @@ textarea:focus-visible {
 
 .formation-token {
   position: absolute;
-  display: grid;
-  width: 34px;
-  height: 34px;
-  place-items: center;
+  display: flex;
+  width: 38px;
+  height: 38px;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
   border: 2px solid;
   border-radius: 50%;
   color: white;
@@ -920,6 +922,32 @@ textarea:focus-visible {
   transform: translate(-50%, -50%);
   touch-action: none;
   box-shadow: 0 7px 14px rgba(0, 0, 0, 0.28);
+}
+
+.formation-token-icon {
+  font-size: 15px;
+  line-height: 16px;
+}
+
+.formation-token-kind {
+  min-width: 22px;
+  overflow: hidden;
+  padding: 0 3px;
+  border-radius: 5px;
+  margin-top: -1px;
+  background: rgba(5, 7, 10, 0.76);
+  color: rgba(255, 255, 255, 0.88);
+  font-size: 7px;
+  font-weight: 800;
+  line-height: 9px;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.formation-token-kind.is-police {
+  color: #f8df73;
+  letter-spacing: 0.02em;
 }
 
 .formation-board.is-live .formation-token {

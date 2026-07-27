@@ -8,6 +8,7 @@ export const actionClipName = (
   callingForHelp = false,
 ): string => {
   if (callingForHelp) return "callPolice";
+  if (unit.action === "entering") return "entrance";
   if (unit.action === "tunneling") {
     const tunnel = unit.tunnelData;
     if (!tunnel) return "tunnelMove";
@@ -37,6 +38,7 @@ export const actionClipName = (
   if (unit.action === "victory") return "victory";
   if (unit.action === "eating") return "eat";
   if (unit.action === "satisfied") return "eatComplete";
+  if (unit.action === "meleeApproach") return "move";
   if (unit.action === "digging" || unit.action === "kick") return "skill";
   if (unit.action === "attack" || unit.action === "kill") return "attack";
   return "move";

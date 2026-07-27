@@ -18,7 +18,7 @@ type FormationEditorProps = {
   battleStatus?: BattleStatus;
   selectedContestantId?: string;
   onSelectContestant?: (contestantId: string) => void;
-  onRequestTeam?: (contestantId: string) => void;
+  onRequestTeam?: (contestantId: string, clientX: number, clientY: number) => void;
 };
 
 type FormationDrag = {
@@ -118,18 +118,6 @@ export function FormationEditor({
         board.height > board.width ? "is-portrait-board" : "is-landscape-board"
       }`}
       style={{ aspectRatio: `${board.width} / ${board.height}` }}
-      onPointerDown={(event) => {
-        if (
-          isLive ||
-          !selectedId ||
-          (event.target as HTMLElement).closest(".formation-token")
-        ) {
-          return;
-        }
-        event.preventDefault();
-        moveContestant(selectedId, event.clientX, event.clientY);
-        setSelectedId(undefined);
-      }}
       onPointerMove={(event) => {
         const drag = dragRef.current;
         if (!drag || drag.pointerId !== event.pointerId) return;
@@ -159,8 +147,8 @@ export function FormationEditor({
         {isLive
           ? "战斗位置 · 约 12 FPS 同步"
           : selectedId
-            ? "已选中 · 轻触空白处放置"
-            : "按住拖动 · 或点选角色后轻触落点"}
+            ? "已选中 · 按住棋子拖动位置"
+            : "按住棋子拖动 · 单击仅选中"}
       </span>
       {setup.contestants.map((contestant, index) => {
         const setupDefinition = characters.find(
@@ -236,7 +224,7 @@ export function FormationEditor({
               event.preventDefault();
               event.stopPropagation();
               onSelectContestant?.(contestant.id);
-              onRequestTeam?.(contestant.id);
+              onRequestTeam?.(contestant.id, event.clientX, event.clientY);
             }}
             onLostPointerCapture={(event) => {
               const drag = dragRef.current;
@@ -252,7 +240,7 @@ export function FormationEditor({
             aria-label={
               isLive
                 ? `${contestant.displayName}（${definition?.name ?? "未知角色"}）战斗位置`
-                : `拖动或点选 ${contestant.displayName}（${definition?.name ?? "未知角色"}）`
+                : `拖动或选中 ${contestant.displayName}（${definition?.name ?? "未知角色"}）`
             }
             title={`${contestant.displayName} · ${definition?.name ?? "未知角色"} · ${Math.round(displayPosition.x)}, ${Math.round(displayPosition.y)}`}
           >

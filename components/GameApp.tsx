@@ -12,6 +12,7 @@ import {
 import {
   AudioLines,
   Boxes,
+  Check,
   ChevronRight,
   CirclePlay,
   Clock3,
@@ -27,6 +28,8 @@ import {
   Minimize2,
   Music2,
   Pause,
+  PanelRightClose,
+  PanelRightOpen,
   Play,
   Plus,
   RefreshCcw,
@@ -68,6 +71,11 @@ import type {
 
 type WorkspaceView = "battle" | "characters" | "boards";
 type MobileSidebarPanel = "lineup" | "props" | "feed";
+type TeamMenuState = {
+  contestantId: string;
+  x: number;
+  y: number;
+};
 
 type WebkitFullscreenDocument = Document & {
   webkitExitFullscreen?: () => Promise<void> | void;
@@ -150,6 +158,8 @@ const teamOptions = [
   { id: "gold", label: "金队", color: "#f6d85f" },
 ];
 
+const SIDEBAR_EXPANDED_STORAGE_KEY = "critter-arena:sidebar-expanded";
+
 const spawnRatios = [
   { x: 0.11, y: 0.17 },
   { x: 0.89, y: 0.17 },
@@ -207,6 +217,8 @@ export function GameApp() {
   const [mobileSidebarPanel, setMobileSidebarPanel] =
     useState<MobileSidebarPanel>("lineup");
   const [selectedContestantId, setSelectedContestantId] = useState<string>();
+  const [sidebarExpanded, setSidebarExpanded] = useState(false);
+  const [teamMenu, setTeamMenu] = useState<TeamMenuState>();
   const arenaRef = useRef<ArenaHandle>(null);
   const battleControlBarRef = useRef<HTMLDivElement>(null);
   const importRef = useRef<HTMLInputElement>(null);
@@ -215,7 +227,7 @@ export function GameApp() {
   const previewSyncFrameRef = useRef<number | undefined>(undefined);
   const fullscreenControlsTimerRef = useRef<number | undefined>(undefined);
   const nativeFullscreenRef = useRef(false);
-  const contestantTeamRefs = useRef(new Map<string, HTMLSelectElement>());
+  const teamMenuRef = useRef<HTMLDivElement>(null);
 
   const revealFullscreenControls = useCallback(() => {
     if (fullscreenControlsTimerRef.current !== undefined) {
@@ -236,6 +248,8 @@ export function GameApp() {
   }, []);
 
   const enterCleanView = useCallback(async () => {
+    setSidebarExpanded(false);
+    setTeamMenu(undefined);
     setCleanView(true);
     revealFullscreenControls();
     scheduleFullscreenControlsHide(2600);
@@ -321,6 +335,8 @@ export function GameApp() {
     const syncFullscreenState = () => {
       if (getFullscreenElement()) {
         nativeFullscreenRef.current = true;
+        setSidebarExpanded(false);
+        setTeamMenu(undefined);
         setCleanView(true);
         return;
       }
@@ -352,6 +368,57 @@ export function GameApp() {
     };
   }, [cleanView]);
 
+  useEffect(() => {
+    const frame = window.requestAnimationFrame(() => {
+      if (
+        !window.matchMedia("(max-width: 980px)").matches &&
+        window.localStorage.getItem(SIDEBAR_EXPANDED_STORAGE_KEY) === "true"
+      ) {
+        setSidebarExpanded(true);
+      }
+    });
+    return () => window.cancelAnimationFrame(frame);
+  }, []);
+
+  useEffect(() => {
+    const media = window.matchMedia("(max-width: 980px)");
+    const syncDesktopSidebar = () => {
+      if (media.matches) {
+        setSidebarExpanded(false);
+        setTeamMenu(undefined);
+      }
+    };
+    syncDesktopSidebar();
+    media.addEventListener("change", syncDesktopSidebar);
+    return () => media.removeEventListener("change", syncDesktopSidebar);
+  }, []);
+
+  useEffect(() => {
+    if (!teamMenu) return;
+    const closeMenu = () => setTeamMenu(undefined);
+    const handlePointerDown = (event: PointerEvent) => {
+      if (!teamMenuRef.current?.contains(event.target as Node)) closeMenu();
+    };
+    const focusMenu = window.requestAnimationFrame(() => {
+      const items = Array.from(
+        teamMenuRef.current?.querySelectorAll<HTMLButtonElement>(
+          '[role="menuitemradio"]',
+        ) ?? [],
+      );
+      const selected = items.find((item) => item.getAttribute("aria-checked") === "true");
+      (selected ?? items[0])?.focus({ preventScroll: true });
+    });
+    window.addEventListener("pointerdown", handlePointerDown, true);
+    window.addEventListener("resize", closeMenu);
+    window.addEventListener("scroll", closeMenu, true);
+    return () => {
+      window.cancelAnimationFrame(focusMenu);
+      window.removeEventListener("pointerdown", handlePointerDown, true);
+      window.removeEventListener("resize", closeMenu);
+      window.removeEventListener("scroll", closeMenu, true);
+    };
+  }, [teamMenu]);
+
   useEffect(
     () => () => {
       if (previewSyncFrameRef.current !== undefined) {
@@ -367,20 +434,44 @@ export function GameApp() {
   useEffect(() => {
     const handleKey = (event: KeyboardEvent) => {
       const target = event.target as HTMLElement | null;
+      if (event.key === "Escape") {
+        if (teamMenu) {
+          event.preventDefault();
+          setTeamMenu(undefined);
+          return;
+        }
+        if (sidebarExpanded) {
+          event.preventDefault();
+          setSidebarExpanded(false);
+          window.localStorage.setItem(
+            SIDEBAR_EXPANDED_STORAGE_KEY,
+            "false",
+          );
+          return;
+        }
+        if (cleanView && !getFullscreenElement()) {
+          event.preventDefault();
+          void exitCleanView();
+        }
+        return;
+      }
       if (target?.matches("input, textarea, select, [contenteditable='true']")) return;
       if (event.key === "." && view === "battle") arenaRef.current?.step();
       if (event.key.toLowerCase() === "f" && view === "battle") {
         event.preventDefault();
         void (cleanView ? exitCleanView() : enterCleanView());
       }
-      if (event.key === "Escape" && cleanView && !getFullscreenElement()) {
-        event.preventDefault();
-        void exitCleanView();
-      }
     };
     window.addEventListener("keydown", handleKey);
     return () => window.removeEventListener("keydown", handleKey);
-  }, [cleanView, enterCleanView, exitCleanView, view]);
+  }, [
+    cleanView,
+    enterCleanView,
+    exitCleanView,
+    sidebarExpanded,
+    teamMenu,
+    view,
+  ]);
 
   const showNotice = useCallback((message: string) => setNotice(message), []);
 
@@ -479,7 +570,7 @@ export function GameApp() {
     }
   };
 
-  const queuePreviewSetupSync = (setup: MatchSetup) => {
+  const queuePreviewSetupSync = useCallback((setup: MatchSetup) => {
     pendingPreviewSetupRef.current = setup;
     if (previewSyncFrameRef.current !== undefined) return;
     previewSyncFrameRef.current = window.requestAnimationFrame(() => {
@@ -488,15 +579,16 @@ export function GameApp() {
       pendingPreviewSetupRef.current = undefined;
       if (pendingSetup) arenaRef.current?.syncReadySetup(pendingSetup);
     });
-  };
+  }, []);
 
-  const updateSetup = (setup: MatchSetup) => {
-    const next = structuredClone(manifest);
-    next.setup = setup;
-    next.updatedAt = new Date().toISOString();
-    setManifest(next);
+  const updateSetup = useCallback((setup: MatchSetup) => {
+    setManifest((current) => ({
+      ...current,
+      setup,
+      updatedAt: new Date().toISOString(),
+    }));
     queuePreviewSetupSync(setup);
-  };
+  }, [queuePreviewSetupSync]);
 
   const switchBoard = (boardId: string) => {
     const nextBoard = manifest.boards.find((board) => board.id === boardId);
@@ -600,7 +692,52 @@ export function GameApp() {
       ...manifest.setup,
       contestants: manifest.setup.contestants.filter((contestant) => contestant.id !== id),
     });
+    if (selectedContestantId === id) setSelectedContestantId(undefined);
+    setTeamMenu((current) =>
+      current?.contestantId === id ? undefined : current,
+    );
   };
+
+  useEffect(() => {
+    const handleDelete = (event: KeyboardEvent) => {
+      if (
+        event.key !== "Delete" ||
+        view !== "battle" ||
+        !selectedContestantId
+      ) {
+        return;
+      }
+      const target = event.target as HTMLElement | null;
+      if (
+        target?.matches(
+          "input, textarea, select, [contenteditable='true'], [contenteditable='']",
+        )
+      ) {
+        return;
+      }
+      const contestant = manifest.setup.contestants.find(
+        (candidate) => candidate.id === selectedContestantId,
+      );
+      if (!contestant) {
+        setSelectedContestantId(undefined);
+        setTeamMenu(undefined);
+        return;
+      }
+      event.preventDefault();
+      const nextSetup = {
+        ...manifest.setup,
+        contestants: manifest.setup.contestants.filter(
+          (candidate) => candidate.id !== contestant.id,
+        ),
+      };
+      updateSetup(nextSetup);
+      setSelectedContestantId(undefined);
+      setTeamMenu(undefined);
+      setNotice(`已删除角色实例“${contestant.displayName}”`);
+    };
+    window.addEventListener("keydown", handleDelete);
+    return () => window.removeEventListener("keydown", handleDelete);
+  }, [manifest, selectedContestantId, updateSetup, view]);
 
   const replaceManifestAndResetPreview = (
     next: ProjectManifest,
@@ -710,6 +847,35 @@ export function GameApp() {
     });
   };
 
+  const assignContestantTeam = (
+    contestantId: string,
+    teamId: string | undefined,
+  ) => {
+    const contestant = manifest.setup.contestants.find(
+      (candidate) => candidate.id === contestantId,
+    );
+    if (!contestant) return;
+    const ally = teamId
+      ? manifest.setup.contestants.find(
+          (candidate) =>
+            candidate.id !== contestantId && candidate.teamId === teamId,
+        )
+      : undefined;
+    const defaultTeamColor = teamOptions.find(
+      (team) => team.id === teamId,
+    )?.color;
+    const color = ally?.color ?? defaultTeamColor ?? contestant.color;
+    const nameColor = ally?.nameColor ?? color;
+    updateSetup({
+      ...manifest.setup,
+      contestants: manifest.setup.contestants.map((candidate) =>
+        candidate.id === contestantId
+          ? { ...candidate, teamId, color, nameColor }
+          : candidate,
+      ),
+    });
+  };
+
   const randomizeFormation = () => {
     const boardWidth = activeBoard?.width ?? 1600;
     const boardHeight = activeBoard?.height ?? 900;
@@ -783,6 +949,7 @@ export function GameApp() {
   };
 
   const selectContestantInstance = useCallback((contestantId: string) => {
+    setTeamMenu(undefined);
     setSelectedContestantId(contestantId);
     window.requestAnimationFrame(() => {
       document
@@ -792,19 +959,17 @@ export function GameApp() {
   }, []);
 
   const requestContestantTeam = useCallback(
-    (contestantId: string) => {
-      selectContestantInstance(contestantId);
-      const select = contestantTeamRefs.current.get(contestantId);
-      select?.focus({ preventScroll: true });
-      try {
-        (
-          select as (HTMLSelectElement & { showPicker?: () => void }) | undefined
-        )?.showPicker?.();
-      } catch {
-        // Focus still provides a quick keyboard-accessible fallback.
-      }
+    (contestantId: string, clientX: number, clientY: number) => {
+      setSelectedContestantId(contestantId);
+      const menuWidth = 196;
+      const menuHeight = 286;
+      setTeamMenu({
+        contestantId,
+        x: Math.max(8, Math.min(clientX, window.innerWidth - menuWidth - 8)),
+        y: Math.max(8, Math.min(clientY, window.innerHeight - menuHeight - 8)),
+      });
     },
-    [selectContestantInstance],
+    [],
   );
 
   const importFile = async (file?: File) => {
@@ -835,6 +1000,11 @@ export function GameApp() {
     { id: "characters", label: "角色工坊", icon: UsersRound, hint: "数值、动作与音效" },
     { id: "boards", label: "棋盘工坊", icon: ImagePlus, hint: "背景、道具与区域" },
   ];
+  const teamMenuContestant = teamMenu
+    ? manifest.setup.contestants.find(
+        (contestant) => contestant.id === teamMenu.contestantId,
+      )
+    : undefined;
 
   return (
     <main className={`app-shell ${cleanView ? "clean-spectator" : ""}`}>
@@ -854,7 +1024,13 @@ export function GameApp() {
               type="button"
               key={id}
               className={view === id ? "is-active" : ""}
-              onClick={() => setView(id)}
+              onClick={() => {
+                setView(id);
+                if (id !== "battle") {
+                  setSidebarExpanded(false);
+                  setTeamMenu(undefined);
+                }
+              }}
             >
               <Icon size={17} />
               <span>
@@ -904,7 +1080,11 @@ export function GameApp() {
       </header>
 
       {view === "battle" && (
-        <div className="battle-workspace">
+        <div
+          className={`battle-workspace ${
+            sidebarExpanded ? "is-sidebar-expanded" : ""
+          }`}
+        >
           <section className="arena-panel">
             <div className="arena-panel-header">
               <div>
@@ -1176,7 +1356,38 @@ export function GameApp() {
             </button>
           </section>
 
-          <aside className={`battle-sidebar mobile-panel-${mobileSidebarPanel}`}>
+          <button
+            type="button"
+            className="sidebar-expand-handle"
+            onClick={() => {
+              setTeamMenu(undefined);
+              setSidebarExpanded((expanded) => {
+                const nextExpanded = !expanded;
+                window.localStorage.setItem(
+                  SIDEBAR_EXPANDED_STORAGE_KEY,
+                  String(nextExpanded),
+                );
+                return nextExpanded;
+              });
+            }}
+            aria-expanded={sidebarExpanded}
+            aria-controls="battle-settings-sidebar"
+            title={sidebarExpanded ? "收起设置栏" : "展开设置栏"}
+          >
+            {sidebarExpanded ? (
+              <PanelRightClose size={17} />
+            ) : (
+              <PanelRightOpen size={17} />
+            )}
+            <span>{sidebarExpanded ? "收起" : "展开"}</span>
+          </button>
+
+          <aside
+            id="battle-settings-sidebar"
+            className={`battle-sidebar mobile-panel-${mobileSidebarPanel} ${
+              sidebarExpanded ? "is-expanded" : ""
+            }`}
+          >
             <nav className="mobile-sidebar-tabs" aria-label="战场设置">
               <button
                 type="button"
@@ -1293,37 +1504,14 @@ export function GameApp() {
                         </div>
                         <select
                           className="contestant-team"
-                          ref={(element) => {
-                            if (element) {
-                              contestantTeamRefs.current.set(contestant.id, element);
-                            } else {
-                              contestantTeamRefs.current.delete(contestant.id);
-                            }
-                          }}
                           aria-label={`${contestant.displayName}阵营`}
                           value={contestant.teamId ?? ""}
-                          onChange={(event) => {
-                            const teamId = event.target.value || undefined;
-                            const ally = teamId
-                              ? manifest.setup.contestants.find(
-                                  (candidate) =>
-                                    candidate.id !== contestant.id &&
-                                    candidate.teamId === teamId,
-                                )
-                              : undefined;
-                            const defaultTeamColor =
-                              teamOptions.find((team) => team.id === teamId)?.color;
-                            const color = ally?.color ?? defaultTeamColor ?? contestant.color;
-                            const nameColor = ally?.nameColor ?? color;
-                            updateSetup({
-                              ...manifest.setup,
-                              contestants: manifest.setup.contestants.map((candidate) =>
-                                candidate.id === contestant.id
-                                  ? { ...candidate, teamId, color, nameColor }
-                                  : candidate,
-                              ),
-                            });
-                          }}
+                          onChange={(event) =>
+                            assignContestantTeam(
+                              contestant.id,
+                              event.target.value || undefined,
+                            )
+                          }
                         >
                           {teamOptions.map((team) => (
                             <option key={team.id || "solo"} value={team.id}>
@@ -1332,7 +1520,14 @@ export function GameApp() {
                           ))}
                         </select>
                         <small>{definition?.maxHp ?? 0} HP</small>
-                        <button type="button" onClick={() => removeContestant(contestant.id)} title="移除">
+                        <button
+                          type="button"
+                          onClick={(event) => {
+                            event.stopPropagation();
+                            removeContestant(contestant.id);
+                          }}
+                          title="移除"
+                        >
                           <X size={14} />
                         </button>
                       </div>
@@ -1521,6 +1716,85 @@ export function GameApp() {
               </div>
             </section>
           </aside>
+
+          {teamMenu && teamMenuContestant && (
+            <div
+              ref={teamMenuRef}
+              className="contestant-team-menu"
+              role="menu"
+              aria-label={`为${teamMenuContestant.displayName}选择队伍`}
+              style={{ left: teamMenu.x, top: teamMenu.y }}
+              onContextMenu={(event) => event.preventDefault()}
+              onKeyDown={(event) => {
+                if (event.key === "Escape") {
+                  event.preventDefault();
+                  setTeamMenu(undefined);
+                  return;
+                }
+                if (
+                  event.key !== "ArrowDown" &&
+                  event.key !== "ArrowUp" &&
+                  event.key !== "Home" &&
+                  event.key !== "End"
+                ) {
+                  return;
+                }
+                event.preventDefault();
+                const items = Array.from(
+                  event.currentTarget.querySelectorAll<HTMLButtonElement>(
+                    '[role="menuitemradio"]',
+                  ),
+                );
+                if (!items.length) return;
+                const currentIndex = Math.max(
+                  0,
+                  items.indexOf(document.activeElement as HTMLButtonElement),
+                );
+                const nextIndex =
+                  event.key === "Home"
+                    ? 0
+                    : event.key === "End"
+                      ? items.length - 1
+                      : event.key === "ArrowDown"
+                        ? (currentIndex + 1) % items.length
+                        : (currentIndex - 1 + items.length) % items.length;
+                items[nextIndex]?.focus();
+              }}
+            >
+              <div className="contestant-team-menu-heading">
+                <span>设置队伍</span>
+                <strong>{teamMenuContestant.displayName}</strong>
+              </div>
+              {teamOptions.map((team) => {
+                const selectedTeam = (teamMenuContestant.teamId ?? "") === team.id;
+                return (
+                  <button
+                    type="button"
+                    role="menuitemradio"
+                    aria-checked={selectedTeam}
+                    className={selectedTeam ? "is-selected" : ""}
+                    key={team.id || "solo"}
+                    onClick={() => {
+                      assignContestantTeam(
+                        teamMenuContestant.id,
+                        team.id || undefined,
+                      );
+                      setTeamMenu(undefined);
+                    }}
+                  >
+                    <span
+                      className="contestant-team-menu-color"
+                      style={{
+                        backgroundColor: team.color || "rgba(255,255,255,.28)",
+                      }}
+                    />
+                    <span>{team.label}</span>
+                    {selectedTeam && <Check size={15} />}
+                  </button>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
 

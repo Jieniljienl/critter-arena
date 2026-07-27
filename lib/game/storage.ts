@@ -68,6 +68,14 @@ const manifestSchema = z
         }),
       )
       .optional(),
+    policePromotion: z
+      .object({
+        experienceToStar2: z.number().int().positive(),
+        experienceToStar3: z.number().int().positive(),
+        experienceToStar4: z.number().int().positive(),
+        experienceToStar5: z.number().int().positive(),
+      })
+      .optional(),
     boards: z.array(
       z
         .object({

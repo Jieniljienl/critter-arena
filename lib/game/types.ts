@@ -92,6 +92,7 @@ export type SynthPreset =
   | "moleSqueak";
 
 export type AttackDefinition = {
+  /** 远程为射程；近战为双方碰撞圆边缘之间的追击触发距离。 */
   range: number;
   damage: number;
   cooldown: number;
@@ -161,10 +162,6 @@ export type MoleSkillParameters = {
 };
 
 export type PoliceSkillParameters = {
-  killsToStar2: number;
-  killsToStar3: number;
-  killsToStar4: number;
-  killsToStar5: number;
   gatlingMagazineSize: number;
   gatlingReloadDuration: number;
   kickRange: number;
@@ -179,6 +176,23 @@ export type PoliceSkillParameters = {
   gatlingRestDuration?: number;
   /** 旧版五星警察参数，仅用于导入迁移。 */
   gatlingShots?: number;
+  /** 旧版角色级升星参数，仅用于导入迁移。 */
+  killsToStar2?: number;
+  /** 旧版角色级升星参数，仅用于导入迁移。 */
+  killsToStar3?: number;
+  /** 旧版角色级升星参数，仅用于导入迁移。 */
+  killsToStar4?: number;
+  /** 旧版角色级升星参数，仅用于导入迁移。 */
+  killsToStar5?: number;
+  /** 更早版本的统一升星参数，仅用于导入迁移。 */
+  killsPerPromotion?: number;
+};
+
+export type PolicePromotionConfig = {
+  experienceToStar2: number;
+  experienceToStar3: number;
+  experienceToStar4: number;
+  experienceToStar5: number;
 };
 
 export type CharacterDefinition = {
@@ -257,6 +271,8 @@ export type ProjectManifest = {
   assets: AssetRef[];
   characters: CharacterDefinition[];
   nameLibraries: CharacterNameLibrary[];
+  /** 一至五星警员共用的升星经验表。 */
+  policePromotion: PolicePromotionConfig;
   boards: BoardDefinition[];
   setup: MatchSetup;
   backgroundMusic: BackgroundMusicConfig;
@@ -265,6 +281,7 @@ export type ProjectManifest = {
 
 export type UnitAction =
   | "move"
+  | "meleeApproach"
   | "attack"
   | "skill"
   | "hurt"
@@ -272,6 +289,7 @@ export type UnitAction =
   | "satisfied"
   | "digging"
   | "tunneling"
+  | "entering"
   | "reloading"
   | "kick"
   | "knockback"
@@ -314,6 +332,7 @@ export type RuntimeUnit = {
   sustainsFaction: boolean;
   nextEatAt: number;
   reservedBambooId?: string;
+  meleeTargetId?: string;
   nextDigAt: number;
   nextAmbushAt: number;
   burnUntil: number;

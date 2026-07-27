@@ -33,7 +33,7 @@ body {
   color: var(--text);
   font-family:
     Inter, "SF Pro Display", "PingFang SC", "Microsoft YaHei", system-ui, sans-serif;
-  font-size: 14px;
+  font-size: 15px;
 }
 
 html.clean-view-active,
@@ -160,13 +160,13 @@ textarea:focus-visible {
 }
 
 .brand strong {
-  font-size: 16px;
+  font-size: 17px;
   letter-spacing: 0.04em;
 }
 
 .brand small {
   color: var(--quiet);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 700;
   letter-spacing: 0.18em;
 }
@@ -194,13 +194,13 @@ textarea:focus-visible {
   display: flex;
   flex-direction: column;
   gap: 1px;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 700;
 }
 
 .top-nav button small {
   color: var(--quiet);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 500;
 }
 
@@ -229,7 +229,7 @@ textarea:focus-visible {
   gap: 6px;
   margin-right: 4px;
   color: var(--quiet);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .header-button {
@@ -298,8 +298,9 @@ textarea:focus-visible {
 }
 
 .battle-workspace {
+  --battle-sidebar-width: 440px;
   display: grid;
-  grid-template-columns: minmax(0, 1fr) 440px;
+  grid-template-columns: minmax(0, 1fr) var(--battle-sidebar-width);
   min-height: calc(100vh - 76px);
 }
 
@@ -325,7 +326,7 @@ textarea:focus-visible {
 
 .eyebrow {
   color: var(--quiet);
-  font-size: 9px;
+  font-size: 10px;
   font-weight: 800;
   letter-spacing: 0.18em;
   text-transform: uppercase;
@@ -379,7 +380,7 @@ textarea:focus-visible {
 
 .arena-metrics small {
   color: var(--quiet);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .arena-stage {
@@ -441,7 +442,7 @@ textarea:focus-visible {
   border-radius: 999px;
   background: rgba(18, 17, 22, 0.76);
   color: #e9e4da;
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   letter-spacing: 0.08em;
   backdrop-filter: blur(10px);
@@ -536,7 +537,7 @@ textarea:focus-visible {
 
 .board-quick-select span {
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
   font-weight: 800;
   letter-spacing: 0.12em;
   text-transform: uppercase;
@@ -548,7 +549,7 @@ textarea:focus-visible {
   border: 0;
   background: transparent;
   color: var(--text);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 700;
   cursor: pointer;
 }
@@ -566,7 +567,7 @@ textarea:focus-visible {
   border-radius: 10px;
   background: var(--lime-soft);
   color: var(--lime);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   cursor: pointer;
   white-space: nowrap;
@@ -578,7 +579,7 @@ textarea:focus-visible {
   border-radius: 4px;
   color: rgba(223, 246, 106, 0.7);
   font: inherit;
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .control-divider {
@@ -603,7 +604,7 @@ textarea:focus-visible {
   border-radius: 8px;
   background: transparent;
   color: var(--quiet);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -668,7 +669,7 @@ textarea:focus-visible {
   border-radius: 8px;
   background: var(--panel-2);
   color: var(--muted);
-  font-size: 8px;
+  font-size: 9px;
   cursor: pointer;
 }
 
@@ -676,7 +677,7 @@ textarea:focus-visible {
   max-width: 105px;
   overflow: hidden;
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -685,7 +686,7 @@ textarea:focus-visible {
   margin-left: auto;
   color: var(--quiet);
   font-family: "SFMono-Regular", Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .fullscreen-control-hotzone {
@@ -759,6 +760,7 @@ textarea:focus-visible {
 .clean-spectator .arena-panel-header,
 .clean-spectator .battle-control-bar,
 .clean-spectator .battle-sidebar,
+.clean-spectator .sidebar-expand-handle,
 .clean-spectator .match-status-badge,
 .clean-spectator .toast {
   display: none;
@@ -804,6 +806,10 @@ textarea:focus-visible {
   scrollbar-gutter: stable;
 }
 
+.sidebar-expand-handle {
+  display: none;
+}
+
 .mobile-sidebar-tabs {
   min-height: 52px;
 }
@@ -831,6 +837,170 @@ textarea:focus-visible {
   .battle-sidebar {
     overflow-y: auto;
   }
+
+  .sidebar-expand-handle {
+    position: fixed;
+    top: 96px;
+    right: var(--battle-sidebar-width);
+    z-index: 96;
+    display: inline-flex;
+    min-width: 38px;
+    height: 38px;
+    align-items: center;
+    justify-content: center;
+    gap: 5px;
+    padding: 0 9px;
+    border: 1px solid rgba(223, 246, 106, 0.28);
+    border-right: 0;
+    border-radius: 10px 0 0 10px;
+    background: rgba(25, 24, 31, 0.96);
+    color: var(--lime);
+    font-size: 10px;
+    font-weight: 800;
+    cursor: pointer;
+    box-shadow: -8px 10px 24px rgba(0, 0, 0, 0.24);
+    transition: right 220ms ease, background 160ms ease;
+    backdrop-filter: blur(16px);
+  }
+
+  .sidebar-expand-handle:hover {
+    background: #302f37;
+  }
+
+  .battle-workspace.is-sidebar-expanded .sidebar-expand-handle {
+    right: min(1040px, calc(100vw - 160px));
+  }
+
+  .battle-sidebar.is-expanded {
+    position: fixed;
+    top: 76px;
+    right: 0;
+    bottom: 0;
+    z-index: 90;
+    width: min(1040px, calc(100vw - 160px));
+    height: auto;
+    min-height: 0;
+    border-left-color: rgba(223, 246, 106, 0.16);
+    background: rgba(18, 17, 23, 0.985);
+    box-shadow: -28px 0 70px rgba(0, 0, 0, 0.36);
+    transition: width 220ms ease;
+  }
+
+  .battle-sidebar.is-expanded .lineup-section {
+    display: grid;
+    grid-template-columns: minmax(360px, 460px) minmax(0, 1fr);
+    align-items: start;
+    gap: 14px 20px;
+  }
+
+  .battle-sidebar.is-expanded .lineup-section > .sidebar-heading {
+    grid-column: 1 / -1;
+    margin-bottom: 0;
+  }
+
+  .battle-sidebar.is-expanded .formation-board.is-portrait-board {
+    width: min(100%, 360px);
+  }
+
+  .battle-sidebar.is-expanded .formation-board.is-landscape-board {
+    width: min(100%, 460px);
+  }
+
+  .battle-sidebar.is-expanded .contestant-list {
+    grid-column: 2;
+    grid-row: 2 / span 3;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: 680px;
+    margin-top: 0;
+    gap: 4px 10px;
+  }
+
+  .battle-sidebar.is-expanded .add-fighter-grid,
+  .battle-sidebar.is-expanded .name-library-editor {
+    grid-column: 1;
+    margin-top: 0;
+  }
+
+  .battle-sidebar.is-expanded .add-fighter-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .battle-sidebar.is-expanded .current-props-list {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    max-height: none;
+  }
+
+  .battle-sidebar.is-expanded .event-feed {
+    max-height: 420px;
+  }
+}
+
+.contestant-team-menu {
+  position: fixed;
+  z-index: 180;
+  width: 188px;
+  padding: 7px;
+  border: 1px solid var(--line-strong);
+  border-radius: 12px;
+  background: rgba(25, 24, 31, 0.985);
+  box-shadow: 0 22px 56px rgba(0, 0, 0, 0.48);
+  backdrop-filter: blur(18px);
+}
+
+.contestant-team-menu-heading {
+  display: grid;
+  gap: 2px;
+  padding: 5px 7px 8px;
+  border-bottom: 1px solid var(--line);
+}
+
+.contestant-team-menu-heading span {
+  color: var(--quiet);
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+}
+
+.contestant-team-menu-heading strong {
+  overflow: hidden;
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.contestant-team-menu > button {
+  display: grid;
+  grid-template-columns: 14px minmax(0, 1fr) 16px;
+  width: 100%;
+  min-height: 36px;
+  align-items: center;
+  gap: 8px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.contestant-team-menu > button:hover,
+.contestant-team-menu > button:focus-visible,
+.contestant-team-menu > button.is-selected {
+  background: rgba(223, 246, 106, 0.09);
+  color: var(--text);
+}
+
+.contestant-team-menu > button svg {
+  color: var(--lime);
+}
+
+.contestant-team-menu-color {
+  width: 11px;
+  height: 11px;
+  border: 1px solid rgba(255, 255, 255, 0.24);
+  border-radius: 50%;
 }
 
 .sidebar-section {
@@ -874,7 +1044,7 @@ textarea:focus-visible {
 .sidebar-heading h2,
 .panel-heading h2 {
   margin: 3px 0 0;
-  font-size: 17px;
+  font-size: 18px;
 }
 
 .text-button {
@@ -883,7 +1053,7 @@ textarea:focus-visible {
   border: 0;
   background: transparent;
   color: var(--lime);
-  font-size: 11px;
+  font-size: 12px;
   cursor: pointer;
 }
 
@@ -904,7 +1074,7 @@ textarea:focus-visible {
   border-radius: 8px;
   background: rgba(255, 95, 110, 0.06);
   color: #ff8e99;
-  font-size: 9px;
+  font-size: 10px;
   cursor: pointer;
 }
 
@@ -941,7 +1111,7 @@ textarea:focus-visible {
   left: 9px;
   z-index: 2;
   color: rgba(255, 255, 255, 0.3);
-  font-size: 9px;
+  font-size: 10px;
   letter-spacing: 0.08em;
   pointer-events: none;
 }
@@ -1002,7 +1172,7 @@ textarea:focus-visible {
 }
 
 .formation-token-icon {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 16px;
 }
 
@@ -1014,7 +1184,7 @@ textarea:focus-visible {
   margin-top: -1px;
   background: rgba(5, 7, 10, 0.76);
   color: rgba(255, 255, 255, 0.88);
-  font-size: 7px;
+  font-size: 8px;
   font-weight: 800;
   line-height: 9px;
   text-align: center;
@@ -1060,7 +1230,7 @@ textarea:focus-visible {
   border-radius: 50%;
   background: #0f0e13;
   color: #fff;
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .contestant-list {
@@ -1096,7 +1266,7 @@ textarea:focus-visible {
   border: 1px solid;
   border-radius: 7px;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .contestant-type {
@@ -1119,15 +1289,15 @@ textarea:focus-visible {
   border-radius: 7px;
   background: transparent;
   color: var(--text);
-  font-size: 11px;
+  font-size: 12px;
 }
 
 .contestant-definition-name {
   overflow: hidden;
   padding: 0 7px;
   color: var(--quiet);
-  font-size: 8px;
-  line-height: 12px;
+  font-size: 9px;
+  line-height: 13px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1145,12 +1315,12 @@ textarea:focus-visible {
   border-radius: 7px;
   background: #121117;
   color: var(--muted);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .contestant-row small {
   color: var(--quiet);
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .contestant-row button {
@@ -1185,7 +1355,7 @@ textarea:focus-visible {
   justify-content: space-between;
   gap: 4px;
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .contestant-hud-controls input[type="color"] {
@@ -1211,7 +1381,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 4px;
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .contestant-instance-controls input {
@@ -1223,7 +1393,7 @@ textarea:focus-visible {
   border-radius: 6px;
   background: #121117;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .add-fighter-grid {
@@ -1244,7 +1414,7 @@ textarea:focus-visible {
   border-radius: 9px;
   background: rgba(255, 255, 255, 0.02);
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   white-space: nowrap;
   cursor: pointer;
 }
@@ -1264,7 +1434,7 @@ textarea:focus-visible {
 .name-library-editor summary {
   padding: 9px 10px;
   color: var(--muted);
-  font-size: 10px;
+  font-size: 11px;
   font-weight: 800;
   cursor: pointer;
 }
@@ -1280,7 +1450,7 @@ textarea:focus-visible {
   gap: 7px;
   padding: 8px 9px 4px;
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .name-library-kind select,
@@ -1295,7 +1465,7 @@ textarea:focus-visible {
 .name-library-kind select {
   height: 28px;
   padding: 0 7px;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .name-library-list {
@@ -1317,7 +1487,7 @@ textarea:focus-visible {
 .name-library-row input {
   height: 26px;
   padding: 0 6px;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .name-library-row button {
@@ -1352,7 +1522,7 @@ textarea:focus-visible {
   border-radius: 7px;
   background: transparent;
   color: var(--lime);
-  font-size: 9px;
+  font-size: 10px;
   cursor: pointer;
 }
 
@@ -1360,7 +1530,7 @@ textarea:focus-visible {
   margin: 0;
   padding: 0 9px 9px;
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .current-props-section {
@@ -1390,7 +1560,7 @@ textarea:focus-visible {
   margin: -4px 0 10px;
   overflow: hidden;
   color: var(--quiet);
-  font-size: 10px;
+  font-size: 11px;
   line-height: 1.4;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -1419,7 +1589,7 @@ textarea:focus-visible {
 .prop-count-chip small {
   overflow: hidden;
   color: var(--quiet);
-  font-size: 9px;
+  font-size: 10px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1427,7 +1597,7 @@ textarea:focus-visible {
 .prop-count-chip strong {
   color: var(--muted);
   font-family: Consolas, monospace;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .prop-count-chip.prop-bamboo {
@@ -1518,7 +1688,7 @@ textarea:focus-visible {
 .current-prop-name strong {
   overflow: hidden;
   color: #ddd7e2;
-  font-size: 11px;
+  font-size: 12px;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
@@ -1529,19 +1699,19 @@ textarea:focus-visible {
   border-radius: 999px;
   background: rgba(255, 255, 255, 0.055);
   color: var(--muted);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .current-prop-copy p {
   margin: 4px 0 2px;
   color: #aaa4b2;
-  font-size: 9px;
+  font-size: 10px;
   line-height: 1.35;
 }
 
 .current-prop-copy small {
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .current-prop-controls {
@@ -1556,7 +1726,7 @@ textarea:focus-visible {
   align-items: center;
   gap: 4px;
   color: var(--quiet);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .current-prop-controls input[type="checkbox"] {
@@ -1571,7 +1741,7 @@ textarea:focus-visible {
   border-radius: 6px;
   background: #121117;
   color: var(--muted);
-  font-size: 8px;
+  font-size: 9px;
 }
 
 .current-prop-controls button {
@@ -1601,7 +1771,7 @@ textarea:focus-visible {
 
 .current-props-empty p {
   margin: 0;
-  font-size: 10px;
+  font-size: 11px;
 }
 
 .event-section {
@@ -1642,13 +1812,13 @@ textarea:focus-visible {
   padding-top: 2px;
   color: var(--quiet);
   font-family: Consolas, monospace;
-  font-size: 9px;
+  font-size: 10px;
 }
 
 .event-item p {
   margin: 0;
   color: #c5bfca;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.45;
 }
 
@@ -1678,7 +1848,7 @@ textarea:focus-visible {
 .empty-feed p {
   max-width: 230px;
   margin: 0;
-  font-size: 11px;
+  font-size: 12px;
   line-height: 1.6;
 }
 
@@ -2089,8 +2259,246 @@ textarea:focus-visible {
 .editor-card-note {
   margin: -7px 0 14px;
   color: var(--muted);
+  font-size: 11px;
+  line-height: 1.55;
+}
+
+.field-note {
+  color: var(--muted);
+  font-size: 9px;
+  font-weight: 500;
+  letter-spacing: 0;
+  line-height: 1.45;
+}
+
+.skill-modules-card {
+  grid-column: 1 / -1;
+}
+
+.skill-module-section-heading {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  margin: 18px 0 9px;
+}
+
+.skill-module-section-heading:first-of-type {
+  margin-top: 0;
+}
+
+.skill-module-section-heading strong {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.skill-module-section-heading span {
+  color: var(--quiet);
+  font-size: 9px;
+}
+
+.skill-module-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 300px), 1fr));
+  gap: 10px;
+}
+
+.skill-module-card {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid rgba(255, 255, 255, 0.075);
+  border-radius: 13px;
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.built-in-skill-module {
+  background:
+    linear-gradient(145deg, rgba(223, 246, 106, 0.055), transparent 55%),
+    rgba(255, 255, 255, 0.018);
+}
+
+.skill-module-heading {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: 9px;
+}
+
+.custom-skill-module-heading {
+  grid-template-columns: minmax(0, 1fr) auto 34px;
+}
+
+.skill-module-title {
+  display: grid;
+  min-width: 0;
+  gap: 4px;
+}
+
+.skill-module-title small {
+  color: var(--quiet);
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+}
+
+.skill-module-title strong {
+  color: var(--text);
+  font-size: 12px;
+}
+
+.skill-module-title input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121117;
+  color: var(--text);
+}
+
+.skill-activity-badge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 42px;
+  min-height: 23px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+  letter-spacing: 0.04em;
+}
+
+.skill-activity-badge.is-active {
+  border-color: rgba(255, 177, 90, 0.3);
+  background: rgba(255, 177, 90, 0.1);
+  color: #ffc176;
+}
+
+.skill-activity-badge.is-passive {
+  border-color: rgba(105, 210, 229, 0.28);
+  background: rgba(105, 210, 229, 0.09);
+  color: #8de2ee;
+}
+
+.skill-module-meta,
+.skill-module-trigger {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 9px 0 0;
+  color: var(--lime);
+  font-size: 9px;
+  font-weight: 700;
+}
+
+.skill-module-description {
+  min-height: 34px;
+  margin: 7px 0 10px;
+  color: var(--muted);
   font-size: 10px;
   line-height: 1.55;
+}
+
+.skill-module-fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 7px;
+}
+
+.skill-module-fields label {
+  display: grid;
+  gap: 4px;
+  color: var(--quiet);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.skill-module-fields input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121117;
+  color: var(--text);
+}
+
+.skill-module-card .ability-editor-fields {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  margin-top: 9px;
+}
+
+.skill-module-empty {
+  grid-column: 1 / -1;
+}
+
+.shared-promotion-card {
+  grid-column: 1 / -1;
+  border-color: rgba(223, 246, 106, 0.2);
+  background:
+    linear-gradient(135deg, rgba(223, 246, 106, 0.07), transparent 50%),
+    var(--panel);
+}
+
+.shared-parameter-badge {
+  margin-left: auto;
+  padding: 4px 7px;
+  border: 1px solid rgba(223, 246, 106, 0.2);
+  border-radius: 999px;
+  background: var(--lime-soft);
+  color: var(--lime);
+  font-size: 10px;
+  letter-spacing: 0.04em;
+}
+
+.promotion-chain {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 9px;
+}
+
+.promotion-chain label {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 68px;
+  align-items: center;
+  gap: 5px 8px;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 11px;
+  background: rgba(255, 255, 255, 0.025);
+}
+
+.promotion-chain label > span {
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.promotion-chain input {
+  grid-row: span 2;
+  width: 68px;
+  height: 36px;
+  padding: 0 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 8px;
+  background: #121117;
+  color: var(--lime);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.promotion-chain label > small {
+  color: var(--quiet);
+  font-size: 10px;
+}
+
+@media (max-width: 1380px) {
+  .promotion-chain {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
 }
 
 .sound-editor-row,
@@ -2745,7 +3153,7 @@ textarea:focus-visible {
   }
 
   .battle-workspace {
-    grid-template-columns: minmax(0, 1fr) 390px;
+    --battle-sidebar-width: 390px;
   }
 
   .arena-metrics > span {
@@ -2825,6 +3233,10 @@ textarea:focus-visible {
 }
 
 @media (max-width: 900px) {
+  .promotion-chain {
+    grid-template-columns: 1fr;
+  }
+
   .topbar {
     position: static;
     min-height: 0;
@@ -3209,6 +3621,12 @@ textarea:focus-visible {
     grid-template-columns: 1fr;
   }
 
+  .skill-module-grid,
+  .skill-module-fields,
+  .skill-module-card .ability-editor-fields {
+    grid-template-columns: 1fr;
+  }
+
   .toast {
     right: max(10px, env(safe-area-inset-right));
     bottom: calc(10px + env(safe-area-inset-bottom));
@@ -3314,6 +3732,83 @@ textarea:focus-visible {
   .arena-stage.is-portrait-board {
     width: min(100%, 35dvh);
   }
+}
+
+/* Keep dense desktop tools readable without changing their overall geometry. */
+.brand small,
+.top-nav button small,
+.export-popover small,
+.eyebrow,
+.arena-metrics small,
+.sidebar-expand-handle,
+.sidebar-danger-button,
+.formation-grid-label,
+.contestant-index,
+.contestant-team,
+.contestant-row small,
+.name-library-kind select,
+.name-library-row input,
+.name-library-add,
+.prop-count-chip small,
+.event-item > span,
+.editor-field label,
+.inline-toggle,
+.empty-editor-state,
+.skill-module-empty,
+.promotion-chain label > small,
+.sound-phrases textarea,
+.board-toolbar button,
+.point-draw-guide,
+.prop-row textarea {
+  font-size: 11px;
+}
+
+.board-quick-select span,
+.key-hint,
+.control-note,
+.contestant-team-menu-heading span,
+.formation-token small,
+.contestant-definition-name,
+.contestant-hud-controls label,
+.contestant-instance-controls label,
+.contestant-instance-controls input,
+.name-library-kind,
+.name-library-help,
+.current-prop-badge,
+.current-prop-copy small,
+.current-prop-controls label,
+.current-prop-controls input,
+.library-item small,
+.board-library-item small,
+.upload-tile small,
+.sound-row small,
+.ability-row small,
+.upload-pill,
+.field-note,
+.skill-module-section-heading span,
+.skill-module-badge,
+.skill-module-hint,
+.sound-editor-heading small,
+.sound-phrase-field label,
+.board-mode-switch button,
+.board-canvas-guide,
+.prop-row > small,
+.tiny-toggle {
+  font-size: 10px;
+}
+
+.formation-token-kind,
+.skill-module-title small,
+.skill-module-field label,
+.sound-phrase-field small,
+.point-handle,
+.prop-field label {
+  font-size: 9px;
+}
+
+.contestant-team-menu-heading strong,
+.contestant-team-menu > button {
+  font-size: 12px;
 }
 
 @media (prefers-reduced-motion: reduce) {

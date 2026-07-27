@@ -9,6 +9,7 @@ import {
   type CharacterDefinition,
   type CombatEvent,
   type MatchSetup,
+  type PolicePromotionConfig,
   type ProjectManifest,
   type RegionShape,
   type RuntimeHole,
@@ -55,6 +56,9 @@ const MIN_MOLE_TUNNEL_TRAVEL_DURATION = 1 / 60;
 const MIN_HORIZONTAL_DEVIATION_RADIANS = (8 * Math.PI) / 180;
 const MAX_HORIZONTAL_DEVIATION_RADIANS = (65 * Math.PI) / 180;
 const HORIZONTAL_DEVIATION_BIAS_POWER = 3;
+const MELEE_CONTACT_TOLERANCE = 4;
+const MIN_MELEE_PURSUIT_BUFFER = 24;
+export const UNIT_ENTRANCE_DURATION = 0.8;
 
 export type SimulationDiagnostics = {
   activeUnits: number;
@@ -144,6 +148,7 @@ export class BattleSimulation {
   readonly setup: MatchSetup;
 
   private readonly random: SeededRandom;
+  private readonly policePromotion: PolicePromotionConfig;
   private readonly units = new Map<string, RuntimeUnit>();
   private readonly holes = new Map<string, RuntimeHole>();
   private readonly projectiles = new Map<string, RuntimeProjectile>();
@@ -185,6 +190,7 @@ export class BattleSimulation {
     if (!board) throw new Error(`找不到棋盘：${setup.boardId}`);
     this.board = structuredClone(board);
     this.setup = structuredClone(setup);
+    this.policePromotion = structuredClone(manifest.policePromotion);
     this.props = cloneProps(board);
     this.bambooProps = this.props.filter((prop) => prop.type === "bamboo");
     this.lavaProps = this.props.filter((prop) => prop.type === "lava");
@@ -246,7 +252,7 @@ export class BattleSimulation {
     this.modulesExecutedThisStep = 0;
     this.time += dt;
     this.completeTimedActions();
-    this.processScheduledShots();
+    this.processScheduledShots(dt);
     this.rebuildSpatialIndex();
     this.updateUnits(dt);
     this.updatePandaBambooRespawn();
@@ -329,6 +335,7 @@ export class BattleSimulation {
         x: contestant.position.x,
         y: contestant.position.y,
         direction: contestant.direction,
+        playEntrance: true,
       });
       this.addUnit(unit);
     }
@@ -346,12 +353,14 @@ export class BattleSimulation {
     x: number;
     y: number;
     direction?: Vec2;
+    playEntrance?: boolean;
   }): RuntimeUnit {
     const direction = this.createHorizontalBiasedDirection(
       options.direction?.x,
     );
     const definition = options.definition;
     const radius = definition.radius * (this.board.unitScale ?? 1);
+    const entering = options.playEntrance === true;
     const unit: RuntimeUnit = {
       id: options.id ?? this.nextId(definition.id),
       definitionId: definition.id,
@@ -372,10 +381,10 @@ export class BattleSimulation {
       radius,
       bornAt: this.time,
       nextAttackAt: this.time + 0.4 + this.random.next() * 0.4,
-      targetable: true,
-      action: "move",
+      targetable: !entering,
+      action: entering ? "entering" : "move",
       actionStartedAt: this.time,
-      actionUntil: 0,
+      actionUntil: entering ? this.time + UNIT_ENTRANCE_DURATION : 0,
       promotionStartedAt: 0,
       promotionUntil: 0,
       nextPandaSummonAt: 0,
@@ -383,6 +392,7 @@ export class BattleSimulation {
       pandaCallUntil: 0,
       sustainsFaction: options.sustainsFaction ?? false,
       nextEatAt: 0,
+      meleeTargetId: undefined,
       nextDigAt: definition.pluginId === "mole" ? this.time : Number.POSITIVE_INFINITY,
       nextAmbushAt: 0,
       burnUntil: 0,
@@ -429,6 +439,7 @@ export class BattleSimulation {
       if (unit.hp <= 0) continue;
       const definition = this.definitions.get(unit.definitionId);
       if (!definition) continue;
+      if (unit.action === "entering") continue;
 
       const controlled =
         unit.action === "knockback" || unit.action === "stunned";
@@ -450,12 +461,26 @@ export class BattleSimulation {
         "merge",
         "victory",
       ].includes(unit.action);
-      if (!immobilized) this.moveUnit(unit, dt, definition.speed);
+      if (unit.action === "meleeApproach") {
+        this.updateMeleeApproach(unit, definition, dt);
+      } else if (
+        unit.action === "attack" &&
+        definition.attack.mode === "melee" &&
+        unit.meleeTargetId
+      ) {
+        this.updateMeleeStrikeContact(unit, definition, dt);
+      } else if (!immobilized) {
+        this.moveUnit(unit, dt, definition.speed);
+      }
 
       this.updateAreaBuffs(unit);
       if (unit.action === "dead") continue;
 
-      if (definition.attack.mode !== "gatling" && this.canBeginAttack(unit)) {
+      if (
+        definition.attack.mode !== "gatling" &&
+        !(definition.attack.mode === "melee" && unit.action === "attack") &&
+        this.canBeginAttack(unit)
+      ) {
         this.beginAttack(unit, definition);
       }
     }
@@ -567,6 +592,7 @@ export class BattleSimulation {
         circleOverlapsRegion(unit, unit.radius + (parameters?.bambooExtraRange ?? 0), prop.shape),
     );
     if (!bamboo) return;
+    unit.meleeTargetId = undefined;
     unit.action = "eating";
     unit.actionStartedAt = this.time;
     unit.actionUntil = this.time + (parameters?.eatDuration ?? 5);
@@ -705,6 +731,7 @@ export class BattleSimulation {
             travelStartedAt +
             this.moleTunnelTravelDuration(definition, origin, destination);
           const attackAt = arrivalAt + MOLE_TUNNEL_ATTACK_WINDUP;
+          unit.meleeTargetId = undefined;
           unit.action = "tunneling";
           unit.actionStartedAt = this.time;
           unit.actionUntil = Math.max(
@@ -712,7 +739,6 @@ export class BattleSimulation {
             this.time + (parameters?.tunnelDuration ?? 1),
           );
           unit.targetable = false;
-          unit.nextAmbushAt = this.time + (parameters?.ambushCooldown ?? 3);
           unit.tunnelData = {
             mode: "ambush",
             origin,
@@ -766,6 +792,7 @@ export class BattleSimulation {
               origin,
               destinationPosition,
             );
+          unit.meleeTargetId = undefined;
           unit.action = "tunneling";
           unit.actionStartedAt = this.time;
           unit.actionUntil = Math.max(
@@ -792,11 +819,11 @@ export class BattleSimulation {
       (hole) => distance(unit, hole) >= (parameters?.minimumHoleDistance ?? 220),
     );
     if (!farEnough) return;
+    unit.meleeTargetId = undefined;
     unit.action = "digging";
     unit.actionStartedAt = this.time;
     unit.actionUntil = this.time + (parameters?.digDuration ?? 0.6);
     unit.digPosition = { x: unit.x, y: unit.y };
-    unit.nextDigAt = this.time + (parameters?.digCooldown ?? 10);
     this.emit("skill", `${unit.name} 开始挖洞`, unit, undefined, "dig");
   }
 
@@ -969,7 +996,12 @@ export class BattleSimulation {
   private completeTimedActions(): void {
     for (const unit of this.units.values()) {
       if (unit.actionUntil <= 0 || this.time < unit.actionUntil) continue;
-      if (unit.action === "eating") {
+      if (unit.action === "entering") {
+        unit.targetable = true;
+        unit.action = "move";
+        unit.actionStartedAt = this.time;
+        unit.actionUntil = 0;
+      } else if (unit.action === "eating") {
         const definition = this.definitions.get(unit.definitionId);
         const parameters = definition?.skillParameters?.panda;
         const bamboo = this.props.find((prop) => prop.id === unit.reservedBambooId);
@@ -1016,10 +1048,13 @@ export class BattleSimulation {
         this.holes.set(hole.id, hole);
         unit.lastHoleId = hole.id;
         unit.digPosition = undefined;
+        unit.nextDigAt =
+          this.time + Math.max(0, parameters?.digCooldown ?? 10);
         this.emit("prop", `${unit.name} 挖出了一处新洞`, unit, undefined, "dig");
         this.resetAction(unit);
       } else if (unit.action === "tunneling") {
         const tunnel = unit.tunnelData;
+        const completedAmbush = tunnel?.mode === "ambush";
         if (tunnel) {
           if (tunnel.mode === "travel") {
             unit.x = tunnel.destination.x;
@@ -1037,6 +1072,15 @@ export class BattleSimulation {
         }
         unit.targetable = true;
         unit.tunnelData = undefined;
+        if (completedAmbush) {
+          const definition = this.definitions.get(unit.definitionId);
+          unit.nextAmbushAt =
+            this.time +
+            Math.max(
+              0,
+              definition?.skillParameters?.mole?.ambushCooldown ?? 3,
+            );
+        }
         this.emit("sound", `${unit.name} 钻出地面`, unit, undefined, "tunnel");
         this.resetAction(unit);
       } else if (unit.action === "reloading") {
@@ -1103,6 +1147,7 @@ export class BattleSimulation {
   }
 
   private resetAction(unit: RuntimeUnit): void {
+    unit.meleeTargetId = undefined;
     this.rerollMovementDirection(unit);
     unit.action = "move";
     unit.actionStartedAt = this.time;
@@ -1159,6 +1204,108 @@ export class BattleSimulation {
     }
   }
 
+  private updateMeleeApproach(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+    dt: number,
+  ): void {
+    const target = unit.meleeTargetId
+      ? this.units.get(unit.meleeTargetId)
+      : undefined;
+    if (!this.isChaseableMeleeTarget(unit, target)) {
+      this.resetAction(unit);
+      return;
+    }
+    if (
+      this.meleeSurfaceGap(unit, target) >
+      this.meleePursuitLimit(unit, definition) + EPSILON
+    ) {
+      this.resetAction(unit);
+      return;
+    }
+
+    this.moveTowardMeleeContact(unit, target, dt, definition.speed);
+    if (this.isMeleeContact(unit, target)) {
+      this.startAttack(unit, definition, target);
+    }
+  }
+
+  private updateMeleeStrikeContact(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+    dt: number,
+  ): void {
+    const target = unit.meleeTargetId
+      ? this.units.get(unit.meleeTargetId)
+      : undefined;
+    if (!this.isChaseableMeleeTarget(unit, target)) {
+      unit.meleeTargetId = undefined;
+      return;
+    }
+    if (
+      this.meleeSurfaceGap(unit, target) >
+      this.meleePursuitLimit(unit, definition) + EPSILON
+    ) {
+      unit.meleeTargetId = undefined;
+      return;
+    }
+    const targetSpeed = Math.hypot(target.vx, target.vy);
+    this.moveTowardMeleeContact(
+      unit,
+      target,
+      dt,
+      Math.max(0, definition.speed) + targetSpeed,
+    );
+  }
+
+  private meleePursuitLimit(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+  ): number {
+    return (
+      Math.max(0, definition.attack.range) +
+      Math.max(MIN_MELEE_PURSUIT_BUFFER, unit.radius * 0.5)
+    );
+  }
+
+  private moveTowardMeleeContact(
+    unit: RuntimeUnit,
+    target: RuntimeUnit,
+    dt: number,
+    speed: number,
+  ): void {
+    const offset = { x: target.x - unit.x, y: target.y - unit.y };
+    const centerDistance = Math.hypot(offset.x, offset.y);
+    const direction =
+      centerDistance > EPSILON
+        ? { x: offset.x / centerDistance, y: offset.y / centerDistance }
+        : normalize({ x: unit.vx, y: unit.vy });
+    unit.vx = direction.x * speed;
+    unit.vy = direction.y * speed;
+    const remainingGap = Math.max(
+      0,
+      centerDistance - unit.radius - target.radius,
+    );
+    const travelDistance = Math.min(
+      remainingGap,
+      Math.max(0, speed) * Math.max(0, dt),
+    );
+    unit.x = Math.max(
+      unit.radius,
+      Math.min(
+        this.board.width - unit.radius,
+        unit.x + direction.x * travelDistance,
+      ),
+    );
+    unit.y = Math.max(
+      unit.radius,
+      Math.min(
+        this.board.height - unit.radius,
+        unit.y + direction.y * travelDistance,
+      ),
+    );
+  }
+
   private updateKnockbackPosition(unit: RuntimeUnit): void {
     const knockback = unit.knockbackData;
     if (!knockback) return;
@@ -1184,6 +1331,7 @@ export class BattleSimulation {
       unit.targetable &&
       unit.action !== "eating" &&
       unit.action !== "satisfied" &&
+      unit.action !== "meleeApproach" &&
       unit.action !== "digging" &&
       unit.action !== "tunneling" &&
       unit.action !== "reloading" &&
@@ -1197,7 +1345,28 @@ export class BattleSimulation {
   private beginAttack(unit: RuntimeUnit, definition: CharacterDefinition): void {
     const target = this.random.pick(this.validAttackTargets(unit, definition));
     if (!target) return;
+    if (definition.attack.mode === "melee") {
+      unit.meleeTargetId = target.id;
+      if (this.isMeleeContact(unit, target)) {
+        this.startAttack(unit, definition, target);
+      } else {
+        unit.action = "meleeApproach";
+        unit.actionStartedAt = this.time;
+        unit.actionUntil = 0;
+        this.moveTowardMeleeContact(unit, target, 0, definition.speed);
+      }
+      return;
+    }
+    this.startAttack(unit, definition, target);
+  }
+
+  private startAttack(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+    target: RuntimeUnit,
+  ): void {
     const attack = definition.attack;
+    if (attack.mode !== "melee") unit.meleeTargetId = undefined;
     unit.action = "attack";
     unit.actionStartedAt = this.time;
     unit.actionUntil = this.time + Math.max(0.28, attack.windup + 0.18);
@@ -1221,7 +1390,7 @@ export class BattleSimulation {
     }
   }
 
-  private processScheduledShots(): void {
+  private processScheduledShots(dt: number): void {
     let processed = 0;
     while (
       this.scheduledShots[0]?.at <= this.time + EPSILON &&
@@ -1294,7 +1463,22 @@ export class BattleSimulation {
 
       if (!target || !target.targetable) continue;
       if (definition.attack.mode === "melee") {
-        if (this.isValidMeleeTarget(source, target, definition)) {
+        if (
+          source.action === "attack" &&
+          source.meleeTargetId === target.id
+        ) {
+          this.moveTowardMeleeContact(
+            source,
+            target,
+            dt,
+            Math.max(0, definition.speed) + Math.hypot(target.vx, target.vy),
+          );
+        }
+        if (
+          source.action === "attack" &&
+          source.meleeTargetId === target.id &&
+          this.isValidMeleeTarget(source, target, definition)
+        ) {
           this.damageUnit(target.id, definition.attack.damage, source.id, "directAttack");
           this.emit(
             "attack",
@@ -1622,6 +1806,7 @@ export class BattleSimulation {
         const speed = attackerDefinition?.speed ?? Math.hypot(attacker.vx, attacker.vy);
         attacker.vx = direction.x * speed;
         attacker.vy = direction.y * speed;
+        attacker.meleeTargetId = undefined;
         const kickDuration = Math.max(
           0.05,
           parameters?.kickDuration ?? 0.35,
@@ -1651,6 +1836,7 @@ export class BattleSimulation {
             "directAttack",
           );
         }
+        target.meleeTargetId = undefined;
         target.action = "kick";
         target.actionStartedAt = this.time;
         target.actionUntil = this.time + kickDuration;
@@ -1681,6 +1867,7 @@ export class BattleSimulation {
       name: `${owner.name}的${star}星警察`,
       x: owner.x + Math.cos(angle) * spawnDistance,
       y: owner.y + Math.sin(angle) * spawnDistance,
+      playEntrance: true,
     });
     if (!this.addUnit(unit)) {
       this.droppedSpawns += 1;
@@ -1701,6 +1888,7 @@ export class BattleSimulation {
     while (merges < MAX_MERGES_PER_STEP) {
       const police = this.orderedUnits().filter(
         (unit) =>
+          unit.targetable &&
           unit.policeStar !== undefined &&
           unit.policeStar < 5 &&
           unit.action !== "dead" &&
@@ -1820,6 +2008,7 @@ export class BattleSimulation {
     if (target.action === "dead") return;
     target.hp = 0;
     target.targetable = false;
+    target.meleeTargetId = undefined;
     target.action = "dead";
     target.actionStartedAt = this.time;
     target.actionUntil = this.time + 0.45;
@@ -1829,6 +2018,13 @@ export class BattleSimulation {
     }
     const removedUnitIds = new Set([target.id]);
     const source = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
+    for (const pursuer of this.units.values()) {
+      if (pursuer.meleeTargetId !== target.id) continue;
+      pursuer.meleeTargetId = undefined;
+      if (pursuer.id !== source?.id && pursuer.action === "meleeApproach") {
+        this.resetAction(pursuer);
+      }
+    }
     if (
       source &&
       source.action !== "dead" &&
@@ -1901,9 +2097,7 @@ export class BattleSimulation {
     ) {
       return;
     }
-    const definition = this.definitions.get(source.definitionId);
     const killsRequired = this.policePromotionRequirement(
-      definition,
       currentStar as 1 | 2 | 3 | 4,
     );
     source.policeKillProgress += 1;
@@ -1912,18 +2106,16 @@ export class BattleSimulation {
   }
 
   private policePromotionRequirement(
-    definition: CharacterDefinition | undefined,
     currentStar: 1 | 2 | 3 | 4,
   ): number {
-    const parameters = definition?.skillParameters?.police;
     const configured =
       currentStar === 1
-        ? parameters?.killsToStar2 ?? 1
+        ? this.policePromotion.experienceToStar2
         : currentStar === 2
-          ? parameters?.killsToStar3 ?? 2
+          ? this.policePromotion.experienceToStar3
           : currentStar === 3
-            ? parameters?.killsToStar4 ?? 2
-            : parameters?.killsToStar5 ?? 3;
+            ? this.policePromotion.experienceToStar4
+            : this.policePromotion.experienceToStar5;
     return Math.max(1, Math.round(configured));
   }
 
@@ -1949,6 +2141,7 @@ export class BattleSimulation {
     source.vx = direction.x * definition.speed;
     source.vy = direction.y * definition.speed;
     source.nextAttackAt = this.time + 0.4;
+    source.meleeTargetId = undefined;
     source.action = "merge";
     source.actionStartedAt = this.time;
     source.actionUntil = this.time + 0.62;
@@ -1986,8 +2179,7 @@ export class BattleSimulation {
           }
         : undefined;
     if (!source.main) {
-      const renamed = source.name.replace(/[1-4]星警察$/, `${nextStar}星警察`);
-      source.name = renamed === source.name ? `${nextStar}星战功警察` : renamed;
+      source.name = `${definition.name}·战功晋升`;
     }
     this.emit(
       "merge",
@@ -2097,6 +2289,7 @@ export class BattleSimulation {
             ? `${originalContestant.displayName}的警察护卫队`
             : featuredWinner.name);
       for (const winner of winningCombatants) {
+        winner.meleeTargetId = undefined;
         winner.action = "victory";
         winner.actionStartedAt = this.time;
         winner.actionUntil = Number.POSITIVE_INFINITY;
@@ -2198,10 +2391,45 @@ export class BattleSimulation {
     unit: RuntimeUnit,
     definition: CharacterDefinition,
   ): RuntimeUnit[] {
-    const targets = this.validTargets(unit, definition.attack.range);
-    if (definition.attack.mode !== "melee") return targets;
-    return targets.filter((target) =>
-      this.isValidMeleeTarget(unit, target, definition),
+    if (definition.attack.mode !== "melee") {
+      return this.validTargets(unit, definition.attack.range);
+    }
+    if (definition.attack.range < 0) return [];
+    const searchRadius =
+      definition.attack.range + unit.radius + this.maxUnitRadius;
+    return this.queryUnitCandidates(unit, searchRadius).filter(
+      (target) =>
+        this.isChaseableMeleeTarget(unit, target) &&
+        this.meleeSurfaceGap(unit, target) <=
+          definition.attack.range + EPSILON &&
+        this.isInMeleeFrontArc(unit, target, definition),
+    );
+  }
+
+  private isChaseableMeleeTarget(
+    source: RuntimeUnit,
+    target: RuntimeUnit | undefined,
+  ): target is RuntimeUnit {
+    return Boolean(
+      target &&
+        target.id !== source.id &&
+        target.targetable &&
+        target.action !== "dead" &&
+        target.factionId !== source.factionId,
+    );
+  }
+
+  private meleeSurfaceGap(source: RuntimeUnit, target: RuntimeUnit): number {
+    return Math.max(
+      0,
+      distance(source, target) - source.radius - target.radius,
+    );
+  }
+
+  private isMeleeContact(source: RuntimeUnit, target: RuntimeUnit): boolean {
+    return (
+      distance(source, target) <=
+      source.radius + target.radius + MELEE_CONTACT_TOLERANCE
     );
   }
 
@@ -2210,9 +2438,18 @@ export class BattleSimulation {
     target: RuntimeUnit,
     definition: CharacterDefinition,
   ): boolean {
-    if (distance(source, target) > definition.attack.range + target.radius) {
-      return false;
-    }
+    return (
+      this.isChaseableMeleeTarget(source, target) &&
+      this.isMeleeContact(source, target) &&
+      this.isInMeleeFrontArc(source, target, definition)
+    );
+  }
+
+  private isInMeleeFrontArc(
+    source: RuntimeUnit,
+    target: RuntimeUnit,
+    definition: CharacterDefinition,
+  ): boolean {
     const arcDegrees = Math.max(
       10,
       Math.min(360, definition.attack.frontArcDegrees ?? 120),
@@ -2307,6 +2544,7 @@ export class BattleSimulation {
             unit.y +
             Math.sin(angle) *
               (unit.radius + definition.radius * (this.board.unitScale ?? 1) + 10),
+          playEntrance: true,
         });
         if (!this.addUnit(spawned)) break;
         this.unitsSpawnedThisStep += 1;

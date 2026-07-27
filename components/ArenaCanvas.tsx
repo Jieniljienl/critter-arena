@@ -139,16 +139,24 @@ const fallbackGlyph = (definitionId: string): string => {
   return "🐾";
 };
 
+const clipDurationMs = (clip: AnimationClip): number => {
+  let duration = clipDurationCache.get(clip);
+  if (duration === undefined) {
+    duration = Math.max(
+      1,
+      clip.frames.reduce((total, frame) => total + frame.durationMs, 0),
+    );
+    clipDurationCache.set(clip, duration);
+  }
+  return duration;
+};
+
 const frameForClip = (
   clip: AnimationClip | undefined,
   elapsedMs: number,
 ): string | undefined => {
   if (!clip?.frames.length) return undefined;
-  let duration = clipDurationCache.get(clip);
-  if (duration === undefined) {
-    duration = clip.frames.reduce((total, frame) => total + frame.durationMs, 0);
-    clipDurationCache.set(clip, duration);
-  }
+  const duration = clipDurationMs(clip);
   const position = clip.loop ? elapsedMs % duration : Math.min(elapsedMs, duration - 1);
   let cursor = 0;
   for (const frame of clip.frames) {
@@ -1191,8 +1199,25 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const clipStartedAt = callingForHelp
               ? unit.pandaCallStartedAt
               : unit.actionStartedAt;
+            const rawClipElapsedMs = Math.max(
+              0,
+              (time - clipStartedAt) * 1000,
+            );
+            const clipElapsedMs =
+              clip &&
+              (unit.action === "entering" || unit.action === "reloading") &&
+              unit.actionUntil > clipStartedAt
+                ? Math.max(
+                    0,
+                    Math.min(
+                      0.999999,
+                      (time - clipStartedAt) /
+                        (unit.actionUntil - clipStartedAt),
+                    ),
+                  ) * clipDurationMs(clip)
+                : rawClipElapsedMs;
             const frameId =
-              frameForClip(clip, Math.max(0, (time - clipStartedAt) * 1000)) ??
+              frameForClip(clip, clipElapsedMs) ??
               definition.portraitAssetId;
             const textureKey = `asset:${frameId}`;
             const hasTexture = this.textures.exists(textureKey) && !this.failedTextures.has(textureKey);
@@ -1285,14 +1310,50 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 unit.radius * (2.6 + pulse * 0.35),
               );
             }
+            const entranceProgress =
+              unit.action === "entering" &&
+              unit.actionUntil > unit.actionStartedAt
+                ? Math.max(
+                    0,
+                    Math.min(
+                      1,
+                      (time - unit.actionStartedAt) /
+                        (unit.actionUntil - unit.actionStartedAt),
+                    ),
+                  )
+                : 1;
+            const entranceEase =
+              entranceProgress *
+              entranceProgress *
+              (3 - 2 * entranceProgress);
+            if (unit.action === "entering") {
+              visualY += (1 - entranceEase) * unit.radius * 0.7;
+              const ringAlpha =
+                Math.sin(entranceProgress * Math.PI) * 0.58;
+              this.arenaGraphics.lineStyle(4, 0xe5ff6f, ringAlpha);
+              this.arenaGraphics.strokeEllipse(
+                visualX,
+                unit.y + unit.radius * 0.82,
+                unit.radius * (2.4 + entranceEase * 1.4),
+                unit.radius * (0.65 + entranceEase * 0.42),
+              );
+            }
+            const victoryElapsed = Math.max(0, time - unit.actionStartedAt);
+            const victoryStyle = definition.victoryStyle ?? "cool";
+            const victoryWave = Math.sin(victoryElapsed * Math.PI * 2.2);
+            const victoryBounce = Math.abs(victoryWave);
             const bob =
               unit.action === "victory"
-                ? 0
+                ? -victoryBounce *
+                  unit.radius *
+                  (victoryStyle === "dance" ? 0.18 : 0.1)
                 : Math.sin(time * 8 + unit.bornAt * 2) * 3;
             const alpha =
               unit.action === "dead"
                 ? Math.max(0, (unit.actionUntil - time) / 0.45)
-                : 1;
+                : unit.action === "entering"
+                  ? Math.min(1, entranceProgress / 0.24)
+                  : 1;
             const scaleBump =
               callingForHelp
                 ? 1.1
@@ -1301,16 +1362,20 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 : unit.action === "kill"
                   ? 1.22
                   : unit.action === "victory"
-                      ? 1.18
+                    ? 1.13 +
+                      ((victoryStyle === "taunt" ? 0.035 : 0.06) *
+                        (victoryWave + 1)) /
+                        2
                 : unit.action === "eating" ||
                     unit.action === "satisfied" ||
                     unit.action === "digging"
                   ? 1.06
                   : 1;
-            const displayScale = scaleBump;
+            const displayScale =
+              scaleBump *
+              (unit.action === "entering" ? 0.72 + entranceEase * 0.28 : 1);
 
             if (unit.action === "victory") {
-              const victoryStyle = definition.victoryStyle ?? "cool";
               const glowColor =
                 victoryStyle === "dance"
                   ? 0x83e7ef
@@ -1358,7 +1423,15 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     ? unit.vx < 0
                       ? -12
                       : 12
-                    : 0,
+                    : unit.action === "entering"
+                      ? (1 - entranceEase) * (unit.vx < 0 ? 8 : -8)
+                      : unit.action === "victory"
+                        ? victoryStyle === "dance"
+                          ? victoryWave * 5
+                          : victoryStyle === "taunt"
+                            ? victoryWave * 2.4
+                            : victoryWave * 1.4
+                        : 0,
                 );
               this.unitFallbacks.get(unit.id)?.setVisible(false);
             } else {
@@ -1450,7 +1523,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             if (!healthLabel) {
               healthLabel = this.add
                 .text(visualX, healthY, "", {
-                  fontSize: "12px",
+                  fontSize: "13px",
                   fontFamily: "Arial",
                   fontStyle: "bold",
                   color: "#ffffff",
@@ -1466,8 +1539,6 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
 
             let resourceLabel = this.resourceLabels.get(unit.id);
             if (unit.policeStar) {
-              const policeParameters =
-                combatDefinition.skillParameters?.police;
               const resourceY = healthY + 21;
               const resourceHeight = 9;
               let resourceText = "";
@@ -1500,12 +1571,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               } else {
                 const required =
                   unit.policeStar === 1
-                    ? policeParameters?.killsToStar2 ?? 1
+                    ? manifest.policePromotion.experienceToStar2
                     : unit.policeStar === 2
-                      ? policeParameters?.killsToStar3 ?? 2
+                      ? manifest.policePromotion.experienceToStar3
                       : unit.policeStar === 3
-                        ? policeParameters?.killsToStar4 ?? 2
-                        : policeParameters?.killsToStar5 ?? 3;
+                        ? manifest.policePromotion.experienceToStar4
+                        : manifest.policePromotion.experienceToStar5;
                 const segmentCount = Math.max(1, Math.round(required));
                 const segmentGap = 2;
                 const innerWidth = healthWidth - 4;
@@ -1530,7 +1601,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!resourceLabel) {
                 resourceLabel = this.add
                   .text(visualX, resourceY, "", {
-                    fontSize: "9px",
+                    fontSize: "10px",
                     fontFamily: '"Microsoft YaHei", Arial, sans-serif',
                     fontStyle: "bold",
                     color: "#ffffff",
@@ -1556,7 +1627,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             if (time < unit.burnUntil) buffs.push("🔥 灼烧");
             if (time < unit.springUntil) buffs.push("♨ 疗愈");
             if (time < unit.stunnedUntil) buffs.push("💫 眩晕");
-            if (!unit.targetable && unit.action !== "dead") {
+            if (unit.action === "entering") {
+              buffs.push("↘ 入场");
+            } else if (!unit.targetable && unit.action !== "dead") {
               buffs.push("◌ 不可选");
             }
             const buffText = buffs.join("  ");
@@ -1565,7 +1638,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!buffLabel) {
                 buffLabel = this.add
                   .text(visualX, healthY, buffText, {
-                    fontSize: "10px",
+                    fontSize: "11px",
                     fontFamily: '"Microsoft YaHei", Arial, sans-serif',
                     fontStyle: "bold",
                     color: "#fff2cf",
@@ -1598,7 +1671,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             if (!label) {
               label = this.add
                 .text(visualX, visualY, unit.name, {
-                  fontSize: unit.main ? "19px" : "14px",
+                  fontSize: unit.main ? "18px" : "13px",
                   fontFamily: "Arial",
                   color: "#fff7df",
                   stroke: "#151218",
@@ -1610,7 +1683,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
             if (label.text !== unit.name) label.setText(unit.name);
             label
-              .setFontSize(unit.main ? 16 : 12)
+              .setFontSize(unit.main ? 18 : 13)
               .setOrigin(0.5)
               .setPosition(visualX, healthY - 11);
             healthLabel.setOrigin(0.5).setPosition(visualX, healthY + 9);

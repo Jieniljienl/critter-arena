@@ -47,6 +47,19 @@ const clip = (
   })),
 });
 
+const timedClip = (
+  id: string,
+  frames: Array<[assetId: string, durationMs: number]>,
+  loop = false,
+): AnimationClip => ({
+  id,
+  loop,
+  frames: frames.map(([assetId, durationMs]) => ({
+    assetId,
+    durationMs,
+  })),
+});
+
 const asset = (id: string, url: string, name: string): AssetRef => ({
   id,
   kind: "image",
@@ -129,9 +142,69 @@ defaultAssets.push(
   asset("police-5-reload-2", "/assets/police-5-reload-2.png?v=20260726", "五星警察扣合供弹盖"),
 );
 
+const animatedCharacterIds = [
+  "panda-lazy",
+  "mole",
+  "police-1",
+  "police-2",
+  "police-3",
+  "police-4",
+  "police-5",
+] as const;
+
+for (const characterId of animatedCharacterIds) {
+  for (let frame = 1; frame <= 3; frame += 1) {
+    defaultAssets.push(
+      asset(
+        `${characterId}-entrance-v2-${frame}`,
+        `/assets/${characterId}-entrance-v2-${frame}.png?v=20260727`,
+        `${characterId} 出场动作 ${frame}`,
+      ),
+      asset(
+        `${characterId}-victory-v2-${frame}`,
+        `/assets/${characterId}-victory-v2-${frame}.png?v=20260727`,
+        `${characterId} 获胜动作 ${frame}`,
+      ),
+    );
+  }
+}
+
+for (let frame = 1; frame <= 6; frame += 1) {
+  defaultAssets.push(
+    asset(
+      `police-5-reload-v2-${frame}`,
+      `/assets/police-5-reload-v2-${frame}.png?v=20260727`,
+      `五星无畏战士换弹动作 ${frame}`,
+    ),
+  );
+}
+
+const entranceClip = (prefix: string): AnimationClip =>
+  timedClip("entrance", [
+    [`${prefix}-entrance-v2-1`, 160],
+    [`${prefix}-entrance-v2-2`, 220],
+    [`${prefix}-entrance-v2-3`, 220],
+    [`${prefix}-idle`, 200],
+  ]);
+
+const victoryClip = (prefix: string): AnimationClip =>
+  timedClip(
+    "victory",
+    [
+      [`${prefix}-victory-v2-1`, 180],
+      [`${prefix}-victory-v2-2`, 260],
+      [`${prefix}-victory-v2-3`, 200],
+      [`${prefix}-victory-v2-2`, 260],
+      [`${prefix}-victory-v2-1`, 180],
+      [`${prefix}-idle`, 220],
+    ],
+    true,
+  );
+
 const baseAnimations = (prefix: string): Record<string, AnimationClip> => ({
   idle: clip("idle", [`${prefix}-idle`], true, 500),
   move: clip("move", [`${prefix}-idle`], true, 500),
+  entrance: entranceClip(prefix),
   attack: clip("attack", [
     `${prefix}-attack-1`,
     `${prefix}-attack-2`,
@@ -164,10 +237,6 @@ const moleSkillParameters = {
 };
 
 const policeSkillParameters = {
-  killsToStar2: 1,
-  killsToStar3: 2,
-  killsToStar4: 2,
-  killsToStar5: 3,
   gatlingMagazineSize: 150,
   gatlingReloadDuration: 3,
   kickRange: 160,
@@ -176,6 +245,13 @@ const policeSkillParameters = {
   kickCooldown: 0.5,
   kickDuration: 0.35,
   kickWallStunDuration: 0.5,
+};
+
+export const defaultPolicePromotion: ProjectManifest["policePromotion"] = {
+  experienceToStar2: 1,
+  experienceToStar3: 2,
+  experienceToStar4: 2,
+  experienceToStar5: 3,
 };
 
 const policeDefinition = (
@@ -209,20 +285,16 @@ const policeDefinition = (
     pluginId: "police",
     policeStar: star,
     ...data,
-    skillParameters: { police: structuredClone(policeSkillParameters) },
+    skillParameters:
+      star === 5
+        ? { police: structuredClone(policeSkillParameters) }
+        : undefined,
     accent: ["", "#83c96f", "#5eb8ff", "#a58aff", "#ff9f58", "#ffd55e"][star],
     portraitAssetId: `police-${star}-idle`,
     victoryStyle: "cool",
     animations: {
       ...baseAnimations(`police-${star}`),
-      victory: clip(
-        "victory",
-        star === 5
-          ? ["police-5-skill-3", "police-5-idle"]
-          : [`police-${star}-attack-3`, `police-${star}-attack-2`],
-        true,
-        520,
-      ),
+      victory: victoryClip(`police-${star}`),
       ...(star === 5
         ? {
             skill: clip("skill", [
@@ -233,13 +305,16 @@ const policeDefinition = (
             reload: clip(
               "reload",
               [
-                "police-5-idle",
-                "police-5-reload",
-                "police-5-reload-2",
+                "police-5-reload-v2-1",
+                "police-5-reload-v2-2",
+                "police-5-reload-v2-3",
+                "police-5-reload-v2-4",
+                "police-5-reload-v2-5",
+                "police-5-reload-v2-6",
                 "police-5-idle",
               ],
               false,
-              620,
+              430,
             ),
           }
         : {}),
@@ -330,12 +405,7 @@ export const defaultCharacters: CharacterDefinition[] = [
         170,
       ),
       eatComplete: clip("eatComplete", ["panda-lazy-skill-4"], false, 650),
-      victory: clip(
-        "victory",
-        ["panda-lazy-skill-4", "panda-lazy-idle"],
-        true,
-        520,
-      ),
+      victory: victoryClip("panda-lazy"),
     },
     sounds: {
       attack: synth("panda-lazy-attack", "pandaGrunt", 0.62),
@@ -396,7 +466,7 @@ export const defaultCharacters: CharacterDefinition[] = [
       tunnelMove: clip("tunnelMove", ["mole-tunnel-2"], true, 120),
       tunnelEmerge: clip("tunnelEmerge", ["mole-tunnel-3"], false, 160),
       tunnelAttack: clip("tunnelAttack", ["mole-tunnel-4"], false, 160),
-      victory: clip("victory", ["mole-victory", "mole-idle"], true, 500),
+      victory: victoryClip("mole"),
     },
     sounds: {
       attack: synth("mole-attack", "moleSqueak", 0.65),
@@ -1015,6 +1085,7 @@ export const createDefaultManifest = (): ProjectManifest => ({
   assets: structuredClone(defaultAssets),
   characters: structuredClone(defaultCharacters),
   nameLibraries: structuredClone(defaultNameLibraries),
+  policePromotion: structuredClone(defaultPolicePromotion),
   boards: [
     structuredClone(defaultBoard),
     structuredClone(streamLandscapeBoard),
@@ -1043,6 +1114,61 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
   // also stay deleted; fresh default content is only for new projects.
   upgraded.nameLibraries ??= [];
   upgraded.backgroundMusic ??= structuredClone(defaults.backgroundMusic);
+  if (!upgraded.policePromotion) {
+    const legacyExperience = (
+      definitionId: string,
+      key:
+        | "killsToStar2"
+        | "killsToStar3"
+        | "killsToStar4"
+        | "killsToStar5",
+      fallback: number,
+    ) => {
+      const parameters = upgraded.characters.find(
+        (character) => character.id === definitionId,
+      )?.skillParameters?.police;
+      const configured = parameters?.[key] ?? parameters?.killsPerPromotion;
+      return Number.isFinite(configured)
+        ? Math.max(1, Math.round(configured as number))
+        : fallback;
+    };
+    upgraded.policePromotion = {
+      experienceToStar2: legacyExperience(
+        "police-1",
+        "killsToStar2",
+        defaultPolicePromotion.experienceToStar2,
+      ),
+      experienceToStar3: legacyExperience(
+        "police-2",
+        "killsToStar3",
+        defaultPolicePromotion.experienceToStar3,
+      ),
+      experienceToStar4: legacyExperience(
+        "police-3",
+        "killsToStar4",
+        defaultPolicePromotion.experienceToStar4,
+      ),
+      experienceToStar5: legacyExperience(
+        "police-4",
+        "killsToStar5",
+        defaultPolicePromotion.experienceToStar5,
+      ),
+    };
+  }
+  const animationAssetIds = new Set(
+    upgraded.assets.map((existingAsset) => existingAsset.id),
+  );
+  for (const defaultAsset of defaults.assets) {
+    if (
+      (defaultAsset.id.includes("-entrance-v2-") ||
+        defaultAsset.id.includes("-victory-v2-") ||
+        defaultAsset.id.includes("-reload-v2-")) &&
+      !animationAssetIds.has(defaultAsset.id)
+    ) {
+      upgraded.assets.push(structuredClone(defaultAsset));
+      animationAssetIds.add(defaultAsset.id);
+    }
+  }
   for (const contestant of upgraded.setup.contestants) {
     contestant.nameColor ??= contestant.color;
   }
@@ -1050,6 +1176,62 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
   for (const defaultCharacter of defaults.characters) {
     const character = upgraded.characters.find((item) => item.id === defaultCharacter.id);
     if (!character) continue;
+    const matchesLegacyClip = (
+      current: AnimationClip | undefined,
+      legacy: AnimationClip,
+    ) => JSON.stringify(current) === JSON.stringify(legacy);
+    const legacyVictory =
+      defaultCharacter.id === "panda-lazy"
+        ? clip(
+            "victory",
+            ["panda-lazy-skill-4", "panda-lazy-idle"],
+            true,
+            520,
+          )
+        : defaultCharacter.id === "mole"
+          ? clip("victory", ["mole-victory", "mole-idle"], true, 500)
+          : defaultCharacter.policeStar
+            ? clip(
+                "victory",
+                defaultCharacter.policeStar === 5
+                  ? ["police-5-skill-3", "police-5-idle"]
+                  : [
+                      `police-${defaultCharacter.policeStar}-attack-3`,
+                      `police-${defaultCharacter.policeStar}-attack-2`,
+                    ],
+                true,
+                520,
+              )
+            : undefined;
+    if (
+      legacyVictory &&
+      matchesLegacyClip(character.animations.victory, legacyVictory)
+    ) {
+      character.animations.victory = structuredClone(
+        defaultCharacter.animations.victory,
+      );
+    }
+    if (
+      defaultCharacter.id === "police-5" &&
+      matchesLegacyClip(
+        character.animations.reload,
+        clip(
+          "reload",
+          [
+            "police-5-idle",
+            "police-5-reload",
+            "police-5-reload-2",
+            "police-5-idle",
+          ],
+          false,
+          620,
+        ),
+      )
+    ) {
+      character.animations.reload = structuredClone(
+        defaultCharacter.animations.reload,
+      );
+    }
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
     if (defaultCharacter.skillParameters?.panda) {
       character.skillParameters ??= {};
@@ -1072,17 +1254,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         defaultCharacter.skillParameters.police,
       );
       const policeParameters = character.skillParameters.police;
-      const legacyPoliceParameters = policeParameters as typeof policeParameters & {
-        killsPerPromotion?: number;
-      };
-      const legacyKills = Math.max(
-        1,
-        Math.round(legacyPoliceParameters.killsPerPromotion ?? 2),
-      );
-      policeParameters.killsToStar2 ??= legacyKills;
-      policeParameters.killsToStar3 ??= legacyKills;
-      policeParameters.killsToStar4 ??= legacyKills;
-      policeParameters.killsToStar5 ??= legacyKills;
       policeParameters.gatlingMagazineSize ??=
         defaultCharacter.skillParameters.police.gatlingMagazineSize;
       policeParameters.gatlingReloadDuration ??=
@@ -1145,27 +1316,23 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.skillParameters.mole.tunnelSpeedMultiplier ??=
         moleSkillParameters.tunnelSpeedMultiplier;
     }
-    if (character.pluginId === "police") {
+    if (character.pluginId === "police" && character.policeStar === 5) {
       character.skillParameters ??= {};
       character.skillParameters.police ??= structuredClone(
         policeSkillParameters,
       );
       const parameters = character.skillParameters.police;
-      const legacy = parameters as typeof parameters & {
-        killsPerPromotion?: number;
-      };
-      const legacyKills = Math.max(
-        1,
-        Math.round(legacy.killsPerPromotion ?? 2),
-      );
-      parameters.killsToStar2 ??= legacyKills;
-      parameters.killsToStar3 ??= legacyKills;
-      parameters.killsToStar4 ??= legacyKills;
-      parameters.killsToStar5 ??= legacyKills;
       parameters.gatlingMagazineSize ??=
         policeSkillParameters.gatlingMagazineSize;
       parameters.gatlingReloadDuration ??=
         policeSkillParameters.gatlingReloadDuration;
+      parameters.kickRange ??= policeSkillParameters.kickRange;
+      parameters.kickDistance ??= policeSkillParameters.kickDistance;
+      parameters.kickDamage ??= policeSkillParameters.kickDamage;
+      parameters.kickCooldown ??= policeSkillParameters.kickCooldown;
+      parameters.kickDuration ??= policeSkillParameters.kickDuration;
+      parameters.kickWallStunDuration ??=
+        policeSkillParameters.kickWallStunDuration;
     }
     if (character.attack.mode === "melee") {
       character.attack.frontArcDegrees ??= 120;

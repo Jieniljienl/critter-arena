@@ -6,7 +6,11 @@ import {
   upgradeManifest,
 } from "../lib/game/defaultContent";
 import { removeBoardFromManifest } from "../lib/game/project";
-import { BattleSimulation, circleOverlapsRegion } from "../lib/game/simulation";
+import {
+  BattleSimulation,
+  UNIT_ENTRANCE_DURATION,
+  circleOverlapsRegion,
+} from "../lib/game/simulation";
 import { actionClipName } from "../lib/game/unitAnimation";
 import { isSkillVoiceEvent } from "../lib/game/audio";
 import type {
@@ -16,7 +20,24 @@ import type {
   RuntimeUnit,
 } from "../lib/game/types";
 
+const preparedSimulations = new WeakSet<BattleSimulation>();
+
 const runSteps = (simulation: BattleSimulation, count: number, dt = 1 / 60): void => {
+  const snapshot = simulation.getSnapshot();
+  if (
+    snapshot.status === "running" &&
+    snapshot.units.some((unit) => unit.action === "entering") &&
+    !preparedSimulations.has(simulation)
+  ) {
+    const leadInSteps = Math.max(
+      0,
+      Math.ceil(UNIT_ENTRANCE_DURATION / dt) - 1,
+    );
+    for (let index = 0; index < leadInSteps; index += 1) {
+      simulation.step(dt);
+    }
+    preparedSimulations.add(simulation);
+  }
   for (let index = 0; index < count; index += 1) simulation.step(dt);
 };
 
@@ -108,6 +129,45 @@ test("fixed-step simulation is deterministic for a repeated seed", () => {
   runSteps(first, 900);
   runSteps(second, 900);
   assert.deepEqual(first.getSnapshot(), second.getSnapshot());
+});
+
+test("initial contestants finish a protected 0.8 second entrance before combat", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  disableCombat(manifest);
+  for (const character of manifest.characters) character.speed = 0;
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  const initial = simulation.getSnapshot();
+  const initialPositions = initial.units.map((unit) => ({
+    id: unit.id,
+    x: unit.x,
+    y: unit.y,
+    hp: unit.hp,
+  }));
+  assert.ok(initial.units.every((unit) => unit.action === "entering"));
+  assert.ok(initial.units.every((unit) => unit.targetable === false));
+
+  simulation.step(UNIT_ENTRANCE_DURATION - 0.01);
+  const protectedSnapshot = simulation.getSnapshot();
+  assert.ok(protectedSnapshot.units.every((unit) => unit.action === "entering"));
+  assert.ok(protectedSnapshot.units.every((unit) => unit.targetable === false));
+  assert.deepEqual(
+    protectedSnapshot.units.map((unit) => ({
+      id: unit.id,
+      x: unit.x,
+      y: unit.y,
+      hp: unit.hp,
+    })),
+    initialPositions,
+  );
+
+  simulation.step(0.02);
+  const activeSnapshot = simulation.getSnapshot();
+  assert.ok(activeSnapshot.units.every((unit) => unit.action !== "entering"));
+  assert.ok(activeSnapshot.units.every((unit) => unit.targetable === true));
 });
 
 test("movement headings reroll with seeded horizontal-biased angular variation", () => {
@@ -318,8 +378,9 @@ test("hot spring healing persists for three seconds after leaving the region", (
     damage: 60,
     cooldown: 100,
     windup: 0,
-    mode: "melee",
-    frontArcDegrees: 360,
+    mode: "projectile",
+    projectileKind: "bullet",
+    projectileSpeed: 2_000,
   };
   panda.attack.range = 0;
   panda.attack.damage = 0;
@@ -483,6 +544,49 @@ test("holes remain open after repeated enemy crossings", () => {
   );
 });
 
+test("mole dig cooldown begins only after the new hole is completed", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  disableCombat(manifest);
+  const panda = definition(manifest, "panda-lazy");
+  const mole = definition(manifest, "mole");
+  panda.pluginId = undefined;
+  panda.speed = 0;
+  mole.speed = 0;
+  mole.skillParameters!.mole!.digDuration = 0.6;
+  mole.skillParameters!.mole!.digCooldown = 2;
+  mole.skillParameters!.mole!.minimumHoleDistance = 10_000;
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 1);
+  let snapshot = simulation.getSnapshot();
+  let runtimeMole = snapshot.units.find((unit) => unit.definitionId === "mole");
+  assert.ok(runtimeMole);
+  assert.equal(runtimeMole.action, "digging");
+  assert.ok(
+    runtimeMole.nextDigAt <= snapshot.time,
+    "the cooldown must not be consumed when the dig animation starts",
+  );
+
+  for (let step = 0; step < 60; step += 1) {
+    simulation.step(1 / 60);
+    snapshot = simulation.getSnapshot();
+    runtimeMole = snapshot.units.find((unit) => unit.definitionId === "mole");
+    assert.ok(runtimeMole);
+    if (snapshot.holes.length === 1 && runtimeMole.action !== "digging") break;
+  }
+
+  assert.equal(snapshot.holes.length, 1);
+  assert.ok(runtimeMole);
+  assert.notEqual(runtimeMole.action, "digging");
+  assert.ok(
+    Math.abs(runtimeMole.nextDigAt - snapshot.time - 2) <= 1 / 60 + 1e-9,
+    "the full configured cooldown should remain at hole completion",
+  );
+});
+
 test("a mole's holes are removed with the owner and the death fade completes", () => {
   const manifest = twoFighterManifest();
   const panda = definition(manifest, "panda-lazy");
@@ -494,7 +598,9 @@ test("a mole's holes are removed with the owner and the death fade completes", (
     damage: 999,
     cooldown: 10,
     windup: 1.2,
-    mode: "melee",
+    mode: "projectile",
+    projectileKind: "bullet",
+    projectileSpeed: 2_000,
   };
   mole.speed = 0;
   mole.attack.range = 0;
@@ -677,6 +783,7 @@ test("five-star kick moves the attacker over time and stuns it after a boundary 
       knockedAt = simulation.getSnapshot().time;
       knockedX = unit.x;
       assert.equal(unit.knockbackData?.hitBoundary, true);
+      assert.equal(unit.meleeTargetId, undefined);
       break;
     }
   }
@@ -705,6 +812,7 @@ test("five-star kick moves the attacker over time and stuns it after a boundary 
   }
   assert.ok(stunned);
   assert.equal(stunned.x, board.width - stunned.radius);
+  assert.equal(stunned.meleeTargetId, undefined);
   assert.ok(stunned.stunnedUntil - simulation.getSnapshot().time > 0.45);
 
   const stunnedPosition = stunned.x;
@@ -791,8 +899,9 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
     damage: 10,
     cooldown: 0.25,
     windup: 0,
-    mode: "melee",
-    frontArcDegrees: 360,
+    mode: "projectile",
+    projectileKind: "bullet",
+    projectileSpeed: 2_000,
   };
   manifest.setup.contestants[0].position = { x: 250, y: 250 };
   manifest.setup.contestants[1].position = { x: 1200, y: 700 };
@@ -811,6 +920,8 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
     }
   }
   assert.equal(sawPoliceCall, true);
+  simulation.step();
+  callSnapshot = simulation.getSnapshot();
   const callingPanda = callSnapshot.units.find(
     (unit) => unit.definitionId === "panda-lazy",
   );
@@ -821,6 +932,8 @@ test("a panda remains targetable and keeps taking direct attacks while eating ba
     (unit) => unit.policeStar === 1 && !unit.main,
   );
   assert.ok(protectivePolice);
+  assert.equal(protectivePolice.action, "entering");
+  assert.equal(protectivePolice.targetable, false);
   assert.equal(protectivePolice.sustainsFaction, true);
   assert.equal(protectivePolice.factionId, callingPanda.factionId);
 
@@ -931,6 +1044,148 @@ test("a mole can ambush through a single nearby hole and stays immune to new dam
     snapshot.events.some((event) => event.message.includes("同一洞口突袭")),
     "the single-hole ambush animation path should be selected",
   );
+});
+
+test("mole ambush cooldown begins after emergence or a completed return", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  const mole = definition(manifest, "mole");
+  const panda = definition(manifest, "panda-lazy");
+  mole.speed = 150;
+  mole.attack.range = -100;
+  mole.skillParameters!.mole!.digDuration = 0.1;
+  mole.skillParameters!.mole!.digCooldown = 100;
+  mole.skillParameters!.mole!.ambushRange = 300;
+  mole.skillParameters!.mole!.ambushCooldown = 2;
+  mole.skillParameters!.mole!.tunnelDuration = 0.2;
+  panda.pluginId = undefined;
+  panda.speed = 0;
+  panda.maxHp = 10_000;
+  panda.attack.range = 0;
+  panda.attack.damage = 0;
+  manifest.setup.contestants[0].position = { x: 250, y: 250 };
+  manifest.setup.contestants[1].position = { x: 390, y: 250 };
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  let sawAmbush = false;
+  let completedAt: number | undefined;
+  let completedMole: RuntimeUnit | undefined;
+  for (let step = 0; step < 240; step += 1) {
+    simulation.step(1 / 60);
+    const snapshot = simulation.getSnapshot();
+    const runtimeMole = snapshot.units.find(
+      (unit) => unit.definitionId === "mole",
+    );
+    assert.ok(runtimeMole);
+    if (runtimeMole.tunnelData?.mode === "ambush") {
+      sawAmbush = true;
+      assert.ok(
+        runtimeMole.nextAmbushAt <= snapshot.time,
+        "ambush cooldown must remain unused throughout the tunnel action",
+      );
+    } else if (sawAmbush && runtimeMole.action !== "tunneling") {
+      completedAt = snapshot.time;
+      completedMole = runtimeMole;
+      break;
+    }
+  }
+
+  assert.equal(sawAmbush, true);
+  assert.ok(completedAt !== undefined);
+  assert.ok(completedMole);
+  assert.ok(
+    Math.abs(completedMole.nextAmbushAt - completedAt - 2) <=
+      1 / 60 + 1e-9,
+    "the full cooldown should remain when the mole becomes targetable again",
+  );
+});
+
+test("random tunnel travel does not consume the ambush cooldown", () => {
+  const manifest = createDefaultManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.unitScale = 1;
+  const mole = definition(manifest, "mole");
+  const panda = definition(manifest, "panda-lazy");
+  mole.speed = 0;
+  mole.attack.range = -100;
+  mole.skillParameters!.mole!.digDuration = 0.1;
+  mole.skillParameters!.mole!.digCooldown = 100;
+  mole.skillParameters!.mole!.ambushRange = 0;
+  mole.skillParameters!.mole!.ambushCooldown = 7;
+  mole.skillParameters!.mole!.tunnelDuration = 0.2;
+  mole.skillParameters!.mole!.tunnelChance = 1;
+  panda.pluginId = undefined;
+  panda.speed = 0;
+  panda.attack.range = 0;
+  panda.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "travel-mole-a",
+      definitionId: "mole",
+      displayName: "地道甲",
+      position: { x: 250, y: 450 },
+      direction: { x: 1, y: 0 },
+      color: "#ff8b62",
+      teamId: "red",
+    },
+    {
+      id: "travel-mole-b",
+      definitionId: "mole",
+      displayName: "地道乙",
+      position: { x: 800, y: 450 },
+      direction: { x: -1, y: 0 },
+      color: "#ff8b62",
+      teamId: "red",
+    },
+    {
+      id: "travel-observer",
+      definitionId: "panda-lazy",
+      displayName: "远处观察员",
+      position: { x: 1_400, y: 750 },
+      direction: { x: -1, y: 0 },
+      color: "#55a7ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  const runtimeHarness = simulation as unknown as {
+    units: Map<string, RuntimeUnit>;
+  };
+  let primedEntry = false;
+  let travelerId: string | undefined;
+  let completedTraveler: RuntimeUnit | undefined;
+  for (let step = 0; step < 240; step += 1) {
+    simulation.step(1 / 60);
+    const snapshot = simulation.getSnapshot();
+    if (!primedEntry && snapshot.holes.length >= 2) {
+      const runtimeMole = runtimeHarness.units.get("travel-mole-a");
+      assert.ok(runtimeMole);
+      runtimeMole.lastHoleId = undefined;
+      primedEntry = true;
+      continue;
+    }
+    const traveler = snapshot.units.find(
+      (unit) => unit.tunnelData?.mode === "travel",
+    );
+    if (traveler) travelerId = traveler.id;
+    if (travelerId) {
+      const current = snapshot.units.find((unit) => unit.id === travelerId);
+      assert.ok(current);
+      if (current.action !== "tunneling") {
+        completedTraveler = current;
+        break;
+      }
+    }
+  }
+
+  assert.equal(primedEntry, true);
+  assert.ok(completedTraveler);
+  assert.equal(completedTraveler.nextAmbushAt, 0);
 });
 
 test("mole tunnel travel uses the editable movement-speed multiplier", () => {
@@ -1243,8 +1498,9 @@ test("a panda's summoned police keeps its faction alive after the panda dies", (
     damage: 1,
     cooldown: 0.05,
     windup: 0,
-    mode: "melee",
-    frontArcDegrees: 360,
+    mode: "projectile",
+    projectileKind: "bullet",
+    projectileSpeed: 2_000,
   };
   for (const police of manifest.characters.filter((character) => character.policeStar)) {
     police.maxHp = 1_000;
@@ -1356,7 +1612,9 @@ test("main-character kills use concise announcements and report rapid multi-kill
     damage: 999,
     cooldown: 0.35,
     windup: 0,
-    mode: "melee",
+    mode: "projectile",
+    projectileKind: "bullet",
+    projectileSpeed: 2_000,
   };
 
   for (const target of [
@@ -1488,13 +1746,10 @@ test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars"
       damage: 100,
       cooldown: 0.05,
       windup: 0,
-      mode: "melee",
-      frontArcDegrees: 360,
+      mode: "projectile",
+      projectileKind: "bullet",
+      projectileSpeed: 2_000,
     };
-    police.skillParameters!.police!.killsToStar2 = 1;
-    police.skillParameters!.police!.killsToStar3 = 2;
-    police.skillParameters!.police!.killsToStar4 = 2;
-    police.skillParameters!.police!.killsToStar5 = 3;
   }
   const target = definition(manifest, "mole");
   target.pluginId = undefined;
@@ -1542,6 +1797,12 @@ test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars"
     "personal kill promotions should switch to the promoted officer appearance",
   );
   assert.equal(officer.policeKillProgress, 0);
+  assert.equal(officer.maxHp, definition(manifest, "police-5").maxHp);
+  assert.equal(officer.hp, officer.maxHp);
+  assert.equal(
+    Math.round(Math.hypot(officer.vx, officer.vy)),
+    definition(manifest, "police-5").speed,
+  );
   assert.equal(officer.factionId, "team:red");
   assert.equal(officer.main, true);
   const promotions = snapshot.events.filter(
@@ -1600,6 +1861,38 @@ test("default movement speeds match character weight while saved speeds remain u
   for (const [definitionId, speed] of savedSpeeds) {
     assert.equal(definition(upgraded, definitionId).speed, speed);
   }
+});
+
+test("legacy per-character police experience migrates once into the shared promotion table", () => {
+  const legacy = createDefaultManifest() as Omit<
+    ProjectManifest,
+    "policePromotion"
+  > & {
+    policePromotion?: ProjectManifest["policePromotion"];
+  };
+  delete legacy.policePromotion;
+  const legacyRequirements = [4, 5, 6, 7];
+  for (const [index, requirement] of legacyRequirements.entries()) {
+    const character = definition(legacy as ProjectManifest, `police-${index + 1}`);
+    character.skillParameters ??= {};
+    character.skillParameters.police = {
+      killsPerPromotion: requirement,
+    } as NonNullable<
+      NonNullable<CharacterDefinition["skillParameters"]>["police"]
+    >;
+  }
+
+  const upgraded = upgradeManifest(legacy as ProjectManifest);
+  assert.deepEqual(upgraded.policePromotion, {
+    experienceToStar2: 4,
+    experienceToStar3: 5,
+    experienceToStar4: 6,
+    experienceToStar5: 7,
+  });
+  assert.deepEqual(
+    upgradeManifest(upgraded).policePromotion,
+    upgraded.policePromotion,
+  );
 });
 
 test("ready formation positions can sync without advancing or rebuilding the battle clock", () => {
@@ -2145,12 +2438,18 @@ test("spoken voice is restricted to skill events and every default role has skil
 test("default settlement and rescue/reload actions use distinct animation frames", () => {
   const manifest = createDefaultManifest();
   for (const character of manifest.characters) {
+    const entranceFrames = character.animations.entrance?.frames.map(
+      (frame) => frame.assetId,
+    );
+    assert.ok(entranceFrames);
+    assert.equal(entranceFrames.length, 4);
+    assert.ok(entranceFrames.slice(0, 3).every((frame) => frame.includes("-entrance-v2-")));
     const frames = character.animations.victory?.frames.map(
       (frame) => frame.assetId,
     );
     assert.ok(frames);
-    assert.ok(frames.length >= 2);
-    assert.ok(new Set(frames).size >= 2);
+    assert.equal(frames.length, 6);
+    assert.ok(frames.some((frame) => frame.includes("-victory-v2-")));
   }
   const panda = definition(manifest, "panda-lazy");
   assert.deepEqual(
@@ -2158,15 +2457,17 @@ test("default settlement and rescue/reload actions use distinct animation frames
     ["panda-lazy-sos", "panda-lazy-sos-2", "panda-lazy-idle"],
   );
   const heavy = definition(manifest, "police-5");
-  assert.ok(
-    heavy.animations.reload.frames.some(
-      (frame) => frame.assetId === "police-5-reload",
-    ),
-  );
-  assert.ok(
-    heavy.animations.reload.frames.some(
-      (frame) => frame.assetId === "police-5-reload-2",
-    ),
+  assert.deepEqual(
+    heavy.animations.reload.frames.map((frame) => frame.assetId),
+    [
+      "police-5-reload-v2-1",
+      "police-5-reload-v2-2",
+      "police-5-reload-v2-3",
+      "police-5-reload-v2-4",
+      "police-5-reload-v2-5",
+      "police-5-reload-v2-6",
+      "police-5-idle",
+    ],
   );
 });
 
@@ -2272,6 +2573,233 @@ test("a living panda globally refreshes one bamboo at a time up to the configure
     snapshot.props.filter((prop) => prop.type === "bamboo" && prop.active).length,
     3,
   );
+});
+
+test("melee pursuit reaches physical contact before the hit frame can deal damage", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 800;
+  board.height = 400;
+  board.unitScale = 1;
+  const panda = definition(manifest, "panda-lazy");
+  const mole = definition(manifest, "mole");
+  panda.pluginId = undefined;
+  panda.speed = 120;
+  panda.attack = {
+    range: 500,
+    damage: 25,
+    cooldown: 100,
+    windup: 0.3,
+    mode: "melee",
+    frontArcDegrees: 360,
+  };
+  mole.pluginId = undefined;
+  mole.speed = 0;
+  mole.maxHp = 100;
+  mole.attack.range = -100;
+  mole.attack.damage = 0;
+  manifest.setup.contestants[0].position = { x: 100, y: 200 };
+  manifest.setup.contestants[0].direction = { x: 1, y: 0 };
+  manifest.setup.contestants[1].position = { x: 500, y: 200 };
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 1);
+  let snapshot = simulation.getSnapshot();
+  let attacker = snapshot.units.find(
+    (unit) => unit.definitionId === "panda-lazy",
+  );
+  let target = snapshot.units.find((unit) => unit.definitionId === "mole");
+  assert.ok(attacker);
+  assert.ok(target);
+  assert.equal(attacker.action, "meleeApproach");
+  assert.equal(target.hp, target.maxHp);
+
+  runSteps(simulation, 60);
+  snapshot = simulation.getSnapshot();
+  attacker = snapshot.units.find((unit) => unit.definitionId === "panda-lazy");
+  target = snapshot.units.find((unit) => unit.definitionId === "mole");
+  assert.ok(attacker);
+  assert.ok(target);
+  assert.equal(target.hp, target.maxHp, "configured range must not deal remote damage");
+
+  let contactSnapshot: ReturnType<BattleSimulation["getSnapshot"]> | undefined;
+  for (let step = 0; step < 180; step += 1) {
+    simulation.step(1 / 60);
+    const current = simulation.getSnapshot();
+    const currentAttacker = current.units.find(
+      (unit) => unit.definitionId === "panda-lazy",
+    );
+    if (currentAttacker?.action === "attack") {
+      contactSnapshot = current;
+      break;
+    }
+  }
+  assert.ok(contactSnapshot);
+  attacker = contactSnapshot.units.find(
+    (unit) => unit.definitionId === "panda-lazy",
+  );
+  target = contactSnapshot.units.find((unit) => unit.definitionId === "mole");
+  assert.ok(attacker);
+  assert.ok(target);
+  assert.equal(target.hp, target.maxHp);
+  assert.ok(
+    Math.hypot(target.x - attacker.x, target.y - attacker.y) <=
+      attacker.radius + target.radius + 4 + 1e-9,
+    "the attack animation should begin at circle contact",
+  );
+
+  let hitSnapshot: ReturnType<BattleSimulation["getSnapshot"]> | undefined;
+  for (let step = 0; step < 30; step += 1) {
+    simulation.step(1 / 60);
+    const current = simulation.getSnapshot();
+    const currentTarget = current.units.find(
+      (unit) => unit.definitionId === "mole",
+    );
+    if (currentTarget && currentTarget.hp < currentTarget.maxHp) {
+      hitSnapshot = current;
+      break;
+    }
+  }
+  assert.ok(hitSnapshot);
+  attacker = hitSnapshot.units.find(
+    (unit) => unit.definitionId === "panda-lazy",
+  );
+  target = hitSnapshot.units.find((unit) => unit.definitionId === "mole");
+  assert.ok(attacker);
+  assert.ok(target);
+  assert.ok(
+    Math.hypot(target.x - attacker.x, target.y - attacker.y) <=
+      attacker.radius + target.radius + 4 + 1e-9,
+    "the hit frame must revalidate physical contact",
+  );
+});
+
+test("zero-range melee still attacks on contact and abandons invalid pursuits", () => {
+  const contactManifest = twoFighterManifest();
+  const contactBoard = selectedBoard(contactManifest);
+  contactBoard.props = [];
+  contactBoard.width = 700;
+  contactBoard.height = 400;
+  contactBoard.unitScale = 1;
+  const contactPanda = definition(contactManifest, "panda-lazy");
+  const contactMole = definition(contactManifest, "mole");
+  contactPanda.pluginId = undefined;
+  contactPanda.speed = 0;
+  contactPanda.attack = {
+    range: 0,
+    damage: 20,
+    cooldown: 100,
+    windup: 0,
+    mode: "melee",
+    frontArcDegrees: 360,
+  };
+  contactMole.pluginId = undefined;
+  contactMole.speed = 0;
+  contactMole.attack.range = -100;
+  contactMole.attack.damage = 0;
+  contactManifest.setup.contestants[0].position = { x: 300, y: 200 };
+  contactManifest.setup.contestants[1].position = { x: 368, y: 200 };
+
+  const contactSimulation = new BattleSimulation(contactManifest);
+  contactSimulation.start();
+  runSteps(contactSimulation, 3);
+  const contactedTarget = contactSimulation
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "mole");
+  assert.ok(contactedTarget);
+  assert.equal(contactedTarget.hp, contactedTarget.maxHp - 20);
+
+  const pursuitManifest = structuredClone(contactManifest);
+  const pursuitPanda = definition(pursuitManifest, "panda-lazy");
+  pursuitPanda.speed = 30;
+  pursuitPanda.attack.range = 100;
+  pursuitPanda.attack.windup = 0.2;
+  pursuitManifest.setup.contestants[0].position = { x: 300, y: 200 };
+  pursuitManifest.setup.contestants[1].position = { x: 450, y: 200 };
+  const pursuitSimulation = new BattleSimulation(pursuitManifest);
+  pursuitSimulation.start();
+  runSteps(pursuitSimulation, 1);
+  let pursuitSnapshot = pursuitSimulation.getSnapshot();
+  let pursuingUnit = pursuitSnapshot.units.find(
+    (unit) => unit.definitionId === "panda-lazy",
+  );
+  assert.ok(pursuingUnit);
+  assert.equal(pursuingUnit.action, "meleeApproach");
+  assert.ok(pursuingUnit.meleeTargetId);
+
+  const pursuitHarness = pursuitSimulation as unknown as {
+    units: Map<string, RuntimeUnit>;
+  };
+  const runtimeTarget = [...pursuitHarness.units.values()].find(
+    (unit) => unit.definitionId === "mole",
+  );
+  assert.ok(runtimeTarget);
+  runtimeTarget.x = 650;
+  pursuitSimulation.step(1 / 60);
+  pursuitSnapshot = pursuitSimulation.getSnapshot();
+  pursuingUnit = pursuitSnapshot.units.find(
+    (unit) => unit.definitionId === "panda-lazy",
+  );
+  assert.ok(pursuingUnit);
+  assert.equal(pursuingUnit.action, "move");
+  assert.equal(pursuingUnit.meleeTargetId, undefined);
+
+  const tunnelingManifest = structuredClone(pursuitManifest);
+  const tunnelingSimulation = new BattleSimulation(tunnelingManifest);
+  tunnelingSimulation.start();
+  runSteps(tunnelingSimulation, 1);
+  const tunnelingHarness = tunnelingSimulation as unknown as {
+    units: Map<string, RuntimeUnit>;
+  };
+  const tunnelingTarget = [...tunnelingHarness.units.values()].find(
+    (unit) => unit.definitionId === "mole",
+  );
+  assert.ok(tunnelingTarget);
+  tunnelingTarget.targetable = false;
+  tunnelingTarget.action = "tunneling";
+  tunnelingSimulation.step(1 / 60);
+  const interruptedByTunnel = tunnelingSimulation
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "panda-lazy");
+  assert.ok(interruptedByTunnel);
+  assert.equal(interruptedByTunnel.action, "move");
+  assert.equal(interruptedByTunnel.meleeTargetId, undefined);
+
+  const deathManifest = structuredClone(pursuitManifest);
+  const deathSimulation = new BattleSimulation(deathManifest);
+  deathSimulation.start();
+  runSteps(deathSimulation, 1);
+  const deathSnapshot = deathSimulation.getSnapshot();
+  const deathAttacker = deathSnapshot.units.find(
+    (unit) => unit.definitionId === "panda-lazy",
+  );
+  const deathTarget = deathSnapshot.units.find(
+    (unit) => unit.definitionId === "mole",
+  );
+  assert.ok(deathAttacker);
+  assert.ok(deathTarget);
+  const deathHarness = deathSimulation as unknown as {
+    damageUnit(
+      targetId: string,
+      amount: number,
+      sourceUnitId: string | undefined,
+      source: "directAttack",
+    ): void;
+  };
+  deathHarness.damageUnit(
+    deathTarget.id,
+    deathTarget.maxHp,
+    deathAttacker.id,
+    "directAttack",
+  );
+  deathSimulation.step(1 / 60);
+  const interruptedByDeath = deathSimulation
+    .getSnapshot()
+    .units.find((unit) => unit.definitionId === "panda-lazy");
+  assert.ok(interruptedByDeath);
+  assert.equal(interruptedByDeath.meleeTargetId, undefined);
 });
 
 test("melee attacks only begin against close targets in the front arc", () => {

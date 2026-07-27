@@ -11,6 +11,13 @@ import {
   Upload,
 } from "lucide-react";
 import { removeFlatBackground } from "@/lib/game/imageProcessing";
+import {
+  abilityActivityForTrigger,
+  abilityTriggerLabel,
+  builtInSkillModulesFor,
+  type BuiltInSkillParameterGroup,
+  type BuiltInSkillParameterSource,
+} from "@/lib/game/skillPresentation";
 import { fileToDataUrl } from "@/lib/game/storage";
 import {
   type AbilityAction,
@@ -47,7 +54,6 @@ const makeLocalId = (prefix: string) => {
 };
 
 type SoundSlot = "attack" | "hit" | "hurt" | "skill" | "death";
-type SkillGroup = "panda" | "mole" | "police";
 
 const soundSlots: Array<[SoundSlot, string]> = [
   ["attack", "攻击"],
@@ -96,48 +102,6 @@ const skillPhrases = (character: CharacterDefinition): string[] => {
   return ["技能开张，节目效果来了。", "这一招先记在小本本上。"];
 };
 
-const skillFields: Record<
-  SkillGroup,
-  Array<{ key: string; label: string; fallback: number; min?: number; max?: number; step?: number }>
-> = {
-  panda: [
-    { key: "eatDuration", label: "进食耗时（秒）", fallback: 5, min: 0.1, step: 0.1 },
-    { key: "eatHeal", label: "吃竹回血", fallback: 100, min: 0 },
-    { key: "eatCooldown", label: "进食冷却（秒）", fallback: 5, min: 0, step: 0.1 },
-    { key: "bambooExtraRange", label: "竹子额外触发距离", fallback: 0, min: 0 },
-    { key: "policeSummonCooldown", label: "受击召警冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
-    { key: "policeCallDuration", label: "呼救动作时长（秒）", fallback: 0.7, min: 0.1, step: 0.05 },
-    { key: "policeMergePadding", label: "警察碰撞合并余量", fallback: 0, min: 0 },
-    { key: "bambooRespawnInterval", label: "竹子刷新间隔（秒）", fallback: 15, min: 0.1, step: 0.1 },
-    { key: "bambooRespawnLimit", label: "场上竹子上限", fallback: 3, min: 0, max: 99, step: 1 },
-  ],
-  mole: [
-    { key: "digCooldown", label: "挖洞冷却（秒）", fallback: 10, min: 0, step: 0.1 },
-    { key: "digDuration", label: "挖洞动作（秒）", fallback: 0.6, min: 0.1, step: 0.1 },
-    { key: "minimumHoleDistance", label: "洞口最小间距", fallback: 220, min: 0 },
-    { key: "holeRadius", label: "洞口范围半径", fallback: 80, min: 10 },
-    { key: "ambushRange", label: "钻洞偷袭范围", fallback: 150, min: 0 },
-    { key: "ambushCooldown", label: "偷袭冷却（秒）", fallback: 3, min: 0, step: 0.1 },
-    { key: "tunnelSpeedMultiplier", label: "钻地速度倍率（相对移速）", fallback: 2.5, min: 0.1, max: 50, step: 0.1 },
-    { key: "tunnelDuration", label: "钻洞最短动作时长（秒）", fallback: 1, min: 0.1, step: 0.1 },
-    { key: "tunnelChance", label: "随机钻洞概率", fallback: 0.2, min: 0, max: 1, step: 0.05 },
-  ],
-  police: [
-    { key: "killsToStar2", label: "1→2星经验格", fallback: 1, min: 1, max: 99 },
-    { key: "killsToStar3", label: "2→3星经验格", fallback: 2, min: 1, max: 99 },
-    { key: "killsToStar4", label: "3→4星经验格", fallback: 2, min: 1, max: 99 },
-    { key: "killsToStar5", label: "4→5星经验格", fallback: 3, min: 1, max: 99 },
-    { key: "gatlingMagazineSize", label: "五星弹仓容量（发）", fallback: 150, min: 1, max: 9999 },
-    { key: "gatlingReloadDuration", label: "五星换弹时间（秒）", fallback: 3, min: 0.05, step: 0.05 },
-    { key: "kickRange", label: "五星踹击范围", fallback: 160, min: 0 },
-    { key: "kickDistance", label: "五星踹飞距离", fallback: 140, min: 0 },
-    { key: "kickDamage", label: "五星踹击伤害", fallback: 25, min: 0 },
-    { key: "kickCooldown", label: "踹击冷却（秒）", fallback: 0.5, min: 0, step: 0.05 },
-    { key: "kickDuration", label: "踹击动作（秒）", fallback: 0.35, min: 0.05, step: 0.05 },
-    { key: "kickWallStunDuration", label: "撞墙眩晕（秒）", fallback: 0.5, min: 0, step: 0.05 },
-  ],
-};
-
 const defaultAction = (kind: AbilityAction["kind"]): AbilityAction => {
   if (kind === "heal") return { kind, amount: 20 };
   if (kind === "damageNearby") return { kind, amount: 10, radius: 180 };
@@ -161,6 +125,7 @@ export function CharacterEditor({
     () => new Map(manifest.assets.map((asset) => [asset.id, asset])),
     [manifest.assets],
   );
+  const builtInSkillModules = builtInSkillModulesFor(selected);
 
   const updateCharacter = (update: (character: CharacterDefinition) => void) => {
     const next = structuredClone(manifest);
@@ -231,6 +196,8 @@ export function CharacterEditor({
       | "idle"
       | "attack"
       | "skill"
+      | "entrance"
+      | "victory"
       | "callPolice"
       | "tunnelAttack"
       | "reload",
@@ -253,7 +220,14 @@ export function CharacterEditor({
       });
       frames.push({
         assetId: id,
-        durationMs: clipName === "idle" ? 500 : 140,
+        durationMs:
+          clipName === "idle"
+            ? 500
+            : clipName === "victory"
+              ? 220
+              : clipName === "entrance"
+                ? 180
+                : 140,
         marker:
           index === Math.floor(files.length / 2)
             ? clipName === "attack" || clipName === "tunnelAttack"
@@ -269,7 +243,7 @@ export function CharacterEditor({
     if (!character) return;
     character.animations[clipName] = {
       id: clipName,
-      loop: clipName === "idle",
+      loop: clipName === "idle" || clipName === "victory",
       frames,
     };
     if (clipName === "idle") {
@@ -288,6 +262,10 @@ export function CharacterEditor({
           ? "待机"
           : clipName === "attack"
             ? "普攻"
+            : clipName === "entrance"
+              ? "出场"
+              : clipName === "victory"
+                ? "获胜"
             : clipName === "tunnelAttack"
               ? "钻洞攻击"
               : clipName === "reload"
@@ -356,7 +334,11 @@ export function CharacterEditor({
     updateCharacter((character) => character.abilities.push(abilityModule));
   };
 
-  const updateSkillParameter = (group: SkillGroup, key: string, value: number) => {
+  const updateSkillParameter = (
+    group: BuiltInSkillParameterGroup,
+    key: string,
+    value: number,
+  ) => {
     updateCharacter((character) => {
       character.skillParameters ??= {};
       const parameters = character.skillParameters as unknown as Record<
@@ -366,6 +348,49 @@ export function CharacterEditor({
       parameters[group] ??= {};
       parameters[group]![key] = value;
     });
+  };
+
+  const updatePolicePromotion = (
+    key: keyof ProjectManifest["policePromotion"],
+    value: number,
+  ) => {
+    const next = structuredClone(manifest);
+    next.policePromotion[key] = Math.max(1, Math.round(value));
+    next.updatedAt = new Date().toISOString();
+    onChange(next);
+  };
+
+  const builtInParameterValue = (
+    source: BuiltInSkillParameterSource,
+    key: string,
+    fallback: number,
+  ): number => {
+    if (source === "policePromotion") {
+      return (
+        manifest.policePromotion[
+          key as keyof ProjectManifest["policePromotion"]
+        ] ?? fallback
+      );
+    }
+    const values = selected.skillParameters?.[source] as
+      | Record<string, number>
+      | undefined;
+    return values?.[key] ?? fallback;
+  };
+
+  const updateBuiltInParameter = (
+    source: BuiltInSkillParameterSource,
+    key: string,
+    value: number,
+  ) => {
+    if (source === "policePromotion") {
+      updatePolicePromotion(
+        key as keyof ProjectManifest["policePromotion"],
+        value,
+      );
+      return;
+    }
+    updateSkillParameter(source, key, value);
   };
 
   const setSoundStyle = (slot: SoundSlot, source: "synth" | "speech") => {
@@ -412,11 +437,6 @@ export function CharacterEditor({
       if (ability) update(ability);
     });
   };
-
-  const selectedSkillValues =
-    selected.pluginId && selected.skillParameters?.[selected.pluginId]
-      ? (selected.skillParameters[selected.pluginId] as unknown as Record<string, number>)
-      : undefined;
 
   return (
     <div className="editor-layout">
@@ -593,11 +613,11 @@ export function CharacterEditor({
               </label>
               <label>
                 {selected.attack.mode === "melee"
-                  ? "近战普攻范围（可自定义）"
+                  ? "近战追击距离"
                   : "普攻范围（可自定义）"}
                 <input
                   type="number"
-                  min={1}
+                  min={0}
                   step={1}
                   value={selected.attack.range}
                   onChange={(event) =>
@@ -607,6 +627,11 @@ export function CharacterEditor({
                     )
                   }
                 />
+                {selected.attack.mode === "melee" && (
+                  <small className="field-note">
+                    只决定开始追近的距离；身体接触后才会出招和结算伤害。
+                  </small>
+                )}
               </label>
               {selected.attack.mode === "melee" && (
                 <label>
@@ -906,46 +931,6 @@ export function CharacterEditor({
             </div>
           )}
 
-          {selected.pluginId && (
-            <div className="editor-card">
-              <div className="card-title">
-                <Sparkles size={17} />
-                <span>
-                  {selected.pluginId === "panda"
-                    ? "熊猫内置技能参数"
-                    : selected.pluginId === "mole"
-                      ? "地鼠内置技能参数"
-                      : "警察击杀升星与近身反制"}
-                </span>
-              </div>
-              <p className="editor-card-note">
-                内置行为也完全参数化；修改后重新部署战斗生效。
-                {selected.pluginId === "mole" && " 洞口创建后会持续存在，直到地鼠所属阵营彻底退场。"}
-              </p>
-              <div className="form-grid two-columns">
-                {skillFields[selected.pluginId].map((field) => (
-                  <label key={field.key}>
-                    {field.label}
-                    <input
-                      type="number"
-                      min={field.min}
-                      max={field.max}
-                      step={field.step ?? 1}
-                      value={selectedSkillValues?.[field.key] ?? field.fallback}
-                      onChange={(event) =>
-                        updateSkillParameter(
-                          selected.pluginId as SkillGroup,
-                          field.key,
-                          numeric(event.target.value, field.fallback),
-                        )
-                      }
-                    />
-                  </label>
-                ))}
-              </div>
-            </div>
-          )}
-
           <div className="editor-card">
             <div className="card-title">
               <ImagePlus size={17} />
@@ -964,6 +949,8 @@ export function CharacterEditor({
                 ["idle", "待机 / 移动", false],
                 ["attack", "普攻动作", true],
                 ["skill", "技能动作", true],
+                ["entrance", "出场动作", true],
+                ["victory", "获胜动作", true],
                 ["callPolice", "熊猫呼救动作", true],
                 ["tunnelAttack", "钻洞攻击动作", true],
                 ["reload", "五星换弹动作", true],
@@ -1158,27 +1145,132 @@ export function CharacterEditor({
             </div>
           </div>
 
-          <div className="editor-card">
+          <div className="editor-card skill-modules-card">
             <div className="card-title">
               <Sparkles size={17} />
               <span>技能模块</span>
             </div>
-            <div className="ability-list">
+            <p className="editor-card-note">
+              内置技能和扩展技能按真实战斗触发方式标注主动/被动；这些标注仅用于展示，不写入存档。
+            </p>
+            {builtInSkillModules.length > 0 && (
+              <>
+                <div className="skill-module-section-heading">
+                  <strong>内置技能</strong>
+                  <span>角色专属逻辑与共享规则</span>
+                </div>
+                <div className="skill-module-grid">
+                  {builtInSkillModules.map((module) => (
+                    <article
+                      className={`skill-module-card built-in-skill-module ${
+                        module.parameterSource === "policePromotion"
+                          ? "shared-promotion-card"
+                          : ""
+                      }`}
+                      key={module.id}
+                    >
+                      <div className="skill-module-heading">
+                        <div className="skill-module-title">
+                          <small>
+                            内置 ·{" "}
+                            {module.parameterSource === "panda"
+                              ? "熊猫"
+                              : module.parameterSource === "mole"
+                                ? "地鼠"
+                                : "警员"}
+                          </small>
+                          <strong>{module.title}</strong>
+                        </div>
+                        <span
+                          className={`skill-activity-badge is-${module.activity}`}
+                        >
+                          {module.activity === "active" ? "主动" : "被动"}
+                        </span>
+                      </div>
+                      <div className="skill-module-meta">
+                        <span>{module.triggerLabel}</span>
+                        {module.sharedLabel && (
+                          <span className="shared-parameter-badge">
+                            {module.sharedLabel}
+                          </span>
+                        )}
+                      </div>
+                      <p className="skill-module-description">
+                        {module.description}
+                      </p>
+                      <div
+                        className={`skill-module-fields ${
+                          module.parameterSource === "policePromotion"
+                            ? "promotion-chain"
+                            : ""
+                        }`}
+                      >
+                        {module.fields.map((field) => (
+                          <label key={`${module.id}-${field.key}`}>
+                            {field.label}
+                            <input
+                              type="number"
+                              min={field.min}
+                              max={field.max}
+                              step={field.step ?? 1}
+                              value={builtInParameterValue(
+                                module.parameterSource,
+                                field.key,
+                                field.fallback,
+                              )}
+                              onChange={(event) =>
+                                updateBuiltInParameter(
+                                  module.parameterSource,
+                                  field.key,
+                                  numeric(event.target.value, field.fallback),
+                                )
+                              }
+                            />
+                          </label>
+                        ))}
+                      </div>
+                    </article>
+                  ))}
+                </div>
+              </>
+            )}
+            <div className="skill-module-section-heading">
+              <strong>扩展技能</strong>
+              <span>通用触发器与效果模块</span>
+            </div>
+            <div className="skill-module-grid">
               {selected.abilities.length === 0 && (
-                <div className="empty-inline">内置特殊技能由插件提供；可继续叠加通用模块。</div>
+                <div className="empty-inline skill-module-empty">
+                  暂无扩展技能，可用下方预设添加。
+                </div>
               )}
               {selected.abilities.map((ability) => {
                 const action = ability.actions[0] ?? defaultAction("heal");
+                const activity = abilityActivityForTrigger(ability.trigger);
                 return (
-                  <article className="ability-editor" key={ability.id}>
-                    <div className="ability-editor-heading">
-                      <input
-                        aria-label="技能名称"
-                        value={ability.name}
-                        onChange={(event) =>
-                          updateAbility(ability.id, (item) => (item.name = event.target.value))
-                        }
-                      />
+                  <article
+                    className="ability-editor skill-module-card custom-skill-module"
+                    key={ability.id}
+                  >
+                    <div className="skill-module-heading custom-skill-module-heading">
+                      <div className="skill-module-title">
+                        <small>扩展技能</small>
+                        <input
+                          aria-label="技能名称"
+                          value={ability.name}
+                          onChange={(event) =>
+                            updateAbility(
+                              ability.id,
+                              (item) => (item.name = event.target.value),
+                            )
+                          }
+                        />
+                      </div>
+                      <span
+                        className={`skill-activity-badge is-${activity}`}
+                      >
+                        {activity === "active" ? "主动" : "被动"}
+                      </span>
                       <button
                         type="button"
                         className="icon-button danger"
@@ -1195,6 +1287,9 @@ export function CharacterEditor({
                         <Trash2 size={15} />
                       </button>
                     </div>
+                    <p className="skill-module-trigger">
+                      {abilityTriggerLabel(ability.trigger)}
+                    </p>
                     <div className="ability-editor-fields">
                       <label>
                         触发器

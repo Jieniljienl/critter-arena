@@ -22,27 +22,54 @@ export type ResolvedSkillVoice = {
   speechPitch: number;
 };
 
-export class SkillVoiceQueue<T extends object> {
-  private activeItem?: T;
-  private pendingItem?: T;
+export const SKILL_VOICE_PENDING_FRESHNESS_MS = 180;
+export const SKILL_VOICE_PREEMPT_AFTER_MS = 650;
+const MAX_SKILL_VOICE_DURATION_MS = 1_600;
 
-  enqueue(item: T): T | undefined {
+export type SkillVoiceStart<T> = {
+  item: T;
+  interruptActive: boolean;
+};
+
+export class SkillVoiceQueue<T extends object> {
+  private activeItem?: {
+    item: T;
+    startedAt: number;
+  };
+  private pendingItem?: {
+    item: T;
+    queuedAt: number;
+  };
+
+  enqueue(item: T, now: number): SkillVoiceStart<T> | undefined {
     if (!this.activeItem) {
-      this.activeItem = item;
-      return item;
+      this.activeItem = { item, startedAt: now };
+      return { item, interruptActive: false };
     }
-    this.pendingItem = item;
+    if (
+      now - this.activeItem.startedAt >=
+      SKILL_VOICE_PREEMPT_AFTER_MS
+    ) {
+      this.activeItem = { item, startedAt: now };
+      this.pendingItem = undefined;
+      return { item, interruptActive: true };
+    }
+    this.pendingItem = { item, queuedAt: now };
     return undefined;
   }
 
-  complete(): T | undefined {
+  complete(now: number): T | undefined {
     if (!this.activeItem) return undefined;
-    if (this.pendingItem) {
-      this.activeItem = this.pendingItem;
-      this.pendingItem = undefined;
-      return this.activeItem;
-    }
     this.activeItem = undefined;
+    const pending = this.pendingItem;
+    this.pendingItem = undefined;
+    if (
+      pending &&
+      now - pending.queuedAt <= SKILL_VOICE_PENDING_FRESHNESS_MS
+    ) {
+      this.activeItem = { item: pending.item, startedAt: now };
+      return pending.item;
+    }
     return undefined;
   }
 
@@ -114,6 +141,7 @@ export class ArenaAudio {
   private battleStatus: BattleStatus = "ready";
   private skillVoiceQueue = new SkillVoiceQueue<QueuedSkillVoice>();
   private speechEpoch = 0;
+  private skillVoiceTimeout?: ReturnType<typeof setTimeout>;
   private musicGain?: GainNode;
   private musicSource?: AudioBufferSourceNode;
   private musicConfig?: BackgroundMusicConfig;
@@ -328,12 +356,21 @@ export class ArenaAudio {
     }
     const resolvedVoice = resolveSkillVoice(cue, event);
     if (!resolvedVoice) return;
-    const ready = this.skillVoiceQueue.enqueue({
-      cueId: cue.id,
-      cueVolume: cue.volume,
-      voice: resolvedVoice,
-    });
-    if (ready) this.startSpeech(ready);
+    const ready = this.skillVoiceQueue.enqueue(
+      {
+        cueId: cue.id,
+        cueVolume: cue.volume,
+        voice: resolvedVoice,
+      },
+      performance.now(),
+    );
+    if (!ready) return;
+    if (ready.interruptActive) {
+      this.speechEpoch += 1;
+      this.clearSkillVoiceTimeout();
+      window.speechSynthesis.cancel();
+    }
+    this.startSpeech(ready.item);
   }
 
   private startSpeech(request: QueuedSkillVoice): void {
@@ -362,11 +399,17 @@ export class ArenaAudio {
     const finish = () => {
       if (settled || epoch !== this.speechEpoch) return;
       settled = true;
-      const next = this.skillVoiceQueue.complete();
+      this.clearSkillVoiceTimeout();
+      const next = this.skillVoiceQueue.complete(performance.now());
       if (next && this.battleStatus === "running") this.startSpeech(next);
     };
     utterance.onend = finish;
     utterance.onerror = finish;
+    this.skillVoiceTimeout = setTimeout(() => {
+      if (settled || epoch !== this.speechEpoch) return;
+      window.speechSynthesis.cancel();
+      finish();
+    }, MAX_SKILL_VOICE_DURATION_MS);
     try {
       window.speechSynthesis.speak(utterance);
     } catch {
@@ -374,8 +417,15 @@ export class ArenaAudio {
     }
   }
 
+  private clearSkillVoiceTimeout(): void {
+    if (this.skillVoiceTimeout === undefined) return;
+    clearTimeout(this.skillVoiceTimeout);
+    this.skillVoiceTimeout = undefined;
+  }
+
   private stopSkillVoices(): void {
     this.speechEpoch += 1;
+    this.clearSkillVoiceTimeout();
     this.skillVoiceQueue.clear();
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
   }

@@ -14,6 +14,7 @@ export const SKILL_VOICE_IDS = {
   moleAmbush: "mole:ambush",
   moleTunnel: "mole:tunnel",
   policePromotion: "police:promotion",
+  policeBatonRush: "police:baton-rush",
   policeGatling: "police:gatling",
   policeReload: "police:reload",
   policeKick: "police:kick",
@@ -120,6 +121,18 @@ const policeVoiceDescriptors = (
     legacySound: "merge",
     legacyPhraseIndex: 0,
   },
+  ...(star === 1
+    ? [
+        {
+          id: SKILL_VOICE_IDS.policeBatonRush,
+          label: "追击敲击",
+          effect: "锁定追踪 · 警棍敲击",
+          defaultProfile: profile("接受检查！", 1.14, 1.04),
+          legacySound: "baton" as const,
+          legacyPhraseIndex: 0,
+        },
+      ]
+    : []),
   ...(star === 5
     ? [
         {
@@ -278,6 +291,11 @@ const legacyBuiltInProfile = (
       "地面太挤，我换个洞口走。",
       1.12,
       1.24,
+    ),
+    [SKILL_VOICE_IDS.policeBatonRush]: profile(
+      "站住，接受警棍检查！",
+      1.08,
+      1.04,
     ),
     [SKILL_VOICE_IDS.policeGatling]: profile(
       "目标方向锁定，弹链开始咆哮。",

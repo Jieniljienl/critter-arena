@@ -1476,6 +1476,33 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 unit.radius * (2.6 + pulse * 0.35),
               );
             }
+            if (unit.action === "batonRush") {
+              const speed = Math.hypot(unit.vx, unit.vy);
+              if (speed > 0.001) {
+                const directionX = unit.vx / speed;
+                const directionY = unit.vy / speed;
+                const perpendicularX = -directionY;
+                const perpendicularY = directionX;
+                this.arenaGraphics.lineStyle(4, 0xdfff72, 0.42);
+                for (const offset of [-0.42, 0, 0.42]) {
+                  const side = offset * unit.radius;
+                  this.arenaGraphics.lineBetween(
+                    visualX -
+                      directionX * unit.radius * 0.9 +
+                      perpendicularX * side,
+                    visualY -
+                      directionY * unit.radius * 0.9 +
+                      perpendicularY * side,
+                    visualX -
+                      directionX * unit.radius * 2.4 +
+                      perpendicularX * side,
+                    visualY -
+                      directionY * unit.radius * 2.4 +
+                      perpendicularY * side,
+                  );
+                }
+              }
+            }
             const entranceProgress =
               unit.action === "entering" &&
               unit.actionUntil > unit.actionStartedAt
@@ -1520,7 +1547,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const scaleBump =
               callingForHelp
                 ? 1.1
-                : unit.action === "attack" || unit.action === "kick"
+                : unit.action === "attack" ||
+                    unit.action === "batonStrike" ||
+                    unit.action === "kick"
                 ? 1.12
                 : unit.action === "kill"
                   ? 1.22

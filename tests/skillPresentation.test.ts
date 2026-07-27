@@ -50,6 +50,11 @@ test("built-in skills are split into stable active/passive workshop modules", ()
         activity: "passive",
         sharedLabel: "五角色共享",
       },
+      {
+        title: "追击敲击",
+        activity: "active",
+        sharedLabel: undefined,
+      },
     ],
   );
 
@@ -65,7 +70,7 @@ test("built-in skills are split into stable active/passive workshop modules", ()
 });
 
 test("each built-in parameter belongs to exactly one displayed skill card", () => {
-  for (const id of ["panda-lazy", "mole", "police-5"]) {
+  for (const id of ["panda-lazy", "mole", "police-1", "police-5"]) {
     const fields = builtInSkillModulesFor(character(id)).flatMap((module) =>
       module.fields.map((field) => `${module.parameterSource}:${field.key}`),
     );

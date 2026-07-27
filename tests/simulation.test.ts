@@ -277,7 +277,7 @@ test("vertical-dominant movement remains uncommon across seeded headings", () =>
   assert.ok(units.some((unit) => unit.vx > 0));
 });
 
-test("mobile units periodically turn toward nearby hostiles without changing speed", () => {
+test("ordinary movement does not steer toward nearby hostile units", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.props = [];
@@ -320,24 +320,7 @@ test("mobile units periodically turn toward nearby hostiles without changing spe
   const initialSource = initial.units.find(
     (unit) => unit.id === "contact-steering-source",
   );
-  const initialTarget = initial.units.find(
-    (unit) => unit.id === "contact-steering-target",
-  );
   assert.ok(initialSource);
-  assert.ok(initialTarget);
-  const initialDistance = Math.hypot(
-    initialTarget.x - initialSource.x,
-    initialTarget.y - initialSource.y,
-  );
-  const initialTargetDirection = {
-    x: (initialTarget.x - initialSource.x) / initialDistance,
-    y: (initialTarget.y - initialSource.y) / initialDistance,
-  };
-  const initialSpeed = Math.hypot(initialSource.vx, initialSource.vy);
-  const initialAlignment =
-    (initialSource.vx * initialTargetDirection.x +
-      initialSource.vy * initialTargetDirection.y) /
-    initialSpeed;
 
   simulation.start();
   runSteps(simulation, 60);
@@ -345,31 +328,15 @@ test("mobile units periodically turn toward nearby hostiles without changing spe
   const steeredSource = steered.units.find(
     (unit) => unit.id === "contact-steering-source",
   );
-  const steeredTarget = steered.units.find(
-    (unit) => unit.id === "contact-steering-target",
-  );
   assert.ok(steeredSource);
-  assert.ok(steeredTarget);
-  const steeredDistance = Math.hypot(
-    steeredTarget.x - steeredSource.x,
-    steeredTarget.y - steeredSource.y,
-  );
-  const steeredTargetDirection = {
-    x: (steeredTarget.x - steeredSource.x) / steeredDistance,
-    y: (steeredTarget.y - steeredSource.y) / steeredDistance,
-  };
   const steeredSpeed = Math.hypot(steeredSource.vx, steeredSource.vy);
-  const steeredAlignment =
-    (steeredSource.vx * steeredTargetDirection.x +
-      steeredSource.vy * steeredTargetDirection.y) /
-    steeredSpeed;
 
-  assert.ok(steeredAlignment > initialAlignment + 0.08);
-  assert.ok(steeredDistance < initialDistance);
+  assert.ok(Math.abs(steeredSource.vx - initialSource.vx) < 1e-9);
+  assert.ok(Math.abs(steeredSource.vy - initialSource.vy) < 1e-9);
   assert.ok(Math.abs(steeredSpeed - sourceDefinition.speed) < 1e-9);
 });
 
-test("nearby enemies suppress tangential movement instead of orbiting each other", () => {
+test("nearby enemies do not redirect ordinary movement", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.props = [];
@@ -377,6 +344,7 @@ test("nearby enemies suppress tangential movement instead of orbiting each other
   board.height = 600;
   board.unitScale = 1;
   const officer = definition(manifest, "police-1");
+  officer.pluginId = undefined;
   officer.speed = 120;
   officer.attack.damage = 0;
   officer.attack.cooldown = 100;
@@ -404,7 +372,6 @@ test("nearby enemies suppress tangential movement instead of orbiting each other
   runSteps(simulation, 1);
   const harness = simulation as unknown as {
     units: Map<string, RuntimeUnit>;
-    nextHostileSteerAt: Map<string, number>;
   };
   const left = harness.units.get("orbit-left");
   const right = harness.units.get("orbit-right");
@@ -420,28 +387,15 @@ test("nearby enemies suppress tangential movement instead of orbiting each other
   right.vx = 0;
   right.vy = -officer.speed;
   right.nextAttackAt = 999;
-  harness.nextHostileSteerAt.set(left.id, 999);
-  harness.nextHostileSteerAt.set(right.id, 999);
-  const gapBefore =
-    Math.hypot(left.x - right.x, left.y - right.y) -
-    left.radius -
-    right.radius;
 
   simulation.step(1 / 60);
-  assert.ok(left.vx > officer.speed * 0.99);
-  assert.ok(right.vx < -officer.speed * 0.99);
-  assert.ok(Math.abs(left.vy) < 0.01);
-  assert.ok(Math.abs(right.vy) < 0.01);
-
-  runSteps(simulation, 20);
-  const gapAfter =
-    Math.hypot(left.x - right.x, left.y - right.y) -
-    left.radius -
-    right.radius;
-  assert.ok(gapAfter < gapBefore - 60);
+  assert.ok(Math.abs(left.vx) < 0.01);
+  assert.ok(Math.abs(right.vx) < 0.01);
+  assert.ok(left.vy > officer.speed * 0.99);
+  assert.ok(right.vy < -officer.speed * 0.99);
 });
 
-test("contact steering ignores closer allies and unavailable hostile units", () => {
+test("allies and unavailable enemies do not influence random movement", () => {
   const manifest = createDefaultManifest();
   manifest.setup.boardId = "stream-landscape";
   const board = selectedBoard(manifest);
@@ -530,60 +484,146 @@ test("contact steering ignores closer allies and unavailable hostile units", () 
   assert.ok(steeredSource);
   const steeredVerticalShare =
     steeredSource.vy / Math.hypot(steeredSource.vx, steeredSource.vy);
+  assert.ok(Math.abs(steeredVerticalShare - initialVerticalShare) < 1e-9);
+});
+
+test("axis-aligned wall reflections receive a random deviation", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 800;
+  board.height = 600;
+  board.unitScale = 1;
+  const sourceDefinition = definition(manifest, "panda-lazy");
+  const targetDefinition = definition(manifest, "mole");
+  sourceDefinition.pluginId = undefined;
+  sourceDefinition.speed = 100;
+  sourceDefinition.attack.range = -100;
+  sourceDefinition.attack.damage = 0;
+  targetDefinition.pluginId = undefined;
+  targetDefinition.speed = 0;
+  targetDefinition.attack.range = -100;
+  targetDefinition.attack.damage = 0;
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 60);
+  const harness = simulation as unknown as {
+    units: Map<string, RuntimeUnit>;
+  };
+  const source = harness.units.get(manifest.setup.contestants[0].id);
+  assert.ok(source);
+  source.x = board.width - source.radius - 1;
+  source.y = board.height / 2;
+  source.vx = sourceDefinition.speed;
+  source.vy = 0;
+  source.nextAttackAt = 999;
+
+  simulation.step(0.05);
+  assert.ok(source.vx < 0, "reflection must still point back into the board");
   assert.ok(
-    steeredVerticalShare > initialVerticalShare + 0.08,
-    "the source should turn toward the valid hostile below instead of the closer ally or unavailable hostile",
+    Math.abs(source.vy) > sourceDefinition.speed * 0.15,
+    "an axis-aligned reflection should gain a visible off-axis component",
+  );
+  assert.ok(
+    Math.abs(Math.hypot(source.vx, source.vy) - sourceDefinition.speed) < 1e-9,
   );
 });
 
-test("default formations meet the hostile contact timing target across 50 seeds", () => {
-  const firstContactTimes: number[] = [];
-  for (let seed = 1; seed <= 50; seed += 1) {
-    const manifest = createDefaultManifest();
-    manifest.setup.seed = seed;
-    const simulation = new BattleSimulation(manifest);
-    simulation.start();
-    let firstContactAt = Number.POSITIVE_INFINITY;
-    for (let frame = 0; frame < 600; frame += 1) {
-      simulation.step(1 / 60);
-      const units = simulation
-        .getSnapshot()
-        .units.filter((unit) => unit.hp > 0 && unit.targetable);
-      let contacted = false;
-      for (let leftIndex = 0; leftIndex < units.length; leftIndex += 1) {
-        for (
-          let rightIndex = leftIndex + 1;
-          rightIndex < units.length;
-          rightIndex += 1
-        ) {
-          const left = units[leftIndex];
-          const right = units[rightIndex];
-          if (
-            left.factionId !== right.factionId &&
-            Math.hypot(left.x - right.x, left.y - right.y) <=
-              left.radius + right.radius + 4
-          ) {
-            firstContactAt = (frame + 1) / 60;
-            contacted = true;
-            break;
-          }
-        }
-        if (contacted) break;
-      }
-      if (contacted) break;
-    }
-    firstContactTimes.push(firstContactAt);
-  }
+test("one-star police tracks one hostile, strikes once, and then ends the skill", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.width = 1_000;
+  board.height = 600;
+  board.unitScale = 1;
+  const officerDefinition = definition(manifest, "police-1");
+  const targetDefinition = definition(manifest, "mole");
+  officerDefinition.attack.damage = 27;
+  officerDefinition.attack.cooldown = 100;
+  assert.ok(officerDefinition.skillParameters?.police);
+  officerDefinition.skillParameters.police.batonRushCooldown = 10;
+  targetDefinition.pluginId = undefined;
+  targetDefinition.speed = 70;
+  targetDefinition.attack.range = -100;
+  targetDefinition.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "baton-rush-officer",
+      definitionId: officerDefinition.id,
+      displayName: "追击警察",
+      position: { x: 150, y: 300 },
+      direction: { x: 1, y: 0 },
+      color: "#83c96f",
+      teamId: "red",
+    },
+    {
+      id: "baton-rush-target",
+      definitionId: targetDefinition.id,
+      displayName: "移动目标",
+      position: { x: 780, y: 300 },
+      direction: { x: 1, y: 0 },
+      color: "#ed8f63",
+      teamId: "blue",
+    },
+  ];
 
-  const sorted = [...firstContactTimes].sort((left, right) => left - right);
-  const median = (sorted[24] + sorted[25]) / 2;
-  const percentile90 = sorted[Math.ceil(sorted.length * 0.9) - 1];
-  assert.ok(firstContactTimes.every((time) => time <= 10));
-  assert.ok(median <= 3 + 1e-9, `median contact time was ${median.toFixed(3)}s`);
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 1);
+  let snapshot = simulation.getSnapshot();
+  let officer = snapshot.units.find((unit) => unit.id === "baton-rush-officer");
+  let target = snapshot.units.find((unit) => unit.id === "baton-rush-target");
+  assert.ok(officer);
+  assert.ok(target);
+  assert.equal(officer.action, "batonRush");
+  assert.equal(officer.batonRushTargetId, target.id);
+  assert.ok(officer.nextBatonRushAt - snapshot.time > 9.9);
   assert.ok(
-    percentile90 <= 5.5 + 1e-9,
-    `P90 contact time was ${percentile90.toFixed(3)}s`,
+    snapshot.events.some(
+      (event) =>
+        event.unitId === officer?.id &&
+        event.skillVoiceId === SKILL_VOICE_IDS.policeBatonRush,
+    ),
   );
+  const initialGap =
+    Math.hypot(target.x - officer.x, target.y - officer.y) -
+    target.radius -
+    officer.radius;
+
+  runSteps(simulation, 30);
+  snapshot = simulation.getSnapshot();
+  officer = snapshot.units.find((unit) => unit.id === "baton-rush-officer");
+  target = snapshot.units.find((unit) => unit.id === "baton-rush-target");
+  assert.ok(officer);
+  assert.ok(target);
+  const chasedGap =
+    Math.hypot(target.x - officer.x, target.y - officer.y) -
+    target.radius -
+    officer.radius;
+  assert.ok(chasedGap < initialGap - 80);
+
+  let hit = false;
+  for (let frame = 0; frame < 600; frame += 1) {
+    simulation.step(1 / 60);
+    snapshot = simulation.getSnapshot();
+    target = snapshot.units.find((unit) => unit.id === "baton-rush-target");
+    if (target && target.hp < target.maxHp) {
+      hit = true;
+      break;
+    }
+  }
+  assert.equal(hit, true);
+  assert.ok(target);
+  assert.equal(target.maxHp - target.hp, officerDefinition.attack.damage);
+
+  runSteps(simulation, 40);
+  officer = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "baton-rush-officer");
+  assert.ok(officer);
+  assert.notEqual(officer.action, "batonRush");
+  assert.notEqual(officer.action, "batonStrike");
+  assert.equal(officer.batonRushTargetId, undefined);
 });
 
 test("mole tunneling uses travel art underground and attack art only after a successful ambush", () => {
@@ -2057,6 +2097,48 @@ test("allied selectable police merge on contact and play a star-up action", () =
   assert.ok(snapshot.events.some((event) => event.type === "merge" && event.announcement));
 });
 
+test("enemy police never merge even when their circles overlap", () => {
+  const manifest = twoFighterManifest();
+  const officer = definition(manifest, "police-1");
+  officer.pluginId = undefined;
+  officer.speed = 0;
+  officer.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "red-enemy-police",
+      definitionId: "police-1",
+      displayName: "红方警察",
+      position: { x: 500, y: 350 },
+      direction: { x: 1, y: 0 },
+      color: "#ff6b6b",
+      teamId: "red",
+    },
+    {
+      id: "blue-enemy-police",
+      definitionId: "police-1",
+      displayName: "蓝方警察",
+      position: { x: 500, y: 350 },
+      direction: { x: -1, y: 0 },
+      color: "#69a7ff",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 10);
+  const snapshot = simulation.getSnapshot();
+  assert.equal(
+    snapshot.units.filter((unit) => unit.policeStar === 1).length,
+    2,
+  );
+  assert.equal(
+    snapshot.units.some((unit) => unit.policeStar === 2),
+    false,
+  );
+  assert.equal(snapshot.events.some((event) => event.type === "merge"), false);
+});
+
 test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars", () => {
   const manifest = createDefaultManifest();
   const board = selectedBoard(manifest);
@@ -2802,26 +2884,40 @@ test("spoken voice is restricted to tagged skill events and every default skill 
   }
 });
 
-test("skill voice playback keeps one active line and only the latest pending line", () => {
+test("skill voice playback only hands off fresh lines and preempts stale active speech", () => {
   const queue = new SkillVoiceQueue<{ id: string }>();
   const first = { id: "first" };
   const replaced = { id: "replaced" };
   const latest = { id: "latest" };
+  const interrupting = { id: "interrupting" };
 
-  assert.equal(queue.enqueue(first), first);
-  assert.equal(queue.enqueue(replaced), undefined);
-  assert.equal(queue.enqueue(latest), undefined);
+  assert.deepEqual(queue.enqueue(first, 0), {
+    item: first,
+    interruptActive: false,
+  });
+  assert.equal(queue.enqueue(replaced, 60), undefined);
+  assert.equal(queue.enqueue(latest, 120), undefined);
   assert.equal(queue.size, 2);
-  assert.equal(queue.complete(), latest);
+  assert.equal(queue.complete(250), latest);
   assert.equal(queue.size, 1);
-  assert.equal(queue.complete(), undefined);
+  assert.equal(queue.complete(500), undefined);
   assert.equal(queue.size, 0);
 
-  queue.enqueue(first);
-  queue.enqueue(latest);
+  queue.enqueue(first, 1_000);
+  queue.enqueue(latest, 1_100);
+  assert.equal(queue.complete(1_400), undefined);
+  assert.equal(queue.size, 0, "stale pending speech must not play after its skill");
+
+  queue.enqueue(first, 2_000);
+  assert.deepEqual(queue.enqueue(interrupting, 2_700), {
+    item: interrupting,
+    interruptActive: true,
+  });
+  assert.equal(queue.size, 1);
+
   queue.clear();
   assert.equal(queue.size, 0);
-  assert.equal(queue.complete(), undefined);
+  assert.equal(queue.complete(3_000), undefined);
 });
 
 test("pausing or finishing a battle clears every queued skill voice", () => {
@@ -2833,15 +2929,15 @@ test("pausing or finishing a battle clears every queued skill voice", () => {
   ).skillVoiceQueue;
 
   audio.setBattleStatus("running");
-  queue.enqueue({ id: "active" });
-  queue.enqueue({ id: "pending" });
+  queue.enqueue({ id: "active" }, 0);
+  queue.enqueue({ id: "pending" }, 10);
   assert.equal(queue.size, 2);
   audio.setBattleStatus("paused");
   assert.equal(queue.size, 0);
 
   audio.setBattleStatus("running");
-  queue.enqueue({ id: "active-again" });
-  queue.enqueue({ id: "pending-again" });
+  queue.enqueue({ id: "active-again" }, 20);
+  queue.enqueue({ id: "pending-again" }, 30);
   audio.setBattleStatus("finished");
   assert.equal(queue.size, 0);
   audio.dispose();

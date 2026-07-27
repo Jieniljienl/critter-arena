@@ -295,6 +295,7 @@ const moleSkillParameters = {
 };
 
 const policeSkillParameters = {
+  batonRushCooldown: 10,
   gatlingMagazineSize: 150,
   gatlingReloadDuration: 3,
   kickRange: 160,
@@ -344,7 +345,7 @@ const policeDefinition = (
     policeStar: star,
     ...data,
     skillParameters:
-      star === 5
+      star === 1 || star === 5
         ? { police: structuredClone(policeSkillParameters) }
         : undefined,
     accent: ["", "#83c96f", "#5eb8ff", "#a58aff", "#ff9f58", "#ffd55e"][star],
@@ -1337,6 +1338,8 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         defaultCharacter.skillParameters.police,
       );
       const policeParameters = character.skillParameters.police;
+      policeParameters.batonRushCooldown ??=
+        defaultCharacter.skillParameters.police.batonRushCooldown;
       policeParameters.gatlingMagazineSize ??=
         defaultCharacter.skillParameters.police.gatlingMagazineSize;
       policeParameters.gatlingReloadDuration ??=
@@ -1402,6 +1405,14 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.skillParameters.mole ??= structuredClone(moleSkillParameters);
       character.skillParameters.mole.tunnelSpeedMultiplier ??=
         moleSkillParameters.tunnelSpeedMultiplier;
+    }
+    if (character.pluginId === "police" && character.policeStar === 1) {
+      character.skillParameters ??= {};
+      character.skillParameters.police ??= structuredClone(
+        policeSkillParameters,
+      );
+      character.skillParameters.police.batonRushCooldown ??=
+        policeSkillParameters.batonRushCooldown;
     }
     if (character.pluginId === "police" && character.policeStar === 5) {
       character.skillParameters ??= {};

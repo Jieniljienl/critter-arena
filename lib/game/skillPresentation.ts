@@ -174,6 +174,24 @@ const policePromotionModule: BuiltInSkillModule = {
   ],
 };
 
+const batonRushModule: BuiltInSkillModule = {
+  id: "police-baton-rush",
+  title: "追击敲击",
+  activity: "active",
+  triggerLabel: "冷却就绪后锁定最近敌人",
+  description: "一星警察加速追踪目标，贴身后只敲击一次；伤害与普通攻击相同。",
+  parameterSource: "police",
+  fields: [
+    {
+      key: "batonRushCooldown",
+      label: "追击敲击冷却（秒）",
+      fallback: 10,
+      min: 0,
+      step: 0.1,
+    },
+  ],
+};
+
 const gatlingModule: BuiltInSkillModule = {
   id: "police-gatling",
   title: "火力循环",
@@ -228,9 +246,13 @@ export const builtInSkillModulesFor = (
   if (character.pluginId === "panda") return pandaModules;
   if (character.pluginId === "mole") return moleModules;
   if (character.pluginId === "police") {
-    return character.policeStar === 5
-      ? [policePromotionModule, gatlingModule, kickModule]
-      : [policePromotionModule];
+    if (character.policeStar === 1) {
+      return [policePromotionModule, batonRushModule];
+    }
+    if (character.policeStar === 5) {
+      return [policePromotionModule, gatlingModule, kickModule];
+    }
+    return [policePromotionModule];
   }
   return [];
 };

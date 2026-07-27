@@ -170,6 +170,7 @@ export type MoleSkillParameters = {
 };
 
 export type PoliceSkillParameters = {
+  batonRushCooldown: number;
   gatlingMagazineSize: number;
   gatlingReloadDuration: number;
   kickRange: number;
@@ -290,6 +291,8 @@ export type ProjectManifest = {
 export type UnitAction =
   | "move"
   | "meleeApproach"
+  | "batonRush"
+  | "batonStrike"
   | "attack"
   | "skill"
   | "hurt"
@@ -341,6 +344,8 @@ export type RuntimeUnit = {
   nextEatAt: number;
   reservedBambooId?: string;
   meleeTargetId?: string;
+  nextBatonRushAt: number;
+  batonRushTargetId?: string;
   nextDigAt: number;
   nextAmbushAt: number;
   burnUntil: number;

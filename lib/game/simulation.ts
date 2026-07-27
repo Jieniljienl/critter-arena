@@ -35,6 +35,7 @@ type ScheduledShot = {
   damage?: number;
   range?: number;
   ambush?: boolean;
+  batonRush?: boolean;
 };
 
 const EPSILON = 0.0001;
@@ -62,16 +63,11 @@ const MAX_HORIZONTAL_DEVIATION_RADIANS = (65 * Math.PI) / 180;
 const HORIZONTAL_DEVIATION_BIAS_POWER = 3;
 const MELEE_CONTACT_TOLERANCE = 4;
 const MIN_MELEE_PURSUIT_BUFFER = 24;
-const HOSTILE_CONTACT_AWARENESS_RATIO = 0.6;
-const MIN_HOSTILE_CONTACT_AWARENESS = 360;
-const MAX_HOSTILE_CONTACT_AWARENESS = 560;
-const MIN_HOSTILE_STEER_INTERVAL = 0.55;
-const MAX_HOSTILE_STEER_INTERVAL = 0.9;
-const MIN_HOSTILE_STEER_BLEND = 0.22;
-const MAX_HOSTILE_STEER_BLEND = 0.38;
-const HOSTILE_CLOSE_INTERCEPT_RATIO = 0.42;
-const MIN_HOSTILE_CLOSE_INTERCEPT_GAP = 160;
-const MAX_HOSTILE_CLOSE_INTERCEPT_GAP = 240;
+const AXIS_ALIGNED_REFLECTION_THRESHOLD = Math.sin((7 * Math.PI) / 180);
+const MIN_REFLECTION_DEVIATION_RADIANS = (10 * Math.PI) / 180;
+const MAX_REFLECTION_DEVIATION_RADIANS = (22 * Math.PI) / 180;
+const POLICE_BATON_RUSH_SPEED_MULTIPLIER = 2.4;
+const POLICE_BATON_RUSH_MIN_CLOSING_SPEED = 120;
 export const UNIT_ENTRANCE_DURATION = 0.8;
 
 export type SimulationDiagnostics = {
@@ -103,15 +99,6 @@ const normalize = (value: Vec2): Vec2 => {
   const length = Math.hypot(value.x, value.y);
   if (length < EPSILON) return { x: 1, y: 0 };
   return { x: value.x / length, y: value.y / length };
-};
-
-const stableUnitFraction = (unitId: string, salt: number): number => {
-  let hash = (2_166_136_261 ^ salt) >>> 0;
-  for (let index = 0; index < unitId.length; index += 1) {
-    hash ^= unitId.charCodeAt(index);
-    hash = Math.imul(hash, 16_777_619) >>> 0;
-  }
-  return hash / 0x1_0000_0000;
 };
 
 const pointInPolygon = (point: Vec2, points: Vec2[]): boolean => {
@@ -184,7 +171,6 @@ export class BattleSimulation {
   private readonly eventLog: CombatEvent[] = [];
   private readonly killChains = new Map<string, { count: number; lastKillAt: number }>();
   private readonly spatialCells = new Map<string, RuntimeUnit[]>();
-  private readonly nextHostileSteerAt = new Map<string, number>();
   private orderedUnitsCache: RuntimeUnit[] = [];
   private orderedUnitsDirty = true;
   private maxUnitRadius = 0;
@@ -249,7 +235,6 @@ export class BattleSimulation {
     this.projectiles.clear();
     this.reservedBambooIds.clear();
     this.spatialCells.clear();
-    this.nextHostileSteerAt.clear();
     this.scheduledShots.length = 0;
     this.eventLog.length = 0;
     this.killChains.clear();
@@ -418,6 +403,11 @@ export class BattleSimulation {
       sustainsFaction: options.sustainsFaction ?? false,
       nextEatAt: 0,
       meleeTargetId: undefined,
+      nextBatonRushAt:
+        definition.pluginId === "police" && definition.policeStar === 1
+          ? this.time
+          : Number.POSITIVE_INFINITY,
+      batonRushTargetId: undefined,
       nextDigAt: definition.pluginId === "mole" ? this.time : Number.POSITIVE_INFINITY,
       nextAmbushAt: 0,
       burnUntil: 0,
@@ -479,6 +469,8 @@ export class BattleSimulation {
         "satisfied",
         "digging",
         "tunneling",
+        "batonRush",
+        "batonStrike",
         "reloading",
         "kick",
         "knockback",
@@ -495,13 +487,6 @@ export class BattleSimulation {
       ) {
         this.updateMeleeStrikeContact(unit, definition, dt);
       } else if (!immobilized) {
-        if (
-          unit.action === "move" ||
-          unit.action === "hurt" ||
-          (unit.action === "attack" && definition.attack.mode !== "melee")
-        ) {
-          this.steerTowardNearbyHostile(unit, definition);
-        }
         this.moveUnit(unit, dt, definition.speed);
       }
 
@@ -602,6 +587,9 @@ export class BattleSimulation {
   ): void {
     if (definition.pluginId === "panda") this.updatePanda(unit, definition);
     if (definition.pluginId === "mole") this.updateMole(unit);
+    if (definition.pluginId === "police" && definition.policeStar === 1) {
+      this.updatePoliceBatonRush(unit, definition, dt);
+    }
     if (definition.pluginId === "police" && definition.policeStar === 5) {
       this.updateGatling(unit, definition, dt);
     }
@@ -907,6 +895,92 @@ export class BattleSimulation {
     );
   }
 
+  private updatePoliceBatonRush(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+    dt: number,
+  ): void {
+    if (unit.action !== "batonRush") {
+      if (
+        unit.action !== "move" ||
+        !unit.targetable ||
+        this.time + EPSILON < unit.nextBatonRushAt
+      ) {
+        return;
+      }
+      const searchRange =
+        Math.hypot(this.board.width, this.board.height) + this.maxUnitRadius;
+      let target: RuntimeUnit | undefined;
+      let targetGap = Number.POSITIVE_INFINITY;
+      for (const candidate of this.validTargets(unit, searchRange)) {
+        const gap = this.meleeSurfaceGap(unit, candidate);
+        if (
+          gap < targetGap - EPSILON ||
+          (Math.abs(gap - targetGap) <= EPSILON &&
+            (!target || candidate.id.localeCompare(target.id) < 0))
+        ) {
+          target = candidate;
+          targetGap = gap;
+        }
+      }
+      if (!target) return;
+
+      unit.meleeTargetId = undefined;
+      unit.batonRushTargetId = target.id;
+      unit.nextBatonRushAt =
+        this.time +
+        Math.max(
+          0,
+          definition.skillParameters?.police?.batonRushCooldown ?? 10,
+        );
+      unit.action = "batonRush";
+      unit.actionStartedAt = this.time;
+      unit.actionUntil = 0;
+      this.emitSkill(
+        `${unit.name} 锁定 ${target.name}，开始追击敲击`,
+        unit,
+        target,
+        undefined,
+        SKILL_VOICE_IDS.policeBatonRush,
+      );
+    }
+
+    const target = unit.batonRushTargetId
+      ? this.units.get(unit.batonRushTargetId)
+      : undefined;
+    if (!this.isChaseableMeleeTarget(unit, target)) {
+      this.resetAction(unit);
+      return;
+    }
+
+    const targetSpeed = Math.hypot(target.vx, target.vy);
+    const rushSpeed = Math.max(
+      definition.speed * POLICE_BATON_RUSH_SPEED_MULTIPLIER,
+      definition.speed +
+        targetSpeed +
+        POLICE_BATON_RUSH_MIN_CLOSING_SPEED,
+    );
+    this.moveTowardMeleeContact(unit, target, dt, rushSpeed);
+    if (!this.isMeleeContact(unit, target)) return;
+
+    unit.action = "batonStrike";
+    unit.actionStartedAt = this.time;
+    unit.actionUntil =
+      this.time + Math.max(0.28, definition.attack.windup + 0.18);
+    unit.nextAttackAt = Math.max(
+      unit.nextAttackAt,
+      this.time + definition.attack.cooldown,
+    );
+    this.enqueueShot({
+      id: this.nextId("baton-rush"),
+      at: this.time + definition.attack.windup,
+      sourceId: unit.id,
+      targetId: target.id,
+      damage: definition.attack.damage,
+      batonRush: true,
+    });
+  }
+
   private updateGatling(
     unit: RuntimeUnit,
     definition: CharacterDefinition,
@@ -1170,6 +1244,7 @@ export class BattleSimulation {
         this.resetAction(unit);
       } else if (
         unit.action === "kick" ||
+        unit.action === "batonStrike" ||
         unit.action === "attack" ||
         unit.action === "hurt" ||
         unit.action === "satisfied" ||
@@ -1183,6 +1258,7 @@ export class BattleSimulation {
 
   private resetAction(unit: RuntimeUnit): void {
     unit.meleeTargetId = undefined;
+    unit.batonRushTargetId = undefined;
     this.rerollMovementDirection(unit);
     unit.action = "move";
     unit.actionStartedAt = this.time;
@@ -1216,113 +1292,6 @@ export class BattleSimulation {
     unit.vy = direction.y * definition.speed;
   }
 
-  private steerTowardNearbyHostile(
-    unit: RuntimeUnit,
-    definition: CharacterDefinition,
-  ): void {
-    if (definition.speed <= EPSILON) return;
-
-    const awareness = Math.max(
-      MIN_HOSTILE_CONTACT_AWARENESS,
-      Math.min(
-        MAX_HOSTILE_CONTACT_AWARENESS,
-        Math.min(this.board.width, this.board.height) *
-          HOSTILE_CONTACT_AWARENESS_RATIO,
-      ),
-    );
-    if (definition.attack.mode === "melee" && definition.attack.range > EPSILON) {
-      const closeInterceptGap = Math.max(
-        MIN_HOSTILE_CLOSE_INTERCEPT_GAP,
-        Math.min(
-          MAX_HOSTILE_CLOSE_INTERCEPT_GAP,
-          awareness * HOSTILE_CLOSE_INTERCEPT_RATIO,
-        ),
-      );
-      let closeHostile: RuntimeUnit | undefined;
-      let closeHostileGap = Number.POSITIVE_INFINITY;
-      for (const candidate of this.validTargets(
-        unit,
-        closeInterceptGap + unit.radius,
-      )) {
-        const gap = this.meleeSurfaceGap(unit, candidate);
-        if (
-          gap <= closeInterceptGap + EPSILON &&
-          (gap < closeHostileGap - EPSILON ||
-            (Math.abs(gap - closeHostileGap) <= EPSILON &&
-              (!closeHostile ||
-                candidate.id.localeCompare(closeHostile.id) < 0)))
-        ) {
-          closeHostile = candidate;
-          closeHostileGap = gap;
-        }
-      }
-      if (closeHostile) {
-        const interceptDirection = normalize({
-          x: closeHostile.x - unit.x,
-          y: closeHostile.y - unit.y,
-        });
-        unit.vx = interceptDirection.x * definition.speed;
-        unit.vy = interceptDirection.y * definition.speed;
-        return;
-      }
-    }
-
-    const cadence =
-      MIN_HOSTILE_STEER_INTERVAL +
-      stableUnitFraction(unit.id, 17) *
-        (MAX_HOSTILE_STEER_INTERVAL - MIN_HOSTILE_STEER_INTERVAL);
-    const scheduledAt = this.nextHostileSteerAt.get(unit.id);
-    if (scheduledAt === undefined) {
-      const initialAt =
-        unit.bornAt + stableUnitFraction(unit.id, 29) * cadence;
-      this.nextHostileSteerAt.set(unit.id, initialAt);
-      if (this.time + EPSILON < initialAt) return;
-    } else if (this.time + EPSILON < scheduledAt) {
-      return;
-    }
-    this.nextHostileSteerAt.set(unit.id, this.time + cadence);
-
-    let nearest: RuntimeUnit | undefined;
-    let nearestGap = Number.POSITIVE_INFINITY;
-    for (const candidate of this.validTargets(unit, awareness)) {
-      const gap = this.meleeSurfaceGap(unit, candidate);
-      if (
-        gap < nearestGap - EPSILON ||
-        (Math.abs(gap - nearestGap) <= EPSILON &&
-          (!nearest || candidate.id.localeCompare(nearest.id) < 0))
-      ) {
-        nearest = candidate;
-        nearestGap = gap;
-      }
-    }
-    if (!nearest) return;
-
-    const currentDirection = normalize({ x: unit.vx, y: unit.vy });
-    const hostileDirection = normalize({
-      x: nearest.x - unit.x,
-      y: nearest.y - unit.y,
-    });
-    const proximity = 1 - Math.min(1, nearestGap / awareness);
-    const blend =
-      MIN_HOSTILE_STEER_BLEND +
-      proximity * (MAX_HOSTILE_STEER_BLEND - MIN_HOSTILE_STEER_BLEND);
-    const currentAngle = Math.atan2(
-      currentDirection.y,
-      currentDirection.x,
-    );
-    const hostileAngle = Math.atan2(
-      hostileDirection.y,
-      hostileDirection.x,
-    );
-    const angleDifference = Math.atan2(
-      Math.sin(hostileAngle - currentAngle),
-      Math.cos(hostileAngle - currentAngle),
-    );
-    const steeredAngle = currentAngle + angleDifference * blend;
-    unit.vx = Math.cos(steeredAngle) * definition.speed;
-    unit.vy = Math.sin(steeredAngle) * definition.speed;
-  }
-
   private moveUnit(unit: RuntimeUnit, dt: number, speed: number): void {
     const direction = normalize({ x: unit.vx, y: unit.vy });
     unit.vx = direction.x * speed;
@@ -1330,20 +1299,77 @@ export class BattleSimulation {
     unit.x += unit.vx * dt;
     unit.y += unit.vy * dt;
 
+    let reflectedX = false;
+    let reflectedY = false;
     if (unit.x - unit.radius < 0) {
       unit.x = unit.radius;
       unit.vx = Math.abs(unit.vx);
+      reflectedX = true;
     } else if (unit.x + unit.radius > this.board.width) {
       unit.x = this.board.width - unit.radius;
       unit.vx = -Math.abs(unit.vx);
+      reflectedX = true;
     }
     if (unit.y - unit.radius < 0) {
       unit.y = unit.radius;
       unit.vy = Math.abs(unit.vy);
+      reflectedY = true;
     } else if (unit.y + unit.radius > this.board.height) {
       unit.y = this.board.height - unit.radius;
       unit.vy = -Math.abs(unit.vy);
+      reflectedY = true;
     }
+    if (reflectedX || reflectedY) {
+      this.deviateAxisAlignedReflection(
+        unit,
+        speed,
+        reflectedX,
+        reflectedY,
+      );
+    }
+  }
+
+  private deviateAxisAlignedReflection(
+    unit: RuntimeUnit,
+    speed: number,
+    reflectedX: boolean,
+    reflectedY: boolean,
+  ): void {
+    if (speed <= EPSILON) return;
+    const reflected = normalize({ x: unit.vx, y: unit.vy });
+    const nearHorizontal =
+      Math.abs(reflected.y) <= AXIS_ALIGNED_REFLECTION_THRESHOLD;
+    const nearVertical =
+      Math.abs(reflected.x) <= AXIS_ALIGNED_REFLECTION_THRESHOLD;
+    if (!nearHorizontal && !nearVertical) return;
+
+    const deviation =
+      MIN_REFLECTION_DEVIATION_RADIANS +
+      this.random.next() *
+        (MAX_REFLECTION_DEVIATION_RADIANS -
+          MIN_REFLECTION_DEVIATION_RADIANS);
+    let direction: Vec2;
+    if (nearHorizontal) {
+      direction = {
+        x: (Math.sign(reflected.x) || 1) * Math.cos(deviation),
+        y: (this.random.next() < 0.5 ? -1 : 1) * Math.sin(deviation),
+      };
+    } else {
+      direction = {
+        x: (this.random.next() < 0.5 ? -1 : 1) * Math.sin(deviation),
+        y: (Math.sign(reflected.y) || 1) * Math.cos(deviation),
+      };
+    }
+    if (reflectedX) {
+      direction.x =
+        (Math.sign(reflected.x) || 1) * Math.abs(direction.x);
+    }
+    if (reflectedY) {
+      direction.y =
+        (Math.sign(reflected.y) || 1) * Math.abs(direction.y);
+    }
+    unit.vx = direction.x * speed;
+    unit.vy = direction.y * speed;
   }
 
   private updateMeleeApproach(
@@ -1474,6 +1500,8 @@ export class BattleSimulation {
       unit.action !== "eating" &&
       unit.action !== "satisfied" &&
       unit.action !== "meleeApproach" &&
+      unit.action !== "batonRush" &&
+      unit.action !== "batonStrike" &&
       unit.action !== "digging" &&
       unit.action !== "tunneling" &&
       unit.action !== "reloading" &&
@@ -1553,6 +1581,32 @@ export class BattleSimulation {
       }
       const definition = this.definitions.get(source.definitionId);
       if (!definition) continue;
+
+      if (shot.batonRush) {
+        if (
+          !target ||
+          !target.targetable ||
+          source.action !== "batonStrike" ||
+          source.batonRushTargetId !== target.id
+        ) {
+          continue;
+        }
+        this.damageUnit(
+          target.id,
+          shot.damage ?? definition.attack.damage,
+          source.id,
+          "directAttack",
+        );
+        this.emit(
+          "attack",
+          `${source.name} 追上 ${target.name}，用警棍敲击一次`,
+          source,
+          target,
+          "baton",
+        );
+        this.runModules(source, "onAttack");
+        continue;
+      }
 
       if (shot.ambush) {
         const tunnel = source.tunnelData;
@@ -2161,6 +2215,7 @@ export class BattleSimulation {
     target.hp = 0;
     target.targetable = false;
     target.meleeTargetId = undefined;
+    target.batonRushTargetId = undefined;
     target.action = "dead";
     target.actionStartedAt = this.time;
     target.actionUntil = this.time + 0.45;
@@ -2171,9 +2226,16 @@ export class BattleSimulation {
     const removedUnitIds = new Set([target.id]);
     const source = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
     for (const pursuer of this.units.values()) {
-      if (pursuer.meleeTargetId !== target.id) continue;
-      pursuer.meleeTargetId = undefined;
-      if (pursuer.id !== source?.id && pursuer.action === "meleeApproach") {
+      const pursuingMelee = pursuer.meleeTargetId === target.id;
+      const pursuingBaton = pursuer.batonRushTargetId === target.id;
+      if (!pursuingMelee && !pursuingBaton) continue;
+      if (pursuingMelee) pursuer.meleeTargetId = undefined;
+      if (pursuingBaton) pursuer.batonRushTargetId = undefined;
+      if (
+        pursuer.id !== source?.id &&
+        (pursuer.action === "meleeApproach" ||
+          pursuer.action === "batonRush")
+      ) {
         this.resetAction(pursuer);
       }
     }
@@ -2294,6 +2356,8 @@ export class BattleSimulation {
     source.vy = direction.y * definition.speed;
     source.nextAttackAt = this.time + 0.4;
     source.meleeTargetId = undefined;
+    source.batonRushTargetId = undefined;
+    source.nextBatonRushAt = Number.POSITIVE_INFINITY;
     source.action = "merge";
     source.actionStartedAt = this.time;
     source.actionUntil = this.time + 0.62;
@@ -2476,7 +2540,6 @@ export class BattleSimulation {
   private deleteUnit(id: string): boolean {
     const deleted = this.units.delete(id);
     if (deleted) {
-      this.nextHostileSteerAt.delete(id);
       this.orderedUnitsDirty = true;
     }
     return deleted;

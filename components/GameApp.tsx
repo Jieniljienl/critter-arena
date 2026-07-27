@@ -509,6 +509,11 @@ export function GameApp() {
     ? snapshot?.props ?? currentBoard?.props ?? []
     : currentBoard?.props ?? [];
   const currentBoardHoles = hasRuntimeBoard ? snapshot?.holes ?? [] : [];
+  const formationManifest = hasRuntimeBoard ? battleManifest : manifest;
+  const formationBoard =
+    formationManifest.boards.find(
+      (board) => board.id === formationManifest.setup.boardId,
+    ) ?? formationManifest.boards[0];
 
   const beginFreshBattle = useCallback((newSeed = false) => {
     if (manifest.setup.contestants.length < 2) {
@@ -1447,11 +1452,10 @@ export function GameApp() {
                 </div>
               </div>
               <FormationEditor
-                setup={manifest.setup}
-                characters={manifest.characters}
-                board={activeBoard}
+                setup={formationManifest.setup}
+                characters={formationManifest.characters}
+                board={formationBoard}
                 onChange={updateSetup}
-                liveUnits={snapshot?.units}
                 battleStatus={snapshot?.status}
                 selectedContestantId={selectedContestantId}
                 onSelectContestant={selectContestantInstance}

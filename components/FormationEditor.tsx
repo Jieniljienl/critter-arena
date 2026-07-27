@@ -6,7 +6,6 @@ import type {
   BoardDefinition,
   CharacterDefinition,
   MatchSetup,
-  RuntimeUnit,
 } from "@/lib/game/types";
 
 type FormationEditorProps = {
@@ -14,7 +13,6 @@ type FormationEditorProps = {
   characters: CharacterDefinition[];
   board: BoardDefinition;
   onChange: (setup: MatchSetup) => void;
-  liveUnits?: RuntimeUnit[];
   battleStatus?: BattleStatus;
   selectedContestantId?: string;
   onSelectContestant?: (contestantId: string) => void;
@@ -35,7 +33,6 @@ export function FormationEditor({
   characters,
   board,
   onChange,
-  liveUnits,
   battleStatus,
   selectedContestantId,
   onSelectContestant,
@@ -48,9 +45,6 @@ export function FormationEditor({
   const [selectedId, setSelectedId] = useState<string>();
   const isLive =
     battleStatus === "running" || battleStatus === "paused" || battleStatus === "finished";
-  const liveMainById = new Map(
-    (liveUnits ?? []).filter((unit) => unit.main).map((unit) => [unit.id, unit]),
-  );
 
   const moveContestant = (
     contestantId: string,
@@ -145,7 +139,7 @@ export function FormationEditor({
     >
       <span className="formation-grid-label">
         {isLive
-          ? "战斗位置 · 约 12 FPS 同步"
+          ? "开局站位 · 战斗中固定展示"
           : selectedId
             ? "已选中 · 按住棋子拖动位置"
             : "按住棋子拖动 · 单击仅选中"}
@@ -154,14 +148,8 @@ export function FormationEditor({
         const setupDefinition = characters.find(
           (candidate) => candidate.id === contestant.definitionId,
         );
-        const liveUnit = liveMainById.get(contestant.id);
-        const definition =
-          (liveUnit
-            ? characters.find(
-                (candidate) => candidate.id === liveUnit.definitionId,
-              )
-            : undefined) ?? setupDefinition;
-        const policeStar = liveUnit?.policeStar ?? definition?.policeStar;
+        const definition = setupDefinition;
+        const policeStar = definition?.policeStar;
         const icon = definition?.id.startsWith("panda")
           ? "🐼"
           : definition?.id === "mole"
@@ -176,10 +164,7 @@ export function FormationEditor({
             : definition?.id === "mole"
               ? "地鼠"
               : (definition?.name ?? "角色").slice(0, 3);
-        const displayPosition =
-          isLive && liveUnit ? { x: liveUnit.x, y: liveUnit.y } : contestant.position;
-        const missing = isLive && !liveUnit;
-        const eliminated = isLive && Boolean(liveUnit && (liveUnit.hp <= 0 || liveUnit.action === "dead"));
+        const displayPosition = contestant.position;
         return (
           <button
             key={contestant.id}
@@ -191,7 +176,7 @@ export function FormationEditor({
                 : ""
             } ${draggingId === contestant.id ? "is-dragging" : ""} ${
               draggingId === contestant.id && touchDragging ? "is-touch-dragging" : ""
-            } ${eliminated ? "is-eliminated" : ""} ${missing ? "is-missing" : ""}`}
+            }`}
             style={{
               left: `${(displayPosition.x / board.width) * 100}%`,
               top: `${(displayPosition.y / board.height) * 100}%`,
@@ -239,7 +224,7 @@ export function FormationEditor({
             }
             aria-label={
               isLive
-                ? `${contestant.displayName}（${definition?.name ?? "未知角色"}）战斗位置`
+                ? `${contestant.displayName}（${definition?.name ?? "未知角色"}）开局站位`
                 : `拖动或选中 ${contestant.displayName}（${definition?.name ?? "未知角色"}）`
             }
             title={`${contestant.displayName} · ${definition?.name ?? "未知角色"} · ${Math.round(displayPosition.x)}, ${Math.round(displayPosition.y)}`}

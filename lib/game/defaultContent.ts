@@ -14,7 +14,7 @@ import {
 } from "./types";
 import {
   defaultSkillVoiceProfilesFor,
-  upgradeSkillVoiceProfiles,
+  upgradeShippedSkillVoiceProfiles,
 } from "./skillVoice";
 
 const synth = (id: string, preset: SynthPreset, volume = 0.75): SoundCue => ({
@@ -183,13 +183,67 @@ for (let frame = 1; frame <= 6; frame += 1) {
   );
 }
 
-const entranceClip = (prefix: string): AnimationClip =>
+const legacyEntranceClip = (prefix: string): AnimationClip =>
   timedClip("entrance", [
     [`${prefix}-entrance-v2-1`, 160],
     [`${prefix}-entrance-v2-2`, 220],
     [`${prefix}-entrance-v2-3`, 220],
     [`${prefix}-idle`, 200],
   ]);
+
+const entranceClip = (prefix: string): AnimationClip => {
+  const choreography: Record<string, Array<[string, number]>> = {
+    "panda-lazy": [
+      ["panda-lazy-entrance-v2-1", 220],
+      ["panda-lazy-entrance-v2-2", 180],
+      ["panda-lazy-entrance-v2-3", 240],
+      ["panda-lazy-idle", 160],
+    ],
+    mole: [
+      ["mole-entrance-v2-2", 140],
+      ["mole-entrance-v2-1", 180],
+      ["mole-entrance-v2-3", 220],
+      ["mole-idle", 260],
+    ],
+    "police-1": [
+      ["police-1-entrance-v2-1", 150],
+      ["police-1-entrance-v2-2", 150],
+      ["police-1-entrance-v2-3", 220],
+      ["police-1-idle", 280],
+    ],
+    "police-2": [
+      ["police-2-entrance-v2-1", 180],
+      ["police-2-entrance-v2-2", 190],
+      ["police-2-entrance-v2-3", 210],
+      ["police-2-idle", 220],
+    ],
+    "police-3": [
+      ["police-3-entrance-v2-1", 130],
+      ["police-3-entrance-v2-2", 160],
+      ["police-3-entrance-v2-3", 230],
+      ["police-3-idle", 280],
+    ],
+    "police-4": [
+      ["police-4-entrance-v2-1", 190],
+      ["police-4-entrance-v2-2", 210],
+      ["police-4-entrance-v2-3", 220],
+      ["police-4-idle", 180],
+    ],
+    "police-5": [
+      ["police-5-entrance-v2-1", 150],
+      ["police-5-entrance-v2-2", 210],
+      ["police-5-entrance-v2-3", 260],
+      ["police-5-idle", 180],
+    ],
+  };
+  return timedClip(
+    "entrance",
+    choreography[prefix] ??
+      legacyEntranceClip(prefix).frames.map(
+        (frame): [string, number] => [frame.assetId, frame.durationMs],
+      ),
+  );
+};
 
 const victoryClip = (prefix: string): AnimationClip =>
   timedClip(
@@ -1199,6 +1253,16 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       current: AnimationClip | undefined,
       legacy: AnimationClip,
     ) => JSON.stringify(current) === JSON.stringify(legacy);
+    if (
+      matchesLegacyClip(
+        character.animations.entrance,
+        legacyEntranceClip(defaultCharacter.id),
+      )
+    ) {
+      character.animations.entrance = structuredClone(
+        defaultCharacter.animations.entrance,
+      );
+    }
     const legacyVictory =
       defaultCharacter.id === "panda-lazy"
         ? clip(
@@ -1318,7 +1382,7 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     }
     const skillCue = character.sounds.skill;
     if (skillCue?.source === "speech") {
-      skillCue.skillVoices = upgradeSkillVoiceProfiles(character, skillCue);
+      skillCue.skillVoices = upgradeShippedSkillVoiceProfiles(character, skillCue);
     }
     for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {
       character.animations[clipId] ??= structuredClone(animation);
@@ -1366,7 +1430,7 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     }
     const skillCue = character.sounds.skill;
     if (skillCue?.source === "speech") {
-      skillCue.skillVoices = upgradeSkillVoiceProfiles(character, skillCue);
+      skillCue.skillVoices = upgradeShippedSkillVoiceProfiles(character, skillCue);
     }
   }
   for (const defaultBoardDefinition of defaults.boards) {

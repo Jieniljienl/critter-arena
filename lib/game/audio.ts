@@ -1,6 +1,7 @@
 import type {
   AssetRef,
   BackgroundMusicConfig,
+  BattleStatus,
   CharacterDefinition,
   CombatEvent,
   RuntimeUnit,
@@ -19,6 +20,46 @@ export type ResolvedSkillVoice = {
   phrase: string;
   speechRate: number;
   speechPitch: number;
+};
+
+export class SkillVoiceQueue<T extends object> {
+  private activeItem?: T;
+  private pendingItem?: T;
+
+  enqueue(item: T): T | undefined {
+    if (!this.activeItem) {
+      this.activeItem = item;
+      return item;
+    }
+    this.pendingItem = item;
+    return undefined;
+  }
+
+  complete(): T | undefined {
+    if (!this.activeItem) return undefined;
+    if (this.pendingItem) {
+      this.activeItem = this.pendingItem;
+      this.pendingItem = undefined;
+      return this.activeItem;
+    }
+    this.activeItem = undefined;
+    return undefined;
+  }
+
+  clear(): void {
+    this.activeItem = undefined;
+    this.pendingItem = undefined;
+  }
+
+  get size(): number {
+    return Number(Boolean(this.activeItem)) + Number(Boolean(this.pendingItem));
+  }
+}
+
+type QueuedSkillVoice = {
+  cueId: string;
+  cueVolume: number;
+  voice: ResolvedSkillVoice;
 };
 
 export const resolveSkillVoice = (
@@ -70,7 +111,9 @@ export class ArenaAudio {
   private cueVoiceEnds = new Map<string, number[]>();
   private assetVoicePools = new Map<string, HTMLAudioElement[]>();
   private noiseBuffer?: AudioBuffer;
-  private lastSpeechAt = 0;
+  private battleStatus: BattleStatus = "ready";
+  private skillVoiceQueue = new SkillVoiceQueue<QueuedSkillVoice>();
+  private speechEpoch = 0;
   private musicGain?: GainNode;
   private musicSource?: AudioBufferSourceNode;
   private musicConfig?: BackgroundMusicConfig;
@@ -93,7 +136,7 @@ export class ArenaAudio {
 
   setMuted(muted: boolean): void {
     this.muted = muted;
-    if (muted && typeof window !== "undefined") window.speechSynthesis?.cancel();
+    if (muted) this.stopSkillVoices();
     this.applyMasterVolume();
   }
 
@@ -104,11 +147,17 @@ export class ArenaAudio {
 
   setSkillVoicesEnabled(enabled: boolean): void {
     this.skillVoicesEnabled = enabled;
-    if (!enabled && typeof window !== "undefined") window.speechSynthesis?.cancel();
+    if (!enabled) this.stopSkillVoices();
   }
 
   setSkillVoiceVolume(volume: number): void {
     this.skillVoiceVolume = Math.max(0, Math.min(1, volume));
+  }
+
+  setBattleStatus(status: BattleStatus): void {
+    if (status === this.battleStatus) return;
+    this.battleStatus = status;
+    if (status !== "running") this.stopSkillVoices();
   }
 
   async setMusic(config: BackgroundMusicConfig, assets: AssetRef[]): Promise<void> {
@@ -145,7 +194,7 @@ export class ArenaAudio {
 
   dispose(): void {
     this.stopMusic();
-    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
+    this.stopSkillVoices();
     for (const pool of this.assetVoicePools.values()) {
       for (const audio of pool) {
         audio.pause();
@@ -175,9 +224,9 @@ export class ArenaAudio {
         ? definition.sounds.skill
         : undefined;
     if ((!event.sound && !skillSpeechCue) || this.muted) return;
-    await this.unlock();
     if (skillSpeechCue) this.playSpeech(skillSpeechCue, event);
     if (!event.sound) return;
+    await this.unlock();
 
     const now = performance.now();
     const ambient = event.sound === "lava" || event.sound === "spring";
@@ -271,26 +320,64 @@ export class ArenaAudio {
     if (
       this.muted ||
       !this.skillVoicesEnabled ||
+      this.battleStatus !== "running" ||
       typeof window === "undefined" ||
-      !window.speechSynthesis ||
-      performance.now() - this.lastSpeechAt < 850
+      !window.speechSynthesis
     ) {
       return;
     }
     const resolvedVoice = resolveSkillVoice(cue, event);
     if (!resolvedVoice) return;
-    this.lastSpeechAt = performance.now();
-    const utterance = new SpeechSynthesisUtterance(resolvedVoice.phrase);
+    const ready = this.skillVoiceQueue.enqueue({
+      cueId: cue.id,
+      cueVolume: cue.volume,
+      voice: resolvedVoice,
+    });
+    if (ready) this.startSpeech(ready);
+  }
+
+  private startSpeech(request: QueuedSkillVoice): void {
+    if (
+      this.muted ||
+      !this.skillVoicesEnabled ||
+      this.battleStatus !== "running" ||
+      typeof window === "undefined" ||
+      !window.speechSynthesis
+    ) {
+      this.stopSkillVoices();
+      return;
+    }
+    const epoch = this.speechEpoch;
+    const utterance = new SpeechSynthesisUtterance(request.voice.phrase);
     utterance.lang = "zh-CN";
-    utterance.rate = resolvedVoice.speechRate;
-    utterance.pitch = resolvedVoice.speechPitch;
+    utterance.rate = request.voice.speechRate;
+    utterance.pitch = request.voice.speechPitch;
     utterance.volume = Math.min(
       1,
-      this.volume * this.skillVoiceVolume * cue.volume,
+      this.volume * this.skillVoiceVolume * request.cueVolume,
     );
-    const voice = this.preferredChineseVoice(cue.id);
+    const voice = this.preferredChineseVoice(request.cueId);
     if (voice) utterance.voice = voice;
-    window.speechSynthesis.speak(utterance);
+    let settled = false;
+    const finish = () => {
+      if (settled || epoch !== this.speechEpoch) return;
+      settled = true;
+      const next = this.skillVoiceQueue.complete();
+      if (next && this.battleStatus === "running") this.startSpeech(next);
+    };
+    utterance.onend = finish;
+    utterance.onerror = finish;
+    try {
+      window.speechSynthesis.speak(utterance);
+    } catch {
+      finish();
+    }
+  }
+
+  private stopSkillVoices(): void {
+    this.speechEpoch += 1;
+    this.skillVoiceQueue.clear();
+    if (typeof window !== "undefined") window.speechSynthesis?.cancel();
   }
 
   private preferredChineseVoice(variant: string): SpeechSynthesisVoice | undefined {

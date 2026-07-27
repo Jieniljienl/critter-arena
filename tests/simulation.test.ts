@@ -13,9 +13,15 @@ import {
 } from "../lib/game/simulation";
 import { actionClipName } from "../lib/game/unitAnimation";
 import {
+  ArenaAudio,
   isSkillVoiceEvent,
   resolveSkillVoice,
+  SkillVoiceQueue,
 } from "../lib/game/audio";
+import {
+  entrancePresentationFor,
+  entranceStyleFor,
+} from "../lib/game/entrancePresentation";
 import {
   SKILL_VOICE_IDS,
   skillVoiceDescriptorsFor,
@@ -361,6 +367,78 @@ test("mobile units periodically turn toward nearby hostiles without changing spe
   assert.ok(steeredAlignment > initialAlignment + 0.08);
   assert.ok(steeredDistance < initialDistance);
   assert.ok(Math.abs(steeredSpeed - sourceDefinition.speed) < 1e-9);
+});
+
+test("nearby enemies suppress tangential movement instead of orbiting each other", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 800;
+  board.height = 600;
+  board.unitScale = 1;
+  const officer = definition(manifest, "police-1");
+  officer.speed = 120;
+  officer.attack.damage = 0;
+  officer.attack.cooldown = 100;
+  manifest.setup.contestants = [
+    {
+      id: "orbit-left",
+      definitionId: "police-1",
+      displayName: "左侧警员",
+      position: { x: 300, y: 300 },
+      direction: { x: 1, y: 0 },
+      color: "#f6d85f",
+    },
+    {
+      id: "orbit-right",
+      definitionId: "police-1",
+      displayName: "右侧警员",
+      position: { x: 500, y: 300 },
+      direction: { x: -1, y: 0 },
+      color: "#ff8b62",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 1);
+  const harness = simulation as unknown as {
+    units: Map<string, RuntimeUnit>;
+    nextHostileSteerAt: Map<string, number>;
+  };
+  const left = harness.units.get("orbit-left");
+  const right = harness.units.get("orbit-right");
+  assert.ok(left);
+  assert.ok(right);
+  left.x = 300;
+  left.y = 300;
+  left.vx = 0;
+  left.vy = officer.speed;
+  left.nextAttackAt = 999;
+  right.x = 500;
+  right.y = 300;
+  right.vx = 0;
+  right.vy = -officer.speed;
+  right.nextAttackAt = 999;
+  harness.nextHostileSteerAt.set(left.id, 999);
+  harness.nextHostileSteerAt.set(right.id, 999);
+  const gapBefore =
+    Math.hypot(left.x - right.x, left.y - right.y) -
+    left.radius -
+    right.radius;
+
+  simulation.step(1 / 60);
+  assert.ok(left.vx > officer.speed * 0.99);
+  assert.ok(right.vx < -officer.speed * 0.99);
+  assert.ok(Math.abs(left.vy) < 0.01);
+  assert.ok(Math.abs(right.vy) < 0.01);
+
+  runSteps(simulation, 20);
+  const gapAfter =
+    Math.hypot(left.x - right.x, left.y - right.y) -
+    left.radius -
+    right.radius;
+  assert.ok(gapAfter < gapBefore - 60);
 });
 
 test("contact steering ignores closer allies and unavailable hostile units", () => {
@@ -2701,6 +2779,10 @@ test("spoken voice is restricted to tagged skill events and every default skill 
         configured?.phrase.trim(),
         `${character.name} ${descriptor.label} should have one dedicated line`,
       );
+      assert.ok(
+        Array.from(configured?.phrase.trim() ?? "").length <= 8,
+        `${character.name} ${descriptor.label} should stay concise`,
+      );
       assert.equal(
         resolveSkillVoice(cue, {
           type: "skill",
@@ -2718,6 +2800,51 @@ test("spoken voice is restricted to tagged skill events and every default skill 
       );
     }
   }
+});
+
+test("skill voice playback keeps one active line and only the latest pending line", () => {
+  const queue = new SkillVoiceQueue<{ id: string }>();
+  const first = { id: "first" };
+  const replaced = { id: "replaced" };
+  const latest = { id: "latest" };
+
+  assert.equal(queue.enqueue(first), first);
+  assert.equal(queue.enqueue(replaced), undefined);
+  assert.equal(queue.enqueue(latest), undefined);
+  assert.equal(queue.size, 2);
+  assert.equal(queue.complete(), latest);
+  assert.equal(queue.size, 1);
+  assert.equal(queue.complete(), undefined);
+  assert.equal(queue.size, 0);
+
+  queue.enqueue(first);
+  queue.enqueue(latest);
+  queue.clear();
+  assert.equal(queue.size, 0);
+  assert.equal(queue.complete(), undefined);
+});
+
+test("pausing or finishing a battle clears every queued skill voice", () => {
+  const audio = new ArenaAudio();
+  const queue = (
+    audio as unknown as {
+      skillVoiceQueue: SkillVoiceQueue<{ id: string }>;
+    }
+  ).skillVoiceQueue;
+
+  audio.setBattleStatus("running");
+  queue.enqueue({ id: "active" });
+  queue.enqueue({ id: "pending" });
+  assert.equal(queue.size, 2);
+  audio.setBattleStatus("paused");
+  assert.equal(queue.size, 0);
+
+  audio.setBattleStatus("running");
+  queue.enqueue({ id: "active-again" });
+  queue.enqueue({ id: "pending-again" });
+  audio.setBattleStatus("finished");
+  assert.equal(queue.size, 0);
+  audio.dispose();
 });
 
 test("skill voice resolution is deterministic and never samples candidate arrays", () => {
@@ -2813,15 +2940,146 @@ test("legacy candidate lines migrate once into stable per-skill voice profiles",
   );
 });
 
+test("untouched shipped skill voices upgrade to concise wording without replacing edits", () => {
+  const manifest = createDefaultManifest();
+  const panda = definition(manifest, "panda-lazy");
+  const cue = panda.sounds.skill!;
+  cue.skillVoices![SKILL_VOICE_IDS.pandaEat] = {
+    phrase: "竹子开席，我边吃边回血。",
+    speechRate: 0.9,
+    speechPitch: 0.84,
+  };
+  cue.skillVoices![SKILL_VOICE_IDS.pandaGuard] = {
+    phrase: "这是用户保留的呼救台词",
+    speechRate: 1.21,
+    speechPitch: 0.77,
+  };
+
+  const upgraded = upgradeManifest(manifest);
+  const upgradedVoices =
+    definition(upgraded, "panda-lazy").sounds.skill?.skillVoices;
+  assert.equal(upgradedVoices?.[SKILL_VOICE_IDS.pandaEat]?.phrase, "开饭！");
+  assert.deepEqual(upgradedVoices?.[SKILL_VOICE_IDS.pandaGuard], {
+    phrase: "这是用户保留的呼救台词",
+    speechRate: 1.21,
+    speechPitch: 0.77,
+  });
+});
+
+test("every built-in character has role-specific entrance choreography", () => {
+  const manifest = createDefaultManifest();
+  const expected = {
+    "panda-lazy": {
+      style: "lazy-settle",
+      assets: [
+        "panda-lazy-entrance-v2-1",
+        "panda-lazy-entrance-v2-2",
+        "panda-lazy-entrance-v2-3",
+        "panda-lazy-idle",
+      ],
+      durations: [220, 180, 240, 160],
+    },
+    mole: {
+      style: "burrow-pop",
+      assets: [
+        "mole-entrance-v2-2",
+        "mole-entrance-v2-1",
+        "mole-entrance-v2-3",
+        "mole-idle",
+      ],
+      durations: [140, 180, 220, 260],
+    },
+    "police-1": {
+      style: "patrol-run",
+      durations: [150, 150, 220, 280],
+    },
+    "police-2": {
+      style: "swagger",
+      durations: [180, 190, 210, 220],
+    },
+    "police-3": {
+      style: "tactical-rush",
+      durations: [130, 160, 230, 280],
+    },
+    "police-4": {
+      style: "heavy-march",
+      durations: [190, 210, 220, 180],
+    },
+    "police-5": {
+      style: "heavy-drop",
+      durations: [150, 210, 260, 180],
+    },
+  } as const;
+  const styles = new Set<string>();
+  for (const [characterId, choreography] of Object.entries(expected)) {
+    const character = definition(manifest, characterId);
+    const frames = character.animations.entrance.frames;
+    const expectedAssets =
+      "assets" in choreography
+        ? choreography.assets
+        : [
+            `${characterId}-entrance-v2-1`,
+            `${characterId}-entrance-v2-2`,
+            `${characterId}-entrance-v2-3`,
+            `${characterId}-idle`,
+          ];
+    assert.deepEqual(
+      frames.map((frame) => frame.assetId),
+      expectedAssets,
+    );
+    assert.deepEqual(
+      frames.map((frame) => frame.durationMs),
+      choreography.durations,
+    );
+    assert.equal(
+      frames.reduce((total, frame) => total + frame.durationMs, 0),
+      UNIT_ENTRANCE_DURATION * 1_000,
+    );
+    const style = entranceStyleFor(character);
+    styles.add(style);
+    assert.equal(style, choreography.style);
+  }
+  assert.equal(styles.size, 7);
+
+  const pandaStart = entrancePresentationFor(
+    definition(manifest, "panda-lazy"),
+    0,
+    40,
+    false,
+  );
+  const moleStart = entrancePresentationFor(
+    definition(manifest, "mole"),
+    0,
+    40,
+    false,
+  );
+  const swaggerStart = entrancePresentationFor(
+    definition(manifest, "police-2"),
+    0,
+    40,
+    false,
+  );
+  const tacticalStart = entrancePresentationFor(
+    definition(manifest, "police-3"),
+    0,
+    40,
+    false,
+  );
+  const heavyStart = entrancePresentationFor(
+    definition(manifest, "police-5"),
+    0,
+    40,
+    false,
+  );
+  assert.ok(pandaStart.scaleY < pandaStart.scaleX);
+  assert.ok(moleStart.yOffset > 60);
+  assert.ok(Math.abs(tacticalStart.xOffset) > Math.abs(swaggerStart.xOffset) * 2);
+  assert.ok(heavyStart.yOffset < -100);
+});
+
 test("default settlement and rescue/reload actions use distinct animation frames", () => {
   const manifest = createDefaultManifest();
   for (const character of manifest.characters) {
-    const entranceFrames = character.animations.entrance?.frames.map(
-      (frame) => frame.assetId,
-    );
-    assert.ok(entranceFrames);
-    assert.equal(entranceFrames.length, 4);
-    assert.ok(entranceFrames.slice(0, 3).every((frame) => frame.includes("-entrance-v2-")));
     const frames = character.animations.victory?.frames.map(
       (frame) => frame.assetId,
     );
@@ -2943,7 +3201,7 @@ test("a living panda globally refreshes one bamboo at a time up to the configure
     snapshot.events.some(
       (event) =>
         event.type === "skill" &&
-        event.message.includes("补充了一份竹子"),
+        event.message.includes("公共竹子补给刷新"),
     ),
   );
   runSteps(simulation, 120);
@@ -2951,6 +3209,109 @@ test("a living panda globally refreshes one bamboo at a time up to the configure
   assert.equal(
     snapshot.props.filter((prop) => prop.type === "bamboo" && prop.active).length,
     3,
+  );
+});
+
+test("the global bamboo cap counts every existing board bamboo without removing excess", () => {
+  for (const limit of [2, 1]) {
+    const manifest = twoFighterManifest();
+    const board = selectedBoard(manifest);
+    board.props = [
+      {
+        id: `existing-bamboo-a-${limit}`,
+        type: "bamboo",
+        active: true,
+        shape: { kind: "circle", x: 700, y: 220, radius: 50 },
+        label: "开局竹子 A",
+      },
+      {
+        id: `existing-bamboo-b-${limit}`,
+        type: "bamboo",
+        active: true,
+        shape: { kind: "circle", x: 900, y: 620, radius: 50 },
+        label: "开局竹子 B",
+      },
+    ];
+    disableCombat(manifest);
+    const panda = definition(manifest, "panda-lazy");
+    panda.speed = 0;
+    panda.skillParameters!.panda!.bambooRespawnInterval = 0.1;
+    panda.skillParameters!.panda!.bambooRespawnLimit = limit;
+    const mole = definition(manifest, "mole");
+    mole.pluginId = undefined;
+    mole.speed = 0;
+
+    const simulation = new BattleSimulation(manifest);
+    simulation.start();
+    runSteps(simulation, 120);
+    const snapshot = simulation.getSnapshot();
+    assert.equal(
+      snapshot.props.filter(
+        (prop) => prop.type === "bamboo" && prop.active,
+      ).length,
+      2,
+    );
+    assert.equal(
+      snapshot.events.some(
+        (event) => event.skillVoiceId === SKILL_VOICE_IDS.pandaBamboo,
+      ),
+      false,
+    );
+  }
+});
+
+test("panda-created bamboo is an ownerless board prop that an enemy panda can eat", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  disableCombat(manifest);
+  manifest.setup.contestants[1].definitionId = "panda-lazy";
+  const panda = definition(manifest, "panda-lazy");
+  panda.speed = 0;
+  panda.skillParameters!.panda!.bambooRespawnInterval = 0.1;
+  panda.skillParameters!.panda!.bambooRespawnLimit = 1;
+  panda.skillParameters!.panda!.eatDuration = 0.05;
+  panda.skillParameters!.panda!.eatHeal = 50;
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 30);
+  let snapshot = simulation.getSnapshot();
+  const generated = snapshot.props.find(
+    (prop) => prop.id.startsWith("bamboo-refresh") && prop.active,
+  );
+  assert.ok(generated);
+  assert.equal(generated.label, "全场公共竹子");
+  assert.equal(Object.hasOwn(generated, "ownerId"), false);
+  assert.equal(Object.hasOwn(generated, "factionId"), false);
+  assert.equal(generated.shape.kind, "circle");
+  if (generated.shape.kind !== "circle") return;
+
+  const harness = simulation as unknown as {
+    units: Map<string, RuntimeUnit>;
+    nextBambooRespawnAt?: number;
+  };
+  const enemyPanda = harness.units.get("test-mole");
+  assert.ok(enemyPanda);
+  enemyPanda.x = generated.shape.x;
+  enemyPanda.y = generated.shape.y;
+  enemyPanda.hp = enemyPanda.maxHp - 60;
+  enemyPanda.action = "move";
+  enemyPanda.actionUntil = 0;
+  harness.nextBambooRespawnAt = Number.POSITIVE_INFINITY;
+  const hpBefore = enemyPanda.hp;
+
+  simulation.step(1 / 60);
+  assert.equal(enemyPanda.action, "eating");
+  assert.equal(enemyPanda.reservedBambooId, generated.id);
+  simulation.step(0.06);
+  snapshot = simulation.getSnapshot();
+  const healedEnemy = snapshot.units.find((unit) => unit.id === enemyPanda.id);
+  assert.ok(healedEnemy);
+  assert.ok(healedEnemy.hp > hpBefore);
+  assert.equal(
+    snapshot.props.find((prop) => prop.id === generated.id)?.active,
+    false,
   );
 });
 

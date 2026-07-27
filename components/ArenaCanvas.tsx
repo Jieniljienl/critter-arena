@@ -9,6 +9,10 @@ import {
 } from "react";
 import type PhaserType from "phaser";
 import { ArenaAudio } from "@/lib/game/audio";
+import {
+  entrancePresentationFor,
+  type EntrancePresentation,
+} from "@/lib/game/entrancePresentation";
 import { BattleSimulation, circleOverlapsRegion } from "@/lib/game/simulation";
 import { actionClipName } from "@/lib/game/unitAnimation";
 import type {
@@ -191,62 +195,82 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
 
     useImperativeHandle(
       ref,
-      () => ({
-        start: () => {
-          void audioRef.current.startMusic(musicConfigRef.current, musicAssetsRef.current);
-          simulationRef.current?.start();
-        },
-        pause: () => simulationRef.current?.pause(),
-        resume: () => simulationRef.current?.resume(),
-        togglePause: () => {
-          const snapshot = simulationRef.current?.getSnapshot();
-          if (!snapshot) return;
-          if (snapshot.status === "running") simulationRef.current?.pause();
-          else if (snapshot.status === "paused") simulationRef.current?.resume();
-        },
-        step: () => {
-          simulationRef.current?.step(1 / 60, true);
-          if (simulationRef.current) {
-            const snapshot = simulationRef.current.getSnapshot();
-            snapshotRef.current = snapshot;
-            onSnapshotRef.current(snapshot);
-          }
-        },
-        setSpeed: (speed: number) => {
-          speedRef.current = speed;
-        },
-        setMuted: (nextMuted: boolean) => {
-          mutedRef.current = nextMuted;
-          audioRef.current.setMuted(nextMuted);
-        },
-        setVolume: (nextVolume: number) => {
-          volumeRef.current = nextVolume;
-          audioRef.current.setVolume(nextVolume);
-        },
-        setSkillVoicesEnabled: (enabled: boolean) => {
-          audioRef.current.setSkillVoicesEnabled(enabled);
-        },
-        setSkillVoiceVolume: (nextVolume: number) => {
-          audioRef.current.setSkillVoiceVolume(nextVolume);
-        },
-        setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => {
-          void audioRef.current.setMusic(config, assets);
-        },
-        setMusicVolume: (nextVolume: number) => {
-          audioRef.current.setMusicVolume(nextVolume);
-        },
-        syncReadySetup: (setup: ProjectManifest["setup"]) => {
-          const simulation = simulationRef.current;
-          if (!simulation?.syncReadySetup(setup)) return false;
-          contestantIndexRef.current = indexContestants(setup);
-          loadSetupAssetsRef.current?.(setup);
-          const nextSnapshot = simulation.getSnapshot();
-          snapshotRef.current = nextSnapshot;
-          onSnapshotRef.current(nextSnapshot);
-          return true;
-        },
-        getSnapshot: () => snapshotRef.current,
-      }),
+      () => {
+        const syncAudioBattleStatus = () => {
+          const status = simulationRef.current?.getSnapshot().status;
+          if (status) audioRef.current.setBattleStatus(status);
+        };
+        return {
+          start: () => {
+            simulationRef.current?.start();
+            syncAudioBattleStatus();
+            void audioRef.current.startMusic(
+              musicConfigRef.current,
+              musicAssetsRef.current,
+            );
+          },
+          pause: () => {
+            simulationRef.current?.pause();
+            syncAudioBattleStatus();
+          },
+          resume: () => {
+            simulationRef.current?.resume();
+            syncAudioBattleStatus();
+          },
+          togglePause: () => {
+            const snapshot = simulationRef.current?.getSnapshot();
+            if (!snapshot) return;
+            if (snapshot.status === "running") simulationRef.current?.pause();
+            else if (snapshot.status === "paused") {
+              simulationRef.current?.resume();
+            }
+            syncAudioBattleStatus();
+          },
+          step: () => {
+            simulationRef.current?.step(1 / 60, true);
+            if (simulationRef.current) {
+              const snapshot = simulationRef.current.getSnapshot();
+              audioRef.current.setBattleStatus(snapshot.status);
+              snapshotRef.current = snapshot;
+              onSnapshotRef.current(snapshot);
+            }
+          },
+          setSpeed: (speed: number) => {
+            speedRef.current = speed;
+          },
+          setMuted: (nextMuted: boolean) => {
+            mutedRef.current = nextMuted;
+            audioRef.current.setMuted(nextMuted);
+          },
+          setVolume: (nextVolume: number) => {
+            volumeRef.current = nextVolume;
+            audioRef.current.setVolume(nextVolume);
+          },
+          setSkillVoicesEnabled: (enabled: boolean) => {
+            audioRef.current.setSkillVoicesEnabled(enabled);
+          },
+          setSkillVoiceVolume: (nextVolume: number) => {
+            audioRef.current.setSkillVoiceVolume(nextVolume);
+          },
+          setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => {
+            void audioRef.current.setMusic(config, assets);
+          },
+          setMusicVolume: (nextVolume: number) => {
+            audioRef.current.setMusicVolume(nextVolume);
+          },
+          syncReadySetup: (setup: ProjectManifest["setup"]) => {
+            const simulation = simulationRef.current;
+            if (!simulation?.syncReadySetup(setup)) return false;
+            contestantIndexRef.current = indexContestants(setup);
+            loadSetupAssetsRef.current?.(setup);
+            const nextSnapshot = simulation.getSnapshot();
+            snapshotRef.current = nextSnapshot;
+            onSnapshotRef.current(nextSnapshot);
+            return true;
+          },
+          getSnapshot: () => snapshotRef.current,
+        };
+      },
       [],
     );
 
@@ -334,6 +358,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             const initial = simulation.getSnapshot();
             snapshotRef.current = initial;
             lastPushedStatus = initial.status;
+            audio.setBattleStatus(initial.status);
             onSnapshotRef.current(initial);
             onReadyRef.current?.();
           }
@@ -361,6 +386,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             this.renderArena(snapshot, this.finishedVisualTime);
 
             const statusChanged = snapshot.status !== lastPushedStatus;
+            if (statusChanged) audio.setBattleStatus(snapshot.status);
             const liveRefreshDue =
               snapshot.status === "running" && time - lastSnapshotPushMs >= 100;
             if (statusChanged || liveRefreshDue) {
@@ -1178,6 +1204,146 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
           }
 
+          private drawEntranceEffect(
+            unit: RuntimeUnit,
+            entrance: EntrancePresentation,
+            visualX: number,
+            visualY: number,
+          ): void {
+            const strength = Math.max(0, entrance.effectStrength);
+            const facing = unit.vx < 0 ? -1 : 1;
+            if (entrance.style === "burrow-pop") {
+              this.arenaGraphics.fillStyle(0x6f4b2c, 0.42 * strength);
+              this.arenaGraphics.fillEllipse(
+                unit.x,
+                unit.y + unit.radius * 0.8,
+                unit.radius * (3.2 - strength * 0.5),
+                unit.radius * (0.72 + strength * 0.24),
+              );
+              this.arenaGraphics.fillStyle(0xc4935d, 0.64 * strength);
+              for (let index = -2; index <= 2; index += 1) {
+                this.arenaGraphics.fillCircle(
+                  unit.x + index * unit.radius * 0.52,
+                  unit.y +
+                    unit.radius *
+                      (0.52 - Math.abs(index) * 0.08 - strength * 0.35),
+                  unit.radius * (0.1 + strength * 0.05),
+                );
+              }
+              return;
+            }
+
+            if (
+              entrance.style === "patrol-run" ||
+              entrance.style === "tactical-rush"
+            ) {
+              const color =
+                entrance.style === "tactical-rush" ? 0x78b6ff : 0x9ee8ff;
+              const trailLength =
+                unit.radius *
+                (entrance.style === "tactical-rush" ? 2.8 : 2.05) *
+                Math.max(0.25, strength);
+              this.arenaGraphics.lineStyle(4, color, Math.min(0.72, strength));
+              for (let index = -1; index <= 1; index += 1) {
+                const y = visualY + index * unit.radius * 0.38;
+                this.arenaGraphics.lineBetween(
+                  visualX - facing * unit.radius * 0.72,
+                  y,
+                  visualX - facing * (unit.radius * 0.72 + trailLength),
+                  y + index * 2,
+                );
+              }
+              return;
+            }
+
+            if (entrance.style === "swagger") {
+              this.arenaGraphics.lineStyle(
+                3,
+                0xf5ef91,
+                Math.min(0.72, strength * 0.8),
+              );
+              for (const side of [-1, 1]) {
+                const sparkleX = visualX + side * unit.radius * 1.18;
+                const sparkleY = visualY - unit.radius * (0.65 + side * 0.18);
+                this.arenaGraphics.lineBetween(
+                  sparkleX - unit.radius * 0.18,
+                  sparkleY,
+                  sparkleX + unit.radius * 0.18,
+                  sparkleY,
+                );
+                this.arenaGraphics.lineBetween(
+                  sparkleX,
+                  sparkleY - unit.radius * 0.18,
+                  sparkleX,
+                  sparkleY + unit.radius * 0.18,
+                );
+              }
+              return;
+            }
+
+            if (entrance.style === "lazy-settle") {
+              this.arenaGraphics.fillStyle(0xf0d76b, 0.1 * strength);
+              this.arenaGraphics.fillEllipse(
+                visualX,
+                unit.y + unit.radius * 0.82,
+                unit.radius * (3.1 + strength * 0.65),
+                unit.radius * (0.82 + strength * 0.2),
+              );
+              this.arenaGraphics.lineStyle(3, 0xf6e39c, 0.44 * strength);
+              this.arenaGraphics.strokeEllipse(
+                visualX,
+                unit.y + unit.radius * 0.82,
+                unit.radius * (2.7 + strength * 0.9),
+                unit.radius * (0.72 + strength * 0.28),
+              );
+              return;
+            }
+
+            if (entrance.style === "heavy-march") {
+              this.arenaGraphics.fillStyle(0xffa45f, 0.18 * strength);
+              this.arenaGraphics.fillEllipse(
+                visualX,
+                unit.y + unit.radius * 0.84,
+                unit.radius * (2.3 + strength * 0.75),
+                unit.radius * (0.62 + strength * 0.22),
+              );
+              this.arenaGraphics.lineStyle(4, 0xffbd77, 0.54 * strength);
+              this.arenaGraphics.strokeEllipse(
+                visualX,
+                unit.y + unit.radius * 0.84,
+                unit.radius * (2.05 + strength),
+                unit.radius * (0.54 + strength * 0.32),
+              );
+              return;
+            }
+
+            if (entrance.style === "heavy-drop") {
+              this.arenaGraphics.fillStyle(0x3d4653, 0.2 * strength);
+              this.arenaGraphics.fillEllipse(
+                unit.x,
+                unit.y + unit.radius * 0.86,
+                unit.radius * (3 + strength * 1.6),
+                unit.radius * (0.72 + strength * 0.42),
+              );
+              this.arenaGraphics.lineStyle(5, 0xffd76e, 0.7 * strength);
+              this.arenaGraphics.strokeEllipse(
+                unit.x,
+                unit.y + unit.radius * 0.86,
+                unit.radius * (2.7 + strength * 2.1),
+                unit.radius * (0.66 + strength * 0.58),
+              );
+              return;
+            }
+
+            this.arenaGraphics.lineStyle(4, 0xe5ff6f, strength * 0.58);
+            this.arenaGraphics.strokeEllipse(
+              unit.x,
+              unit.y + unit.radius * 0.82,
+              unit.radius * (2.4 + (1 - strength) * 1.4),
+              unit.radius * (0.65 + (1 - strength) * 0.42),
+            );
+          }
+
           private drawUnit(unit: RuntimeUnit, time: number) {
             const combatDefinition = characterById.get(unit.definitionId);
             if (!combatDefinition) return;
@@ -1322,28 +1488,25 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     ),
                   )
                 : 1;
-            const entranceEase =
-              entranceProgress *
-              entranceProgress *
-              (3 - 2 * entranceProgress);
+            const entrance = entrancePresentationFor(
+              definition,
+              entranceProgress,
+              unit.radius,
+              unit.vx < 0,
+            );
             if (unit.action === "entering") {
-              visualY += (1 - entranceEase) * unit.radius * 0.7;
-              const ringAlpha =
-                Math.sin(entranceProgress * Math.PI) * 0.58;
-              this.arenaGraphics.lineStyle(4, 0xe5ff6f, ringAlpha);
-              this.arenaGraphics.strokeEllipse(
-                visualX,
-                unit.y + unit.radius * 0.82,
-                unit.radius * (2.4 + entranceEase * 1.4),
-                unit.radius * (0.65 + entranceEase * 0.42),
-              );
+              visualX += entrance.xOffset;
+              visualY += entrance.yOffset;
+              this.drawEntranceEffect(unit, entrance, visualX, visualY);
             }
             const victoryElapsed = Math.max(0, time - unit.actionStartedAt);
             const victoryStyle = definition.victoryStyle ?? "cool";
             const victoryWave = Math.sin(victoryElapsed * Math.PI * 2.2);
             const victoryBounce = Math.abs(victoryWave);
             const bob =
-              unit.action === "victory"
+              unit.action === "entering"
+                ? 0
+                : unit.action === "victory"
                 ? -victoryBounce *
                   unit.radius *
                   (victoryStyle === "dance" ? 0.18 : 0.1)
@@ -1352,7 +1515,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               unit.action === "dead"
                 ? Math.max(0, (unit.actionUntil - time) / 0.45)
                 : unit.action === "entering"
-                  ? Math.min(1, entranceProgress / 0.24)
+                  ? entrance.alpha
                   : 1;
             const scaleBump =
               callingForHelp
@@ -1371,9 +1534,12 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     unit.action === "digging"
                   ? 1.06
                   : 1;
-            const displayScale =
+            const displayScaleX =
               scaleBump *
-              (unit.action === "entering" ? 0.72 + entranceEase * 0.28 : 1);
+              (unit.action === "entering" ? entrance.scaleX : 1);
+            const displayScaleY =
+              scaleBump *
+              (unit.action === "entering" ? entrance.scaleY : 1);
 
             if (unit.action === "victory") {
               const glowColor =
@@ -1408,14 +1574,16 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 this.unitImages.set(unit.id, image);
               }
               if (image.texture.key !== textureKey) image.setTexture(textureKey);
-              const spriteSize =
+              const baseSpriteSize =
                 unit.radius *
-                (unit.appearanceDefinitionId === "mole" ? 2.78 : 3) *
-                displayScale;
+                (unit.appearanceDefinitionId === "mole" ? 2.78 : 3);
               image
                 .setVisible(true)
                 .setPosition(visualX, visualY + bob)
-                .setDisplaySize(spriteSize, spriteSize)
+                .setDisplaySize(
+                  baseSpriteSize * displayScaleX,
+                  baseSpriteSize * displayScaleY,
+                )
                 .setFlipX(unit.vx < 0)
                 .setAlpha(alpha)
                 .setAngle(
@@ -1424,7 +1592,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                       ? -12
                       : 12
                     : unit.action === "entering"
-                      ? (1 - entranceEase) * (unit.vx < 0 ? 8 : -8)
+                      ? entrance.angle
                       : unit.action === "victory"
                         ? victoryStyle === "dance"
                           ? victoryWave * 5
@@ -1450,7 +1618,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               fallback
                 .setVisible(true)
                 .setPosition(visualX, visualY + bob)
-                .setScale(displayScale)
+                .setScale(displayScaleX, displayScaleY)
                 .setAlpha(alpha);
             }
 

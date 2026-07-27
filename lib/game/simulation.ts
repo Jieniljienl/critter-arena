@@ -69,6 +69,9 @@ const MIN_HOSTILE_STEER_INTERVAL = 0.55;
 const MAX_HOSTILE_STEER_INTERVAL = 0.9;
 const MIN_HOSTILE_STEER_BLEND = 0.22;
 const MAX_HOSTILE_STEER_BLEND = 0.38;
+const HOSTILE_CLOSE_INTERCEPT_RATIO = 0.42;
+const MIN_HOSTILE_CLOSE_INTERCEPT_GAP = 160;
+const MAX_HOSTILE_CLOSE_INTERCEPT_GAP = 240;
 export const UNIT_ENTRANCE_DURATION = 0.8;
 
 export type SimulationDiagnostics = {
@@ -655,21 +658,6 @@ export class BattleSimulation {
     });
     const interval = Math.min(...configurations.map((item) => item.interval));
     const limit = Math.max(...configurations.map((item) => item.limit));
-    const activeBamboo = this.bambooProps.filter((prop) => prop.active);
-    if (activeBamboo.length > limit) {
-      const keepIds = new Set(
-        Array.from({ length: limit }, (_, index) => {
-          const evenlySpacedIndex = Math.min(
-            activeBamboo.length - 1,
-            Math.floor((index * activeBamboo.length) / Math.max(1, limit)),
-          );
-          return activeBamboo[evenlySpacedIndex]?.id;
-        }).filter((id): id is string => Boolean(id)),
-      );
-      for (const bamboo of activeBamboo) {
-        if (!keepIds.has(bamboo.id)) bamboo.active = false;
-      }
-    }
     this.nextBambooRespawnAt ??= this.time + interval;
     if (this.time + EPSILON < this.nextBambooRespawnAt) return;
     this.nextBambooRespawnAt = this.time + interval;
@@ -712,13 +700,13 @@ export class BattleSimulation {
         type: "bamboo",
         active: true,
         shape: { kind: "circle", ...position, radius },
-        label: "熊猫补给竹子",
+        label: "全场公共竹子",
       };
       this.props.push(bamboo);
       this.bambooProps.push(bamboo);
     }
     this.emitSkill(
-      `${pandas[0].name} 在场，地图补充了一份竹子`,
+      "全场公共竹子补给刷新",
       pandas[0],
       undefined,
       "heal",
@@ -1234,6 +1222,51 @@ export class BattleSimulation {
   ): void {
     if (definition.speed <= EPSILON) return;
 
+    const awareness = Math.max(
+      MIN_HOSTILE_CONTACT_AWARENESS,
+      Math.min(
+        MAX_HOSTILE_CONTACT_AWARENESS,
+        Math.min(this.board.width, this.board.height) *
+          HOSTILE_CONTACT_AWARENESS_RATIO,
+      ),
+    );
+    if (definition.attack.mode === "melee" && definition.attack.range > EPSILON) {
+      const closeInterceptGap = Math.max(
+        MIN_HOSTILE_CLOSE_INTERCEPT_GAP,
+        Math.min(
+          MAX_HOSTILE_CLOSE_INTERCEPT_GAP,
+          awareness * HOSTILE_CLOSE_INTERCEPT_RATIO,
+        ),
+      );
+      let closeHostile: RuntimeUnit | undefined;
+      let closeHostileGap = Number.POSITIVE_INFINITY;
+      for (const candidate of this.validTargets(
+        unit,
+        closeInterceptGap + unit.radius,
+      )) {
+        const gap = this.meleeSurfaceGap(unit, candidate);
+        if (
+          gap <= closeInterceptGap + EPSILON &&
+          (gap < closeHostileGap - EPSILON ||
+            (Math.abs(gap - closeHostileGap) <= EPSILON &&
+              (!closeHostile ||
+                candidate.id.localeCompare(closeHostile.id) < 0)))
+        ) {
+          closeHostile = candidate;
+          closeHostileGap = gap;
+        }
+      }
+      if (closeHostile) {
+        const interceptDirection = normalize({
+          x: closeHostile.x - unit.x,
+          y: closeHostile.y - unit.y,
+        });
+        unit.vx = interceptDirection.x * definition.speed;
+        unit.vy = interceptDirection.y * definition.speed;
+        return;
+      }
+    }
+
     const cadence =
       MIN_HOSTILE_STEER_INTERVAL +
       stableUnitFraction(unit.id, 17) *
@@ -1249,14 +1282,6 @@ export class BattleSimulation {
     }
     this.nextHostileSteerAt.set(unit.id, this.time + cadence);
 
-    const awareness = Math.max(
-      MIN_HOSTILE_CONTACT_AWARENESS,
-      Math.min(
-        MAX_HOSTILE_CONTACT_AWARENESS,
-        Math.min(this.board.width, this.board.height) *
-          HOSTILE_CONTACT_AWARENESS_RATIO,
-      ),
-    );
     let nearest: RuntimeUnit | undefined;
     let nearestGap = Number.POSITIVE_INFINITY;
     for (const candidate of this.validTargets(unit, awareness)) {

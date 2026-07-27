@@ -57,6 +57,26 @@ test("built-in skills are split into stable active/passive workshop modules", ()
       },
     ],
   );
+  assert.deepEqual(
+    lowStarPolice.find((module) => module.id === "police-baton-rush")?.fields,
+    [
+      {
+        key: "batonRushSpeedMultiplier",
+        label: "追击移动速度倍率（相对移速）",
+        fallback: 3,
+        min: 0.1,
+        max: 50,
+        step: 0.1,
+      },
+      {
+        key: "batonRushCooldown",
+        label: "追击敲击冷却（秒）",
+        fallback: 10,
+        min: 0,
+        step: 0.1,
+      },
+    ],
+  );
 
   const fiveStarPolice = builtInSkillModulesFor(character("police-5"));
   assert.deepEqual(

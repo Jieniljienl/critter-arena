@@ -66,8 +66,6 @@ const MIN_MELEE_PURSUIT_BUFFER = 24;
 const AXIS_ALIGNED_REFLECTION_THRESHOLD = Math.sin((7 * Math.PI) / 180);
 const MIN_REFLECTION_DEVIATION_RADIANS = (10 * Math.PI) / 180;
 const MAX_REFLECTION_DEVIATION_RADIANS = (22 * Math.PI) / 180;
-const POLICE_BATON_RUSH_SPEED_MULTIPLIER = 2.4;
-const POLICE_BATON_RUSH_MIN_CLOSING_SPEED = 120;
 export const UNIT_ENTRANCE_DURATION = 0.8;
 export const HEAVY_UNIT_ENTRANCE_DURATION = 1.2;
 
@@ -930,6 +928,7 @@ export class BattleSimulation {
       if (
         unit.action !== "move" ||
         !unit.targetable ||
+        definition.speed <= EPSILON ||
         this.time + EPSILON < unit.nextBatonRushAt
       ) {
         return;
@@ -979,13 +978,14 @@ export class BattleSimulation {
       return;
     }
 
-    const targetSpeed = Math.hypot(target.vx, target.vy);
-    const rushSpeed = Math.max(
-      definition.speed * POLICE_BATON_RUSH_SPEED_MULTIPLIER,
-      definition.speed +
-        targetSpeed +
-        POLICE_BATON_RUSH_MIN_CLOSING_SPEED,
+    const speedMultiplier = Math.max(
+      0.1,
+      Math.min(
+        50,
+        definition.skillParameters?.police?.batonRushSpeedMultiplier ?? 3,
+      ),
     );
+    const rushSpeed = definition.speed * speedMultiplier;
     this.moveTowardMeleeContact(unit, target, dt, rushSpeed);
     if (!this.isMeleeContact(unit, target)) return;
 

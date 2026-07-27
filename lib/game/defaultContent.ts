@@ -314,6 +314,7 @@ const moleSkillParameters = {
 
 const policeSkillParameters = {
   batonRushCooldown: 10,
+  batonRushSpeedMultiplier: 3,
   sniperAimDuration: 3,
   sniperCooldown: 8,
   sniperDamage: 60,
@@ -1483,6 +1484,8 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       const policeParameters = character.skillParameters.police;
       policeParameters.batonRushCooldown ??=
         defaultCharacter.skillParameters.police.batonRushCooldown;
+      policeParameters.batonRushSpeedMultiplier ??=
+        defaultCharacter.skillParameters.police.batonRushSpeedMultiplier;
       policeParameters.sniperAimDuration ??=
         defaultCharacter.skillParameters.police.sniperAimDuration;
       policeParameters.sniperCooldown ??=
@@ -1568,6 +1571,8 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       );
       character.skillParameters.police.batonRushCooldown ??=
         policeSkillParameters.batonRushCooldown;
+      character.skillParameters.police.batonRushSpeedMultiplier ??=
+        policeSkillParameters.batonRushSpeedMultiplier;
     }
     if (character.pluginId === "police" && character.policeStar === 5) {
       character.skillParameters ??= {};

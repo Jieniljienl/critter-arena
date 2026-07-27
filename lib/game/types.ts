@@ -172,6 +172,7 @@ export type MoleSkillParameters = {
 
 export type PoliceSkillParameters = {
   batonRushCooldown: number;
+  batonRushSpeedMultiplier: number;
   sniperAimDuration: number;
   sniperCooldown: number;
   sniperDamage: number;

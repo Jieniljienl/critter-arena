@@ -549,6 +549,7 @@ test("one-star police tracks one hostile, strikes once, and then ends the skill"
   officerDefinition.attack.cooldown = 100;
   assert.ok(officerDefinition.skillParameters?.police);
   officerDefinition.skillParameters.police.batonRushCooldown = 10;
+  officerDefinition.skillParameters.police.batonRushSpeedMultiplier = 4.2;
   targetDefinition.pluginId = undefined;
   targetDefinition.speed = 70;
   targetDefinition.attack.range = -100;
@@ -584,6 +585,11 @@ test("one-star police tracks one hostile, strikes once, and then ends the skill"
   assert.ok(target);
   assert.equal(officer.action, "batonRush");
   assert.equal(officer.batonRushTargetId, target.id);
+  assert.ok(
+    Math.abs(
+      Math.hypot(officer.vx, officer.vy) - officerDefinition.speed * 4.2,
+    ) < 1e-9,
+  );
   assert.ok(officer.nextBatonRushAt - snapshot.time > 9.9);
   assert.ok(
     snapshot.events.some(
@@ -2627,6 +2633,50 @@ test("legacy and custom mole definitions gain the default tunnel speed multiplie
     definition(upgraded, "mole-custom").skillParameters?.mole
       ?.tunnelSpeedMultiplier,
     2.5,
+  );
+});
+
+test("one-star police chase speed defaults migrate without replacing custom multipliers", () => {
+  const manifest = createDefaultManifest();
+  const canonical = definition(manifest, "police-1");
+  const legacyCustom = {
+    ...structuredClone(canonical),
+    id: "police-1-legacy-custom",
+    name: "旧版自定义一星警察",
+  };
+  const configuredCustom = {
+    ...structuredClone(canonical),
+    id: "police-1-configured-custom",
+    name: "自定义追速一星警察",
+  };
+  delete (
+    canonical.skillParameters!.police as {
+      batonRushSpeedMultiplier?: number;
+    }
+  ).batonRushSpeedMultiplier;
+  delete (
+    legacyCustom.skillParameters!.police as {
+      batonRushSpeedMultiplier?: number;
+    }
+  ).batonRushSpeedMultiplier;
+  configuredCustom.skillParameters!.police!.batonRushSpeedMultiplier = 4.6;
+  manifest.characters.push(legacyCustom, configuredCustom);
+
+  const upgraded = upgradeManifest(manifest);
+  assert.equal(
+    definition(upgraded, "police-1").skillParameters?.police
+      ?.batonRushSpeedMultiplier,
+    3,
+  );
+  assert.equal(
+    definition(upgraded, "police-1-legacy-custom").skillParameters?.police
+      ?.batonRushSpeedMultiplier,
+    3,
+  );
+  assert.equal(
+    definition(upgraded, "police-1-configured-custom").skillParameters?.police
+      ?.batonRushSpeedMultiplier,
+    4.6,
   );
 });
 

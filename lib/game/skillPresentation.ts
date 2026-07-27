@@ -180,9 +180,17 @@ const batonRushModule: BuiltInSkillModule = {
   title: "追击敲击",
   activity: "active",
   triggerLabel: "冷却就绪后锁定最近敌人",
-  description: "一星警察加速追踪目标，贴身后只敲击一次；伤害与普通攻击相同。",
+  description: "一星警察按设定倍率追踪目标，贴身后只敲击一次；伤害与普通攻击相同。",
   parameterSource: "police",
   fields: [
+    {
+      key: "batonRushSpeedMultiplier",
+      label: "追击移动速度倍率（相对移速）",
+      fallback: 3,
+      min: 0.1,
+      max: 50,
+      step: 0.1,
+    },
     {
       key: "batonRushCooldown",
       label: "追击敲击冷却（秒）",

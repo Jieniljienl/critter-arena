@@ -248,6 +248,18 @@ textarea:focus-visible {
   color: var(--text);
 }
 
+.header-button:disabled {
+  cursor: default;
+  opacity: 0.42;
+}
+
+.header-button.is-recording {
+  border-color: rgba(255, 89, 104, 0.55);
+  background: rgba(255, 89, 104, 0.1);
+  color: #ff7d89;
+  font-variant-numeric: tabular-nums;
+}
+
 .export-menu {
   position: relative;
 }
@@ -284,6 +296,29 @@ textarea:focus-visible {
 
 .export-popover button:hover {
   background: rgba(255, 255, 255, 0.05);
+}
+
+.export-popover button:disabled {
+  cursor: wait;
+  opacity: 0.6;
+}
+
+.export-popover .video-export-action {
+  margin-bottom: 4px;
+  border: 1px solid rgba(131, 231, 239, 0.18);
+  background: rgba(131, 231, 239, 0.06);
+  color: #bdeff3;
+}
+
+.export-popover .video-export-action:hover {
+  border-color: rgba(131, 231, 239, 0.34);
+  background: rgba(131, 231, 239, 0.11);
+}
+
+.export-popover .video-export-action.state-recording {
+  border-color: rgba(255, 89, 104, 0.38);
+  background: rgba(255, 89, 104, 0.1);
+  color: #ff8994;
 }
 
 .export-popover button > span {

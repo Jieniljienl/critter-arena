@@ -47,6 +47,19 @@ export type ArenaHandle = {
   setMusicVolume: (volume: number) => void;
   syncReadySetup: (setup: ProjectManifest["setup"]) => boolean;
   getSnapshot: () => BattleSnapshot | undefined;
+  startVideoRecording: () => Promise<ArenaVideoRecordingInfo>;
+  stopVideoRecording: () => Promise<ArenaVideoRecording | undefined>;
+};
+
+export type ArenaVideoRecordingInfo = {
+  mimeType: string;
+  width: number;
+  height: number;
+};
+
+export type ArenaVideoRecording = ArenaVideoRecordingInfo & {
+  blob: Blob;
+  durationMs: number;
 };
 
 type ArenaCanvasProps = {
@@ -59,6 +72,32 @@ type ArenaCanvasProps = {
 
 type PhaserModule = typeof PhaserType;
 type ShapeBounds = { x: number; y: number; width: number; height: number };
+type CapturableCanvas = HTMLCanvasElement & {
+  captureStream?: (frameRate?: number) => MediaStream;
+};
+type ArenaRecordingSession = ArenaVideoRecordingInfo & {
+  recorder: MediaRecorder;
+  stream: MediaStream;
+  chunks: Blob[];
+  startedAt: number;
+  result: Promise<ArenaVideoRecording | undefined>;
+  resolveResult: (result: ArenaVideoRecording | undefined) => void;
+  failed: boolean;
+  settled: boolean;
+};
+
+const arenaVideoMimeType = (): string => {
+  if (typeof MediaRecorder === "undefined") return "";
+  return (
+    [
+      "video/webm;codecs=vp9,opus",
+      "video/webm;codecs=vp8,opus",
+      "video/webm;codecs=vp9",
+      "video/webm;codecs=vp8",
+      "video/webm",
+    ].find((mimeType) => MediaRecorder.isTypeSupported(mimeType)) ?? ""
+  );
+};
 
 const clipDurationCache = new WeakMap<AnimationClip, number>();
 const shapeCenterCache = new WeakMap<object, { x: number; y: number }>();
@@ -183,6 +222,10 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
     const speedRef = useRef(1);
     const snapshotRef = useRef<BattleSnapshot | undefined>(undefined);
     const audioRef = useRef(new ArenaAudio());
+    const gameCanvasRef = useRef<HTMLCanvasElement | undefined>(undefined);
+    const videoRecordingRef = useRef<ArenaRecordingSession | undefined>(
+      undefined,
+    );
     const mutedRef = useRef(muted);
     const volumeRef = useRef(volume);
     const musicConfigRef = useRef(manifest.backgroundMusic);
@@ -204,6 +247,31 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
         const syncAudioBattleStatus = () => {
           const status = simulationRef.current?.getSnapshot().status;
           if (status) audioRef.current.setBattleStatus(status);
+        };
+        const settleVideoRecording = (
+          session: ArenaRecordingSession,
+        ): void => {
+          if (session.settled) return;
+          session.settled = true;
+          for (const track of session.stream.getTracks()) track.stop();
+          audioRef.current.stopRecordingStream();
+          if (videoRecordingRef.current === session) {
+            videoRecordingRef.current = undefined;
+          }
+          const blob = new Blob(session.chunks, {
+            type: session.mimeType || "video/webm",
+          });
+          session.resolveResult(
+            !session.failed && blob.size > 0
+              ? {
+                  blob,
+                  mimeType: session.mimeType || "video/webm",
+                  width: session.width,
+                  height: session.height,
+                  durationMs: Math.max(0, performance.now() - session.startedAt),
+                }
+              : undefined,
+          );
         };
         return {
           start: () => {
@@ -277,6 +345,119 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             return true;
           },
           getSnapshot: () => snapshotRef.current,
+          startVideoRecording: async () => {
+            const current = videoRecordingRef.current;
+            if (current && !current.settled) {
+              return {
+                mimeType: current.mimeType,
+                width: current.width,
+                height: current.height,
+              };
+            }
+            if (
+              typeof window === "undefined" ||
+              typeof MediaRecorder === "undefined"
+            ) {
+              throw new Error("当前浏览器不支持视频录制，请使用最新版 Chrome 或 Edge");
+            }
+            const canvas = gameCanvasRef.current as CapturableCanvas | undefined;
+            if (!canvas?.captureStream) {
+              throw new Error("战场画布尚未准备好，稍后再试");
+            }
+
+            const canvasStream = canvas.captureStream(60);
+            const audioStream = await audioRef.current.startRecordingStream();
+            const stream = new MediaStream([
+              ...canvasStream.getVideoTracks(),
+              ...(audioStream?.getAudioTracks() ?? []),
+            ]);
+            const requestedMimeType = arenaVideoMimeType();
+            let recorder: MediaRecorder;
+            try {
+              recorder = new MediaRecorder(stream, {
+                ...(requestedMimeType ? { mimeType: requestedMimeType } : {}),
+                videoBitsPerSecond: 8_000_000,
+              });
+            } catch (error) {
+              for (const track of stream.getTracks()) track.stop();
+              audioRef.current.stopRecordingStream();
+              throw error;
+            }
+
+            let resolveResult!: (
+              result: ArenaVideoRecording | undefined,
+            ) => void;
+            const result = new Promise<ArenaVideoRecording | undefined>(
+              (resolve) => {
+                resolveResult = resolve;
+              },
+            );
+            const session: ArenaRecordingSession = {
+              recorder,
+              stream,
+              chunks: [],
+              startedAt: performance.now(),
+              result,
+              resolveResult,
+              mimeType:
+                recorder.mimeType || requestedMimeType || "video/webm",
+              width: canvas.width,
+              height: canvas.height,
+              failed: false,
+              settled: false,
+            };
+            recorder.addEventListener("dataavailable", (event) => {
+              if (event.data.size > 0) session.chunks.push(event.data);
+            });
+            recorder.addEventListener("stop", () => {
+              settleVideoRecording(session);
+            });
+            recorder.addEventListener("error", () => {
+              session.failed = true;
+              if (recorder.state === "inactive") {
+                settleVideoRecording(session);
+                return;
+              }
+              try {
+                recorder.stop();
+              } catch {
+                settleVideoRecording(session);
+              }
+            });
+            videoRecordingRef.current = session;
+            try {
+              recorder.start(1_000);
+            } catch (error) {
+              session.failed = true;
+              settleVideoRecording(session);
+              throw error;
+            }
+            return {
+              mimeType: session.mimeType,
+              width: session.width,
+              height: session.height,
+            };
+          },
+          stopVideoRecording: async () => {
+            const session = videoRecordingRef.current;
+            if (!session) return undefined;
+            if (session.recorder.state !== "inactive") {
+              try {
+                session.recorder.requestData();
+              } catch {
+                // Some browsers flush the final data only from stop().
+              }
+              try {
+                session.recorder.stop();
+              } catch {
+                session.failed = true;
+                settleVideoRecording(session);
+              }
+            } else {
+              settleVideoRecording(session);
+            }
+            return session.result;
+          },
         };
       },
       [],
@@ -2090,12 +2271,22 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           },
           scene: ArenaScene,
         });
+        gameCanvasRef.current = game.canvas;
       };
       void boot();
 
       return () => {
         disposed = true;
+        const recording = videoRecordingRef.current;
+        if (recording && recording.recorder.state !== "inactive") {
+          try {
+            recording.recorder.stop();
+          } catch {
+            for (const track of recording.stream.getTracks()) track.stop();
+          }
+        }
         game?.destroy(true);
+        gameCanvasRef.current = undefined;
         loadSetupAssetsRef.current = undefined;
         simulationRef.current = undefined;
         audio.dispose();

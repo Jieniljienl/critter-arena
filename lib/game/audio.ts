@@ -145,6 +145,7 @@ export class ArenaAudio {
   private musicConfig?: BackgroundMusicConfig;
   private musicAssets: AssetRef[] = [];
   private musicLoadToken = 0;
+  private recordingDestination?: MediaStreamAudioDestinationNode;
 
   async unlock(): Promise<void> {
     if (typeof window === "undefined") return;
@@ -204,6 +205,30 @@ export class ArenaAudio {
     this.applyMusicVolume();
   }
 
+  async startRecordingStream(): Promise<MediaStream | undefined> {
+    await this.unlock();
+    const context = this.context;
+    const master = this.master;
+    if (!context || !master) return undefined;
+    this.stopRecordingStream();
+    const destination = context.createMediaStreamDestination();
+    master.connect(destination);
+    this.recordingDestination = destination;
+    return destination.stream;
+  }
+
+  stopRecordingStream(): void {
+    const destination = this.recordingDestination;
+    if (!destination) return;
+    try {
+      this.master?.disconnect(destination);
+    } catch {
+      // The audio graph may already be disconnected during teardown.
+    }
+    for (const track of destination.stream.getTracks()) track.stop();
+    this.recordingDestination = undefined;
+  }
+
   async startMusic(config: BackgroundMusicConfig, assets: AssetRef[]): Promise<void> {
     this.musicConfig = structuredClone(config);
     this.musicAssets = assets;
@@ -223,6 +248,7 @@ export class ArenaAudio {
   }
 
   dispose(): void {
+    this.stopRecordingStream();
     this.stopMusic();
     this.stopSkillVoices();
     for (const pool of this.assetVoicePools.values()) {

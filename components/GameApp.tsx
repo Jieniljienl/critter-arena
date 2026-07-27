@@ -37,15 +37,21 @@ import {
   Settings2,
   SkipForward,
   Sparkles,
+  Square,
   Swords,
   Trash2,
   Upload,
   UsersRound,
+  Video,
   Volume2,
   VolumeX,
   X,
 } from "lucide-react";
-import { ArenaCanvas, type ArenaHandle } from "./ArenaCanvas";
+import {
+  ArenaCanvas,
+  type ArenaHandle,
+  type ArenaVideoRecording,
+} from "./ArenaCanvas";
 import { BoardPropsPanel } from "./BoardPropsPanel";
 import { FormationEditor } from "./FormationEditor";
 import { NameLibraryEditor } from "./NameLibraryEditor";
@@ -72,6 +78,7 @@ import type {
 
 type WorkspaceView = "battle" | "characters" | "boards";
 type MobileSidebarPanel = "lineup" | "props" | "feed";
+type VideoExportState = "idle" | "starting" | "recording" | "saving";
 type TeamMenuState = {
   contestantId: string;
   x: number;
@@ -137,6 +144,31 @@ const formatTime = (seconds: number | undefined) => {
   const value = Math.max(0, seconds ?? 0);
   const minutes = Math.floor(value / 60);
   return `${String(minutes).padStart(2, "0")}:${String(Math.floor(value % 60)).padStart(2, "0")}`;
+};
+
+const downloadBattleVideo = (
+  recording: ArenaVideoRecording,
+  boardName: string,
+): void => {
+  const safeBoardName =
+    boardName
+      .trim()
+      .replace(/[<>:"/\\|?*\u0000-\u001f]/g, "-")
+      .replace(/\s+/g, "-")
+      .slice(0, 40) || "battle";
+  const timestamp = new Date()
+    .toISOString()
+    .replace(/[-:]/g, "")
+    .replace(/\.\d{3}Z$/, "");
+  const extension = recording.mimeType.includes("mp4") ? "mp4" : "webm";
+  const url = URL.createObjectURL(recording.blob);
+  const anchor = document.createElement("a");
+  anchor.href = url;
+  anchor.download = `critter-arena-${safeBoardName}-${timestamp}.${extension}`;
+  document.body.append(anchor);
+  anchor.click();
+  anchor.remove();
+  window.setTimeout(() => URL.revokeObjectURL(url), 10_000);
 };
 
 const colorPalette = [
@@ -210,6 +242,9 @@ export function GameApp() {
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const [savedAt, setSavedAt] = useState<string>();
   const [notice, setNotice] = useState<string>();
+  const [videoExportState, setVideoExportState] =
+    useState<VideoExportState>("idle");
+  const [videoElapsedSeconds, setVideoElapsedSeconds] = useState(0);
   const [selectedCharacterId, setSelectedCharacterId] = useState("panda-lazy");
   const [selectedBoardId, setSelectedBoardId] = useState(
     "portrait-aurora-platform",
@@ -229,8 +264,18 @@ export function GameApp() {
   const pendingPreviewSetupRef = useRef<MatchSetup | undefined>(undefined);
   const previewSyncFrameRef = useRef<number | undefined>(undefined);
   const fullscreenControlsTimerRef = useRef<number | undefined>(undefined);
+  const videoExportStateRef = useRef<VideoExportState>("idle");
+  const pendingVideoStartRef = useRef(false);
+  const recordingStartedAtRef = useRef(0);
+  const videoAutoStopTimerRef = useRef<number | undefined>(undefined);
+  const videoStopPromiseRef = useRef<Promise<void> | undefined>(undefined);
   const nativeFullscreenRef = useRef(false);
   const teamMenuRef = useRef<HTMLDivElement>(null);
+
+  const updateVideoExportState = useCallback((state: VideoExportState) => {
+    videoExportStateRef.current = state;
+    setVideoExportState(state);
+  }, []);
 
   const revealFullscreenControls = useCallback(() => {
     if (fullscreenControlsTimerRef.current !== undefined) {
@@ -434,6 +479,9 @@ export function GameApp() {
       if (fullscreenControlsTimerRef.current !== undefined) {
         window.clearTimeout(fullscreenControlsTimerRef.current);
       }
+      if (videoAutoStopTimerRef.current !== undefined) {
+        window.clearTimeout(videoAutoStopTimerRef.current);
+      }
     },
     [],
   );
@@ -522,7 +570,90 @@ export function GameApp() {
       (board) => board.id === formationManifest.setup.boardId,
     ) ?? formationManifest.boards[0];
 
+  const startVideoExportOnCurrentArena = useCallback(async (): Promise<boolean> => {
+    if (
+      videoExportStateRef.current === "starting" ||
+      videoExportStateRef.current === "recording" ||
+      videoExportStateRef.current === "saving"
+    ) {
+      return false;
+    }
+    const arena = arenaRef.current;
+    if (!arena) {
+      setNotice("战场画面尚未准备好，请稍后再试");
+      return false;
+    }
+    updateVideoExportState("starting");
+    try {
+      const info = await arena.startVideoRecording();
+      recordingStartedAtRef.current = performance.now();
+      setVideoElapsedSeconds(0);
+      updateVideoExportState("recording");
+      setNotice(`已开始录制 ${info.width}×${info.height} 战斗视频`);
+      return true;
+    } catch (error) {
+      updateVideoExportState("idle");
+      setNotice(
+        error instanceof Error
+          ? error.message
+          : "视频录制启动失败，请使用最新版 Chrome 或 Edge",
+      );
+      return false;
+    }
+  }, [updateVideoExportState]);
+
+  const stopVideoExport = useCallback(async (): Promise<void> => {
+    const activeStop = videoStopPromiseRef.current;
+    if (activeStop) return activeStop;
+    if (
+      videoExportStateRef.current === "idle" ||
+      videoExportStateRef.current === "starting"
+    ) {
+      return;
+    }
+    const task = (async () => {
+      if (videoAutoStopTimerRef.current !== undefined) {
+        window.clearTimeout(videoAutoStopTimerRef.current);
+        videoAutoStopTimerRef.current = undefined;
+      }
+      updateVideoExportState("saving");
+      try {
+        const recording = await arenaRef.current?.stopVideoRecording();
+        if (!recording) {
+          setNotice("视频录制没有生成有效内容，请重新录制");
+          return;
+        }
+        const boardName =
+          battleManifest.boards.find(
+            (board) => board.id === battleManifest.setup.boardId,
+          )?.name ?? "battle";
+        downloadBattleVideo(recording, boardName);
+        setNotice(
+          `战斗视频已保存（${formatTime(recording.durationMs / 1_000)}）`,
+        );
+      } catch {
+        setNotice("视频保存失败，请重新录制");
+      } finally {
+        recordingStartedAtRef.current = 0;
+        setVideoElapsedSeconds(0);
+        updateVideoExportState("idle");
+      }
+    })().finally(() => {
+      videoStopPromiseRef.current = undefined;
+    });
+    videoStopPromiseRef.current = task;
+    return task;
+  }, [
+    battleManifest.boards,
+    battleManifest.setup.boardId,
+    updateVideoExportState,
+  ]);
+
   const beginFreshBattle = useCallback((newSeed = false) => {
+    if (videoExportStateRef.current !== "idle") {
+      setNotice("正在录制视频，请先停止并保存");
+      return;
+    }
     if (manifest.setup.contestants.length < 2) {
       setNotice("至少添加两名主角色才能开战");
       return;
@@ -538,6 +669,40 @@ export function GameApp() {
     setPendingAutoStart(true);
     setBattleKey((key) => key + 1);
   }, [manifest]);
+
+  const toggleBattleVideoExport = useCallback(() => {
+    if (videoExportStateRef.current === "recording") {
+      void stopVideoExport();
+      return;
+    }
+    if (
+      videoExportStateRef.current === "starting" ||
+      videoExportStateRef.current === "saving"
+    ) {
+      return;
+    }
+    if (manifest.setup.contestants.length < 2) {
+      setNotice("至少添加两名主角色才能录制战斗");
+      return;
+    }
+    if (
+      view === "battle" &&
+      (snapshot?.status === "running" || snapshot?.status === "paused")
+    ) {
+      void startVideoExportOnCurrentArena();
+      return;
+    }
+    pendingVideoStartRef.current = true;
+    setView("battle");
+    beginFreshBattle(false);
+  }, [
+    beginFreshBattle,
+    manifest.setup.contestants.length,
+    snapshot?.status,
+    startVideoExportOnCurrentArena,
+    stopVideoExport,
+    view,
+  ]);
 
   useEffect(() => {
     const handleSpace = (event: KeyboardEvent) => {
@@ -561,6 +726,10 @@ export function GameApp() {
   }, [beginFreshBattle, snapshot, view]);
 
   const resetBattle = () => {
+    if (videoExportStateRef.current !== "idle") {
+      setNotice("正在录制视频，请先停止并保存");
+      return;
+    }
     const next = structuredClone(manifest);
     setBattleManifest(next);
     setSnapshot(undefined);
@@ -578,10 +747,52 @@ export function GameApp() {
     arenaRef.current?.setSkillVoiceMode(skillVoiceMode);
     if (!pendingAutoStart) arenaRef.current?.syncReadySetup(manifest.setup);
     if (pendingAutoStart) {
-      arenaRef.current?.start();
       setPendingAutoStart(false);
+      if (pendingVideoStartRef.current) {
+        pendingVideoStartRef.current = false;
+        void startVideoExportOnCurrentArena().then((started) => {
+          if (started) arenaRef.current?.start();
+        });
+      } else {
+        arenaRef.current?.start();
+      }
     }
   };
+
+  useEffect(() => {
+    if (videoExportState !== "recording") return;
+    const updateElapsed = () => {
+      setVideoElapsedSeconds(
+        Math.max(
+          0,
+          Math.floor((performance.now() - recordingStartedAtRef.current) / 1_000),
+        ),
+      );
+    };
+    updateElapsed();
+    const timer = window.setInterval(updateElapsed, 500);
+    return () => window.clearInterval(timer);
+  }, [videoExportState]);
+
+  useEffect(() => {
+    if (
+      videoExportState !== "recording" ||
+      snapshot?.status !== "finished" ||
+      videoAutoStopTimerRef.current !== undefined
+    ) {
+      return;
+    }
+    videoAutoStopTimerRef.current = window.setTimeout(() => {
+      videoAutoStopTimerRef.current = undefined;
+      void stopVideoExport();
+    }, 4_200);
+    return () => {
+      if (videoAutoStopTimerRef.current !== undefined) {
+        window.clearTimeout(videoAutoStopTimerRef.current);
+        videoAutoStopTimerRef.current = undefined;
+      }
+    };
+  }, [snapshot?.status, stopVideoExport, videoExportState]);
 
   const queuePreviewSetupSync = useCallback((setup: MatchSetup) => {
     pendingPreviewSetupRef.current = setup;
@@ -604,6 +815,10 @@ export function GameApp() {
   }, [queuePreviewSetupSync]);
 
   const switchBoard = (boardId: string) => {
+    if (videoExportStateRef.current !== "idle") {
+      setNotice("正在录制或保存视频，请先完成视频导出");
+      return;
+    }
     const nextBoard = manifest.boards.find((board) => board.id === boardId);
     const previousBoard = activeBoard;
     if (!nextBoard || !previousBoard) return;
@@ -643,6 +858,10 @@ export function GameApp() {
   };
 
   const deleteBoard = (boardId: string) => {
+    if (videoExportStateRef.current !== "idle") {
+      setNotice("正在录制或保存视频，请先完成视频导出");
+      return;
+    }
     const removedBoard = manifest.boards.find((board) => board.id === boardId);
     const result = removeBoardFromManifest(manifest, boardId);
     if (!removedBoard || !result) {
@@ -756,6 +975,10 @@ export function GameApp() {
     next: ProjectManifest,
     message: string,
   ) => {
+    if (videoExportStateRef.current !== "idle") {
+      setNotice("正在录制或保存视频，请先完成视频导出");
+      return;
+    }
     next.updatedAt = new Date().toISOString();
     setManifest(next);
     setBattleManifest(structuredClone(next));
@@ -1038,6 +1261,13 @@ export function GameApp() {
               key={id}
               className={view === id ? "is-active" : ""}
               onClick={() => {
+                if (
+                  id !== "battle" &&
+                  videoExportStateRef.current !== "idle"
+                ) {
+                  setNotice("正在录制或保存视频，请先完成视频导出");
+                  return;
+                }
                 setView(id);
                 if (id !== "battle") {
                   setSidebarExpanded(false);
@@ -1064,7 +1294,12 @@ export function GameApp() {
                   ? "自动保存"
                   : "自动保存已暂停"}
           </span>
-          <button className="header-button" type="button" onClick={() => importRef.current?.click()}>
+          <button
+            className="header-button"
+            type="button"
+            disabled={videoExportState !== "idle"}
+            onClick={() => importRef.current?.click()}
+          >
             <Upload size={15} /> 导入
           </button>
           <input
@@ -1075,10 +1310,56 @@ export function GameApp() {
             onChange={(event) => void importFile(event.target.files?.[0])}
           />
           <div className="export-menu">
-            <button className="header-button" type="button">
-              <Download size={15} /> 导出 <ChevronRight size={13} />
+            <button
+              className={`header-button ${
+                videoExportState === "recording" ? "is-recording" : ""
+              }`}
+              type="button"
+            >
+              {videoExportState === "recording" ? (
+                <Video size={15} />
+              ) : (
+                <Download size={15} />
+              )}
+              {videoExportState === "recording"
+                ? `录制 ${formatTime(videoElapsedSeconds)}`
+                : videoExportState === "saving"
+                  ? "保存视频"
+                  : "导出"}
+              <ChevronRight size={13} />
             </button>
             <div className="export-popover">
+              <button
+                type="button"
+                className={`video-export-action state-${videoExportState}`}
+                disabled={
+                  videoExportState === "starting" ||
+                  videoExportState === "saving"
+                }
+                onClick={toggleBattleVideoExport}
+              >
+                {videoExportState === "recording" ? (
+                  <Square size={16} />
+                ) : (
+                  <Video size={16} />
+                )}
+                <span>
+                  <strong>
+                    {videoExportState === "recording"
+                      ? "停止并保存视频"
+                      : videoExportState === "starting"
+                        ? "正在准备录制"
+                        : videoExportState === "saving"
+                          ? "正在生成视频文件"
+                          : "导出战斗视频"}
+                  </strong>
+                  <small>
+                    {videoExportState === "recording"
+                      ? `已录制 ${formatTime(videoElapsedSeconds)} · 胜负结算后也会自动保存`
+                      : "待机时录制整局，对战中则从当前画面开始 · WebM"}
+                  </small>
+                </span>
+              </button>
               <button type="button" onClick={() => exportJson(manifest)}>
                 <FileJson size={16} />
                 <span><strong>配置 JSON</strong><small>适合版本管理与手工编辑</small></span>

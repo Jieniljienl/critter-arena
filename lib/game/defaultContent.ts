@@ -201,6 +201,14 @@ const legacyEntranceClip = (prefix: string): AnimationClip =>
     [`${prefix}-idle`, 200],
   ]);
 
+const legacyHeavyDropEntranceClip = (): AnimationClip =>
+  timedClip("entrance", [
+    ["police-5-entrance-v2-1", 150],
+    ["police-5-entrance-v2-2", 210],
+    ["police-5-entrance-v2-3", 260],
+    ["police-5-idle", 180],
+  ]);
+
 const entranceClip = (prefix: string): AnimationClip => {
   const choreography: Record<string, Array<[string, number]>> = {
     "panda-lazy": [
@@ -240,10 +248,10 @@ const entranceClip = (prefix: string): AnimationClip => {
       ["police-4-idle", 180],
     ],
     "police-5": [
-      ["police-5-entrance-v2-1", 150],
-      ["police-5-entrance-v2-2", 210],
-      ["police-5-entrance-v2-3", 260],
-      ["police-5-idle", 180],
+      ["police-5-entrance-v2-1", 340],
+      ["police-5-entrance-v2-2", 250],
+      ["police-5-entrance-v2-3", 330],
+      ["police-5-idle", 280],
     ],
   };
   return timedClip(
@@ -1382,6 +1390,17 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       matchesLegacyClip(
         character.animations.entrance,
         legacyEntranceClip(defaultCharacter.id),
+      )
+    ) {
+      character.animations.entrance = structuredClone(
+        defaultCharacter.animations.entrance,
+      );
+    }
+    if (
+      defaultCharacter.id === "police-6" &&
+      matchesLegacyClip(
+        character.animations.entrance,
+        legacyHeavyDropEntranceClip(),
       )
     ) {
       character.animations.entrance = structuredClone(

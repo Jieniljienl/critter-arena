@@ -69,6 +69,14 @@ const MAX_REFLECTION_DEVIATION_RADIANS = (22 * Math.PI) / 180;
 const POLICE_BATON_RUSH_SPEED_MULTIPLIER = 2.4;
 const POLICE_BATON_RUSH_MIN_CLOSING_SPEED = 120;
 export const UNIT_ENTRANCE_DURATION = 0.8;
+export const HEAVY_UNIT_ENTRANCE_DURATION = 1.2;
+
+export const unitEntranceDurationFor = (
+  definition: Pick<CharacterDefinition, "pluginId" | "policeStar">,
+): number =>
+  definition.pluginId === "police" && definition.policeStar === 6
+    ? HEAVY_UNIT_ENTRANCE_DURATION
+    : UNIT_ENTRANCE_DURATION;
 
 export type SimulationDiagnostics = {
   activeUnits: number;
@@ -371,6 +379,9 @@ export class BattleSimulation {
     const definition = options.definition;
     const radius = definition.radius * (this.board.unitScale ?? 1);
     const entering = options.playEntrance === true;
+    const entranceDuration = entering
+      ? unitEntranceDurationFor(definition)
+      : 0;
     const unit: RuntimeUnit = {
       id: options.id ?? this.nextId(definition.id),
       definitionId: definition.id,
@@ -394,7 +405,7 @@ export class BattleSimulation {
       targetable: !entering,
       action: entering ? "entering" : "move",
       actionStartedAt: this.time,
-      actionUntil: entering ? this.time + UNIT_ENTRANCE_DURATION : 0,
+      actionUntil: entering ? this.time + entranceDuration : 0,
       promotionStartedAt: 0,
       promotionUntil: 0,
       nextPandaSummonAt: 0,

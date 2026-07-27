@@ -8,8 +8,10 @@ import {
 import { removeBoardFromManifest } from "../lib/game/project";
 import {
   BattleSimulation,
+  HEAVY_UNIT_ENTRANCE_DURATION,
   UNIT_ENTRANCE_DURATION,
   circleOverlapsRegion,
+  unitEntranceDurationFor,
 } from "../lib/game/simulation";
 import { actionClipName } from "../lib/game/unitAnimation";
 import {
@@ -42,9 +44,14 @@ const runSteps = (simulation: BattleSimulation, count: number, dt = 1 / 60): voi
     snapshot.units.some((unit) => unit.action === "entering") &&
     !preparedSimulations.has(simulation)
   ) {
+    const leadInDuration = Math.max(
+      ...snapshot.units
+        .filter((unit) => unit.action === "entering")
+        .map((unit) => unit.actionUntil - snapshot.time),
+    );
     const leadInSteps = Math.max(
       0,
-      Math.ceil(UNIT_ENTRANCE_DURATION / dt) - 1,
+      Math.ceil(leadInDuration / dt) - 1,
     );
     for (let index = 0; index < leadInSteps; index += 1) {
       simulation.step(dt);
@@ -3378,7 +3385,7 @@ test("every built-in character has role-specific entrance choreography", () => {
         "police-5-entrance-v2-3",
         "police-5-idle",
       ],
-      durations: [150, 210, 260, 180],
+      durations: [340, 250, 330, 280],
     },
   } as const;
   const styles = new Set<string>();
@@ -3404,7 +3411,7 @@ test("every built-in character has role-specific entrance choreography", () => {
     );
     assert.equal(
       frames.reduce((total, frame) => total + frame.durationMs, 0),
-      UNIT_ENTRANCE_DURATION * 1_000,
+      unitEntranceDurationFor(character) * 1_000,
     );
     const style = entranceStyleFor(character);
     styles.add(style);
@@ -3448,11 +3455,57 @@ test("every built-in character has role-specific entrance choreography", () => {
     40,
     false,
   );
+  const heavyImpact = entrancePresentationFor(
+    definition(manifest, "police-6"),
+    0.43,
+    40,
+    false,
+  );
+  const heavyFinish = entrancePresentationFor(
+    definition(manifest, "police-6"),
+    1,
+    40,
+    false,
+  );
   assert.ok(pandaStart.scaleY < pandaStart.scaleX);
   assert.ok(moleStart.yOffset > 60);
   assert.ok(Math.abs(tacticalStart.xOffset) > Math.abs(swaggerStart.xOffset) * 2);
   assert.ok(Math.abs(sniperStart.xOffset) > Math.abs(swaggerStart.xOffset));
   assert.ok(heavyStart.yOffset < -100);
+  assert.ok(heavyImpact.scaleX > heavyImpact.scaleY + 0.3);
+  assert.ok(Math.abs(heavyFinish.xOffset) < 0.001);
+  assert.ok(Math.abs(heavyFinish.yOffset) < 0.001);
+  assert.equal(
+    unitEntranceDurationFor(definition(manifest, "police-6")),
+    HEAVY_UNIT_ENTRANCE_DURATION,
+  );
+});
+
+test("untouched legacy fearless entrance timing migrates without replacing custom clips", () => {
+  const legacy = createDefaultManifest();
+  const legacyFearless = definition(legacy, "police-6");
+  legacyFearless.animations.entrance.frames = [
+    { assetId: "police-5-entrance-v2-1", durationMs: 150 },
+    { assetId: "police-5-entrance-v2-2", durationMs: 210 },
+    { assetId: "police-5-entrance-v2-3", durationMs: 260 },
+    { assetId: "police-5-idle", durationMs: 180 },
+  ];
+  const upgraded = upgradeManifest(legacy);
+  assert.deepEqual(
+    definition(upgraded, "police-6").animations.entrance.frames.map(
+      (frame) => frame.durationMs,
+    ),
+    [340, 250, 330, 280],
+  );
+
+  const customized = createDefaultManifest();
+  definition(customized, "police-6").animations.entrance.frames[0].durationMs =
+    341;
+  const preserved = upgradeManifest(customized);
+  assert.equal(
+    definition(preserved, "police-6").animations.entrance.frames[0].durationMs,
+    341,
+  );
 });
 
 test("default settlement and rescue/reload actions use distinct animation frames", () => {

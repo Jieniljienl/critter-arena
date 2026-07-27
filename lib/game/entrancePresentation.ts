@@ -185,17 +185,40 @@ export const entrancePresentationFor = (
   }
 
   if (style === "heavy-drop") {
-    const drop = smoothstep(progress / 0.62);
-    const landing = Math.sin(clamp01((progress - 0.55) / 0.45) * Math.PI);
+    const touchdownAt = 0.3;
+    const drop = smoothstep(progress / touchdownAt);
+    const impactProgress = clamp01((progress - 0.26) / 0.34);
+    const impact =
+      progress >= 0.26 && progress <= 0.6
+        ? Math.sin(impactProgress * Math.PI)
+        : 0;
+    const rise = smoothstep((progress - 0.48) / 0.35);
+    const recoil =
+      Math.sin(clamp01((progress - 0.46) / 0.34) * Math.PI) *
+      (1 - smoothstep((progress - 0.78) / 0.22));
+    const brace =
+      progress >= 0.7
+        ? Math.sin(clamp01((progress - 0.7) / 0.3) * Math.PI)
+        : 0;
     return {
       style,
-      xOffset: -facing * radius * 0.18 * (1 - drop),
-      yOffset: -radius * 2.7 * (1 - drop) - radius * landing * 0.1,
-      scaleX: 0.82 + drop * 0.18 + landing * 0.2,
-      scaleY: 0.9 + drop * 0.1 - landing * 0.16,
-      angle: -facing * 3.5 * (1 - drop),
-      alpha: clamp01(progress / 0.12),
-      effectStrength: landing,
+      xOffset:
+        -facing * radius * 0.12 * (1 - drop) +
+        Math.sin(progress * Math.PI * 12) * radius * 0.035 * impact,
+      yOffset:
+        progress < touchdownAt
+          ? -radius * 4.2 * (1 - drop)
+          : radius * (0.14 * (1 - rise) - recoil * 0.07),
+      scaleX: 0.76 + drop * 0.24 + impact * 0.2 + brace * 0.045,
+      scaleY: 0.84 + drop * 0.16 - impact * 0.18 - brace * 0.025,
+      angle:
+        -facing * 6.5 * (1 - drop) + facing * recoil * 1.6,
+      alpha: clamp01(progress / 0.06),
+      effectStrength: Math.max(
+        impact,
+        (1 - drop) * 0.28,
+        brace * 0.5,
+      ),
     };
   }
 

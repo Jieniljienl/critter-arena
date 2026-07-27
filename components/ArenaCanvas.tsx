@@ -1523,6 +1523,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             entrance: EntrancePresentation,
             visualX: number,
             visualY: number,
+            progress: number,
           ): void {
             const strength = Math.max(0, entrance.effectStrength);
             const facing = unit.vx < 0 ? -1 : 1;
@@ -1632,20 +1633,135 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             }
 
             if (entrance.style === "heavy-drop") {
-              this.arenaGraphics.fillStyle(0x3d4653, 0.2 * strength);
+              const descent = Math.max(0, Math.min(1, progress / 0.3));
+              const shockProgress = Math.max(
+                0,
+                Math.min(1, (progress - 0.27) / 0.43),
+              );
+              const impact =
+                progress >= 0.26 && progress <= 0.7
+                  ? Math.sin(shockProgress * Math.PI)
+                  : 0;
+              const brace =
+                progress >= 0.68
+                  ? Math.sin(
+                      Math.max(
+                        0,
+                        Math.min(1, (progress - 0.68) / 0.32),
+                      ) * Math.PI,
+                    )
+                  : 0;
+
+              this.arenaGraphics.fillStyle(
+                0x11151c,
+                0.34 + descent * 0.28,
+              );
               this.arenaGraphics.fillEllipse(
                 unit.x,
                 unit.y + unit.radius * 0.86,
-                unit.radius * (3 + strength * 1.6),
-                unit.radius * (0.72 + strength * 0.42),
+                unit.radius * (2.2 + descent * 1.3 + impact * 0.8),
+                unit.radius * (0.48 + descent * 0.24 + impact * 0.18),
               );
-              this.arenaGraphics.lineStyle(5, 0xffd76e, 0.7 * strength);
-              this.arenaGraphics.strokeEllipse(
-                unit.x,
-                unit.y + unit.radius * 0.86,
-                unit.radius * (2.7 + strength * 2.1),
-                unit.radius * (0.66 + strength * 0.58),
-              );
+
+              if (progress < 0.34) {
+                const trailAlpha = Math.max(0, 0.75 - descent * 0.38);
+                for (let index = -2; index <= 2; index += 1) {
+                  const trailX =
+                    visualX + index * unit.radius * 0.35;
+                  const trailLength =
+                    unit.radius * (1.25 + (2 - Math.abs(index)) * 0.32);
+                  this.arenaGraphics.lineStyle(
+                    index % 2 === 0 ? 5 : 3,
+                    index % 2 === 0 ? 0x83e7ef : 0xffd76e,
+                    trailAlpha,
+                  );
+                  this.arenaGraphics.lineBetween(
+                    trailX,
+                    visualY - unit.radius * 0.45,
+                    trailX - facing * index * unit.radius * 0.05,
+                    visualY - trailLength,
+                  );
+                }
+              }
+
+              if (progress >= 0.27 && progress <= 0.7) {
+                const wave = 1 - shockProgress;
+                this.overlayGraphics.fillStyle(
+                  0xffd76e,
+                  Math.max(0, wave) * 0.055,
+                );
+                this.overlayGraphics.fillRect(
+                  0,
+                  0,
+                  board.width,
+                  board.height,
+                );
+                for (let ring = 0; ring < 2; ring += 1) {
+                  const ringProgress = Math.max(
+                    0,
+                    Math.min(1, shockProgress - ring * 0.12),
+                  );
+                  this.arenaGraphics.lineStyle(
+                    7 - ring * 2,
+                    ring === 0 ? 0xffd76e : 0x83e7ef,
+                    (1 - ringProgress) * (0.78 - ring * 0.16),
+                  );
+                  this.arenaGraphics.strokeEllipse(
+                    unit.x,
+                    unit.y + unit.radius * 0.86,
+                    unit.radius * (2.4 + ringProgress * (5.4 + ring)),
+                    unit.radius * (0.58 + ringProgress * (1.2 + ring * 0.2)),
+                  );
+                }
+                for (let index = 0; index < 10; index += 1) {
+                  const direction = index % 2 === 0 ? -1 : 1;
+                  const lane = Math.floor(index / 2) + 1;
+                  const debrisX =
+                    unit.x +
+                    direction *
+                      unit.radius *
+                      (0.55 + lane * 0.34 + shockProgress * lane * 0.5);
+                  const debrisY =
+                    unit.y +
+                    unit.radius *
+                      (0.62 -
+                        Math.sin(shockProgress * Math.PI) *
+                          (0.35 + lane * 0.09));
+                  this.arenaGraphics.fillStyle(
+                    index % 3 === 0 ? 0xffd76e : 0x66717d,
+                    Math.max(0, 0.78 - shockProgress * 0.72),
+                  );
+                  this.arenaGraphics.fillCircle(
+                    debrisX,
+                    debrisY,
+                    unit.radius * (0.07 + (index % 3) * 0.025),
+                  );
+                }
+              }
+
+              if (brace > 0) {
+                this.arenaGraphics.lineStyle(
+                  4,
+                  0xffd76e,
+                  brace * 0.7,
+                );
+                for (const side of [-1, 1]) {
+                  const bracketX =
+                    visualX + side * unit.radius * (1.25 + brace * 0.2);
+                  this.arenaGraphics.lineBetween(
+                    bracketX,
+                    visualY - unit.radius * 0.9,
+                    bracketX + side * unit.radius * 0.32,
+                    visualY - unit.radius * 0.58,
+                  );
+                  this.arenaGraphics.lineBetween(
+                    bracketX + side * unit.radius * 0.32,
+                    visualY + unit.radius * 0.58,
+                    bracketX,
+                    visualY + unit.radius * 0.9,
+                  );
+                }
+              }
               return;
             }
 
@@ -1838,7 +1954,13 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             if (unit.action === "entering") {
               visualX += entrance.xOffset;
               visualY += entrance.yOffset;
-              this.drawEntranceEffect(unit, entrance, visualX, visualY);
+              this.drawEntranceEffect(
+                unit,
+                entrance,
+                visualX,
+                visualY,
+                entranceProgress,
+              );
             }
             const victoryElapsed = Math.max(0, time - unit.actionStartedAt);
             const victoryStyle = definition.victoryStyle ?? "cool";

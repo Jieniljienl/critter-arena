@@ -15,6 +15,9 @@ export const SKILL_VOICE_IDS = {
   moleTunnel: "mole:tunnel",
   policePromotion: "police:promotion",
   policeBatonRush: "police:baton-rush",
+  policeSniperEntrance: "police:sniper-entrance",
+  policeSniperAim: "police:sniper-aim",
+  policeSniperVictory: "police:sniper-victory",
   policeGatling: "police:gatling",
   policeReload: "police:reload",
   policeKick: "police:kick",
@@ -76,14 +79,14 @@ const moleVoiceDescriptors: SkillVoiceDescriptor[] = [
     id: SKILL_VOICE_IDS.moleDig,
     label: "挖掘洞口",
     effect: "扬土挖掘 · 洞口生成",
-    defaultProfile: profile("开洞！", 1.18, 1.18),
+    defaultProfile: profile("挖条新路！", 1.16, 1.18),
     legacySound: "dig",
   },
   {
     id: SKILL_VOICE_IDS.moleAmbush,
     label: "洞口偷袭",
     effect: "地下突进 · 出洞突袭",
-    defaultProfile: profile("脚下见！", 1.22, 1.26),
+    defaultProfile: profile("我在你脚下！", 1.18, 1.26),
     legacySound: "tunnel",
     legacyPhraseIndex: 0,
   },
@@ -91,7 +94,7 @@ const moleVoiceDescriptors: SkillVoiceDescriptor[] = [
     id: SKILL_VOICE_IDS.moleTunnel,
     label: "地道穿行",
     effect: "钻入地面 · 换洞出现",
-    defaultProfile: profile("换洞！", 1.2, 1.24),
+    defaultProfile: profile("换个洞口！", 1.16, 1.24),
     legacySound: "tunnel",
     legacyPhraseIndex: 1,
   },
@@ -105,7 +108,8 @@ const policePromotionProfile = (
     2: profile("二星报到！", 1.08, 1),
     3: profile("三连压制！", 1.08, 0.94),
     4: profile("火箭清场！", 1.02, 0.86),
-    5: profile("重装就位！", 0.98, 0.72),
+    5: profile("狙击手就位！", 0.98, 0.82),
+    6: profile("无畏套装完成！", 0.94, 0.72),
   };
   return profiles[star ?? 1] ?? profiles[1]!;
 };
@@ -134,6 +138,31 @@ const policeVoiceDescriptors = (
       ]
     : []),
   ...(star === 5
+    ? [
+        {
+          id: SKILL_VOICE_IDS.policeSniperEntrance,
+          label: "特种入场",
+          effect: "低姿战术入场 · 狙击手就位",
+          defaultProfile: profile("狙击手就位。", 0.98, 0.82),
+          legacySound: "sniper" as const,
+        },
+        {
+          id: SKILL_VOICE_IDS.policeSniperAim,
+          label: "蹲伏锁定",
+          effect: "蹲伏瞄准 · 红线引导",
+          defaultProfile: profile("锁定目标。", 0.92, 0.78),
+          legacySound: "sniper" as const,
+        },
+        {
+          id: SKILL_VOICE_IDS.policeSniperVictory,
+          label: "狙击获胜",
+          effect: "目标肃清 · 收枪确认",
+          defaultProfile: profile("目标肃清。", 0.9, 0.76),
+          legacySound: "sniper" as const,
+        },
+      ]
+    : []),
+  ...(star === 6
     ? [
         {
           id: SKILL_VOICE_IDS.policeGatling,
@@ -323,9 +352,21 @@ const legacyBuiltInProfile = (
     2: profile("手枪到位，二星报到。", 1.04, 1),
     3: profile("步枪接管，三连压制。", 1.02, 0.94),
     4: profile("火箭就位，爆破清场。", 0.96, 0.86),
-    5: profile("重装晋升，火力全开。", 0.9, 0.72),
+    5: profile("狙击手晋升，目标锁定。", 0.92, 0.82),
+    6: profile("重装晋升，火力全开。", 0.9, 0.72),
   };
   return promotionProfiles[character.policeStar ?? 1];
+};
+
+const previousConciseBuiltInProfile = (
+  skillVoiceId: string,
+): SkillVoiceProfile | undefined => {
+  const profiles: Record<string, SkillVoiceProfile> = {
+    [SKILL_VOICE_IDS.moleDig]: profile("开洞！", 1.18, 1.18),
+    [SKILL_VOICE_IDS.moleAmbush]: profile("脚下见！", 1.22, 1.26),
+    [SKILL_VOICE_IDS.moleTunnel]: profile("换洞！", 1.2, 1.24),
+  };
+  return profiles[skillVoiceId];
 };
 
 /**
@@ -340,12 +381,17 @@ export const upgradeShippedSkillVoiceProfiles = (
   const upgraded = upgradeSkillVoiceProfiles(character, cue);
   const currentDefaults = defaultSkillVoiceProfilesFor(character);
   for (const [skillVoiceId, currentDefault] of Object.entries(currentDefaults)) {
-    const legacyDefault = legacyBuiltInProfile(character, skillVoiceId);
+    const legacyDefaults = [
+      legacyBuiltInProfile(character, skillVoiceId),
+      previousConciseBuiltInProfile(skillVoiceId),
+    ].filter((candidate): candidate is SkillVoiceProfile => Boolean(candidate));
     const current = upgraded[skillVoiceId];
     if (
-      legacyDefault &&
       current &&
-      JSON.stringify(current) === JSON.stringify(legacyDefault)
+      legacyDefaults.some(
+        (legacyDefault) =>
+          JSON.stringify(current) === JSON.stringify(legacyDefault),
+      )
     ) {
       upgraded[skillVoiceId] = structuredClone(currentDefault);
     }

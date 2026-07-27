@@ -74,6 +74,7 @@ const synthPresetOptions: Array<{ value: SynthPreset; label: string }> = [
   { value: "baton", label: "警棍（钝击声）" },
   { value: "pistol", label: "手枪（单发）" },
   { value: "rifle", label: "步枪（三连发）" },
+  { value: "sniper", label: "狙击枪（高速重响）" },
   { value: "rocket", label: "火箭发射（低沉尾焰）" },
   { value: "explosion", label: "爆炸（范围冲击）" },
   { value: "gatling", label: "加特林（高速连射）" },
@@ -721,6 +722,7 @@ export function CharacterEditor({
                     )
                   }
                 >
+                  <option value="none">无普通攻击（仅技能）</option>
                   <option value="melee">近战</option>
                   <option value="projectile">弹丸</option>
                   <option value="burst">连发</option>
@@ -745,7 +747,8 @@ export function CharacterEditor({
                   }
                 />
               </label>
-              {selected.attack.mode !== "melee" && (
+              {selected.attack.mode !== "melee" &&
+                selected.attack.mode !== "none" && (
                 <>
                   <label>
                     弹丸外观
@@ -809,6 +812,11 @@ export function CharacterEditor({
             {selected.attack.mode === "melee" && (
               <p className="editor-card-note">
                 近战只会在接近身体时触发，并在命中帧再次检查目标是否仍位于角色正面扇区。
+              </p>
+            )}
+            {selected.attack.mode === "none" && (
+              <p className="editor-card-note">
+                该角色不会发动普通攻击，只通过内置技能或扩展技能造成伤害。
               </p>
             )}
           </div>
@@ -988,7 +996,7 @@ export function CharacterEditor({
                 ["victory", "获胜动作", true],
                 ["callPolice", "熊猫呼救动作", true],
                 ["tunnelAttack", "钻洞攻击动作", true],
-                ["reload", "五星换弹动作", true],
+                ["reload", "重装换弹动作", true],
               ] as const)
                 .filter(
                   ([clipName]) =>

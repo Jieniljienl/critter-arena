@@ -481,14 +481,26 @@ textarea:focus-visible {
 }
 
 .battle-control-bar {
-  gap: 9px;
-  flex-wrap: wrap;
+  gap: 6px;
+  flex-wrap: nowrap;
   min-height: 64px;
   margin-top: 12px;
   padding: 9px 11px;
+  overflow-x: auto;
+  overflow-y: hidden;
   border: 1px solid var(--line);
   border-radius: 16px;
   background: var(--panel);
+  overscroll-behavior-x: contain;
+  scrollbar-width: none;
+}
+
+.battle-control-bar > * {
+  flex-shrink: 0;
+}
+
+.battle-control-bar::-webkit-scrollbar {
+  display: none;
 }
 
 .primary-control {
@@ -532,7 +544,9 @@ textarea:focus-visible {
   align-items: flex-start;
   flex-direction: column;
   gap: 3px;
-  min-width: 170px;
+  flex: 0 0 160px;
+  width: 160px;
+  min-width: 160px;
 }
 
 .board-quick-select span {
@@ -545,6 +559,7 @@ textarea:focus-visible {
 
 .board-quick-select select {
   width: 100%;
+  min-width: 0;
   max-width: 205px;
   border: 0;
   background: transparent;
@@ -639,6 +654,23 @@ textarea:focus-visible {
 
 .announcer-controls input:disabled {
   opacity: 0.35;
+}
+
+.announcer-mode-select {
+  height: 31px;
+  padding: 0 24px 0 8px;
+  border: 1px solid rgba(131, 231, 239, 0.2);
+  border-radius: 8px;
+  background: #11151a;
+  color: #bdeff3;
+  font-size: 10px;
+  font-weight: 700;
+  cursor: pointer;
+}
+
+.announcer-mode-select:disabled {
+  cursor: default;
+  opacity: 0.38;
 }
 
 .music-controls {
@@ -3432,6 +3464,7 @@ textarea:focus-visible {
   .volume-slider,
   .control-divider,
   .announcer-controls input,
+  .announcer-mode-select,
   .music-volume-slider,
   .music-file-button,
   .music-controls > span {

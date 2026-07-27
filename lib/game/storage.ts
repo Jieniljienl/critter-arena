@@ -51,11 +51,11 @@ const manifestSchema = z
           speed: z.number().nonnegative(),
           radius: z.number().positive(),
           attack: z.object({
-            range: z.number().positive(),
+            range: z.number().nonnegative(),
             damage: z.number().nonnegative(),
             cooldown: z.number().nonnegative(),
             windup: z.number().nonnegative(),
-            mode: z.enum(["melee", "projectile", "burst", "gatling"]),
+            mode: z.enum(["none", "melee", "projectile", "burst", "gatling"]),
           }).passthrough(),
         })
         .passthrough(),
@@ -74,6 +74,7 @@ const manifestSchema = z
         experienceToStar3: z.number().int().positive(),
         experienceToStar4: z.number().int().positive(),
         experienceToStar5: z.number().int().positive(),
+        experienceToStar6: z.number().int().positive().optional(),
       })
       .optional(),
     boards: z.array(

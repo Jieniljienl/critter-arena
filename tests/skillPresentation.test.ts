@@ -48,7 +48,7 @@ test("built-in skills are split into stable active/passive workshop modules", ()
       {
         title: "战功升星",
         activity: "passive",
-        sharedLabel: "五角色共享",
+        sharedLabel: "六角色共享",
       },
       {
         title: "追击敲击",
@@ -63,6 +63,14 @@ test("built-in skills are split into stable active/passive workshop modules", ()
     fiveStarPolice.map(({ title, activity }) => ({ title, activity })),
     [
       { title: "战功升星", activity: "passive" },
+      { title: "蹲伏狙击", activity: "active" },
+    ],
+  );
+
+  const sixStarPolice = builtInSkillModulesFor(character("police-6"));
+  assert.deepEqual(
+    sixStarPolice.map(({ title, activity }) => ({ title, activity })),
+    [
       { title: "火力循环", activity: "active" },
       { title: "近身反制", activity: "passive" },
     ],
@@ -70,7 +78,13 @@ test("built-in skills are split into stable active/passive workshop modules", ()
 });
 
 test("each built-in parameter belongs to exactly one displayed skill card", () => {
-  for (const id of ["panda-lazy", "mole", "police-1", "police-5"]) {
+  for (const id of [
+    "panda-lazy",
+    "mole",
+    "police-1",
+    "police-5",
+    "police-6",
+  ]) {
     const fields = builtInSkillModulesFor(character(id)).flatMap((module) =>
       module.fields.map((field) => `${module.parameterSource}:${field.key}`),
     );

@@ -14,7 +14,11 @@ export const isSkillVoiceEvent = (
   event: Pick<CombatEvent, "type" | "skillVoiceId">,
 ): boolean =>
   Boolean(event.skillVoiceId) &&
-  (event.type === "skill" || event.type === "spawn");
+  (event.type === "skill" ||
+    event.type === "spawn" ||
+    event.type === "victory");
+
+export type SkillVoiceMode = "concise" | "full";
 
 export type ResolvedSkillVoice = {
   phrase: string;
@@ -22,51 +26,46 @@ export type ResolvedSkillVoice = {
   speechPitch: number;
 };
 
-export const SKILL_VOICE_PENDING_FRESHNESS_MS = 180;
-export const SKILL_VOICE_PREEMPT_AFTER_MS = 650;
-const MAX_SKILL_VOICE_DURATION_MS = 1_600;
-
 export type SkillVoiceStart<T> = {
   item: T;
   interruptActive: boolean;
 };
 
 export class SkillVoiceQueue<T extends object> {
+  private mode: SkillVoiceMode;
   private activeItem?: {
     item: T;
     startedAt: number;
   };
-  private pendingItem?: {
+  private pendingItems: Array<{
     item: T;
     queuedAt: number;
-  };
+  }> = [];
+
+  constructor(mode: SkillVoiceMode = "concise") {
+    this.mode = mode;
+  }
+
+  setMode(mode: SkillVoiceMode): void {
+    this.mode = mode;
+    if (mode === "concise") this.pendingItems = [];
+  }
 
   enqueue(item: T, now: number): SkillVoiceStart<T> | undefined {
     if (!this.activeItem) {
       this.activeItem = { item, startedAt: now };
       return { item, interruptActive: false };
     }
-    if (
-      now - this.activeItem.startedAt >=
-      SKILL_VOICE_PREEMPT_AFTER_MS
-    ) {
-      this.activeItem = { item, startedAt: now };
-      this.pendingItem = undefined;
-      return { item, interruptActive: true };
-    }
-    this.pendingItem = { item, queuedAt: now };
+    if (this.mode === "concise") return undefined;
+    this.pendingItems.push({ item, queuedAt: now });
     return undefined;
   }
 
   complete(now: number): T | undefined {
     if (!this.activeItem) return undefined;
     this.activeItem = undefined;
-    const pending = this.pendingItem;
-    this.pendingItem = undefined;
-    if (
-      pending &&
-      now - pending.queuedAt <= SKILL_VOICE_PENDING_FRESHNESS_MS
-    ) {
+    const pending = this.pendingItems.shift();
+    if (pending) {
       this.activeItem = { item: pending.item, startedAt: now };
       return pending.item;
     }
@@ -75,11 +74,11 @@ export class SkillVoiceQueue<T extends object> {
 
   clear(): void {
     this.activeItem = undefined;
-    this.pendingItem = undefined;
+    this.pendingItems = [];
   }
 
   get size(): number {
-    return Number(Boolean(this.activeItem)) + Number(Boolean(this.pendingItem));
+    return Number(Boolean(this.activeItem)) + this.pendingItems.length;
   }
 }
 
@@ -105,8 +104,8 @@ export const resolveSkillVoice = (
     if (!phrase) return undefined;
     return {
       phrase,
-      speechRate: dedicated.speechRate ?? cue.speechRate ?? 1,
-      speechPitch: dedicated.speechPitch ?? cue.speechPitch ?? 1,
+      speechRate: dedicated?.speechRate ?? cue.speechRate ?? 1,
+      speechPitch: dedicated?.speechPitch ?? cue.speechPitch ?? 1,
     };
   }
 
@@ -139,9 +138,8 @@ export class ArenaAudio {
   private assetVoicePools = new Map<string, HTMLAudioElement[]>();
   private noiseBuffer?: AudioBuffer;
   private battleStatus: BattleStatus = "ready";
-  private skillVoiceQueue = new SkillVoiceQueue<QueuedSkillVoice>();
+  private skillVoiceQueue = new SkillVoiceQueue<QueuedSkillVoice>("concise");
   private speechEpoch = 0;
-  private skillVoiceTimeout?: ReturnType<typeof setTimeout>;
   private musicGain?: GainNode;
   private musicSource?: AudioBufferSourceNode;
   private musicConfig?: BackgroundMusicConfig;
@@ -182,10 +180,14 @@ export class ArenaAudio {
     this.skillVoiceVolume = Math.max(0, Math.min(1, volume));
   }
 
+  setSkillVoiceMode(mode: SkillVoiceMode): void {
+    this.skillVoiceQueue.setMode(mode);
+  }
+
   setBattleStatus(status: BattleStatus): void {
     if (status === this.battleStatus) return;
     this.battleStatus = status;
-    if (status !== "running") this.stopSkillVoices();
+    if (status === "ready") this.stopSkillVoices();
   }
 
   async setMusic(config: BackgroundMusicConfig, assets: AssetRef[]): Promise<void> {
@@ -348,7 +350,7 @@ export class ArenaAudio {
     if (
       this.muted ||
       !this.skillVoicesEnabled ||
-      this.battleStatus !== "running" ||
+      this.battleStatus === "ready" ||
       typeof window === "undefined" ||
       !window.speechSynthesis
     ) {
@@ -365,11 +367,6 @@ export class ArenaAudio {
       performance.now(),
     );
     if (!ready) return;
-    if (ready.interruptActive) {
-      this.speechEpoch += 1;
-      this.clearSkillVoiceTimeout();
-      window.speechSynthesis.cancel();
-    }
     this.startSpeech(ready.item);
   }
 
@@ -377,7 +374,7 @@ export class ArenaAudio {
     if (
       this.muted ||
       !this.skillVoicesEnabled ||
-      this.battleStatus !== "running" ||
+      this.battleStatus === "ready" ||
       typeof window === "undefined" ||
       !window.speechSynthesis
     ) {
@@ -399,17 +396,11 @@ export class ArenaAudio {
     const finish = () => {
       if (settled || epoch !== this.speechEpoch) return;
       settled = true;
-      this.clearSkillVoiceTimeout();
       const next = this.skillVoiceQueue.complete(performance.now());
-      if (next && this.battleStatus === "running") this.startSpeech(next);
+      if (next && this.battleStatus !== "ready") this.startSpeech(next);
     };
     utterance.onend = finish;
     utterance.onerror = finish;
-    this.skillVoiceTimeout = setTimeout(() => {
-      if (settled || epoch !== this.speechEpoch) return;
-      window.speechSynthesis.cancel();
-      finish();
-    }, MAX_SKILL_VOICE_DURATION_MS);
     try {
       window.speechSynthesis.speak(utterance);
     } catch {
@@ -417,15 +408,8 @@ export class ArenaAudio {
     }
   }
 
-  private clearSkillVoiceTimeout(): void {
-    if (this.skillVoiceTimeout === undefined) return;
-    clearTimeout(this.skillVoiceTimeout);
-    this.skillVoiceTimeout = undefined;
-  }
-
   private stopSkillVoices(): void {
     this.speechEpoch += 1;
-    this.clearSkillVoiceTimeout();
     this.skillVoiceQueue.clear();
     if (typeof window !== "undefined") window.speechSynthesis?.cancel();
   }
@@ -483,6 +467,10 @@ export class ArenaAudio {
     } else if (preset === "rifle") {
       this.noiseBurst(now, 0.055, volume * 0.34, 3400, 260);
       this.tone(now, 155 * randomPitch, 0.06, volume * 0.2, "sawtooth", 70);
+    } else if (preset === "sniper") {
+      this.noiseBurst(now, 0.12, volume * 0.52, 4200, 170);
+      this.tone(now, 118 * randomPitch, 0.13, volume * 0.3, "square", 48);
+      this.noiseBurst(now + 0.08, 0.22, volume * 0.16, 980, 120);
     } else if (preset === "rocket") {
       this.noiseBurst(now, 0.28, volume * 0.28, 850, 90);
       this.tone(now, 95, 0.3, volume * 0.2, "sawtooth", 50);

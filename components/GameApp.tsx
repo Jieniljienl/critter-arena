@@ -53,6 +53,7 @@ import {
   createDefaultManifest,
   createShowcaseContestants,
 } from "@/lib/game/defaultContent";
+import type { SkillVoiceMode } from "@/lib/game/audio";
 import { removeBoardFromManifest } from "@/lib/game/project";
 import {
   exportBundle,
@@ -203,6 +204,8 @@ export function GameApp() {
   const [volume, setVolume] = useState(0.72);
   const [skillVoicesEnabled, setSkillVoicesEnabled] = useState(true);
   const [skillVoiceVolume, setSkillVoiceVolume] = useState(0.78);
+  const [skillVoiceMode, setSkillVoiceMode] =
+    useState<SkillVoiceMode>("concise");
   const [hydrated, setHydrated] = useState(false);
   const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const [savedAt, setSavedAt] = useState<string>();
@@ -330,6 +333,10 @@ export function GameApp() {
   useEffect(() => {
     arenaRef.current?.setSkillVoiceVolume(skillVoiceVolume);
   }, [skillVoiceVolume]);
+
+  useEffect(() => {
+    arenaRef.current?.setSkillVoiceMode(skillVoiceMode);
+  }, [skillVoiceMode]);
 
   useEffect(() => {
     const syncFullscreenState = () => {
@@ -568,6 +575,7 @@ export function GameApp() {
     arenaRef.current?.setVolume(volume);
     arenaRef.current?.setSkillVoicesEnabled(skillVoicesEnabled);
     arenaRef.current?.setSkillVoiceVolume(skillVoiceVolume);
+    arenaRef.current?.setSkillVoiceMode(skillVoiceMode);
     if (!pendingAutoStart) arenaRef.current?.syncReadySetup(manifest.setup);
     if (pendingAutoStart) {
       arenaRef.current?.start();
@@ -1267,6 +1275,23 @@ export function GameApp() {
                   disabled={!skillVoicesEnabled}
                   onChange={(event) => setSkillVoiceVolume(Number(event.target.value))}
                 />
+                <select
+                  className="announcer-mode-select"
+                  aria-label="技能语音播报模式"
+                  value={skillVoiceMode}
+                  disabled={!skillVoicesEnabled}
+                  onChange={(event) =>
+                    setSkillVoiceMode(event.target.value as SkillVoiceMode)
+                  }
+                  title={
+                    skillVoiceMode === "full"
+                      ? "全量播报：保留每次触发，按触发顺序完整播完"
+                      : "精简播报：播报期间忽略新触发，结束后再接收"
+                  }
+                >
+                  <option value="concise">精简播报</option>
+                  <option value="full">全量播报</option>
+                </select>
               </div>
               <div className="music-controls">
                 <button

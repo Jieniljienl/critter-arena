@@ -1023,12 +1023,12 @@ test("an RPG that misses its moving target explodes on the board edge", () => {
   );
 });
 
-test("five-star police keeps one round direction while applying configurable spread", () => {
+test("six-star police keeps one round direction while applying configurable spread", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.width = 2_000;
   board.height = 1_200;
-  const officer = definition(manifest, "police-5");
+  const officer = definition(manifest, "police-6");
   const target = definition(manifest, "mole");
   officer.speed = 0;
   officer.attack.damage = 0;
@@ -1045,7 +1045,7 @@ test("five-star police keeps one round direction while applying configurable spr
   manifest.setup.contestants = [
     {
       id: "direction-lock-officer",
-      definitionId: "police-5",
+      definitionId: "police-6",
       displayName: "无畏测试员",
       position: { x: 150, y: 500 },
       direction: { x: 1, y: 0 },
@@ -1091,13 +1091,13 @@ test("five-star police keeps one round direction while applying configurable spr
   assert.ok(projectiles.length > 4, "the next round should begin only after its period");
 });
 
-test("five-star kick moves the attacker over time and stuns it after a boundary impact", () => {
+test("six-star kick moves a front-facing attacker over time and stuns it after a boundary impact", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.width = 500;
   board.height = 600;
   board.props = [];
-  const officer = definition(manifest, "police-5");
+  const officer = definition(manifest, "police-6");
   const attacker = definition(manifest, "panda-lazy");
   officer.speed = 0;
   officer.attack.damage = 0;
@@ -1118,10 +1118,10 @@ test("five-star kick moves the attacker over time and stuns it after a boundary 
   manifest.setup.contestants = [
     {
       id: "wall-kicker",
-      definitionId: "police-5",
+      definitionId: "police-6",
       displayName: "边界测试无畏",
       position: { x: 330, y: 300 },
-      direction: { x: -0.8, y: 0.6 },
+      direction: { x: 1, y: 0 },
       color: "#b58aff",
     },
     {
@@ -1188,6 +1188,164 @@ test("five-star kick moves the attacker over time and stuns it after a boundary 
   assert.ok(stillStunned);
   assert.equal(stillStunned.action, "stunned");
   assert.equal(stillStunned.x, stunnedPosition);
+});
+
+test("six-star kick never triggers against an attacker behind the fearless warrior", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.width = 700;
+  board.height = 500;
+  board.props = [];
+  const officer = definition(manifest, "police-6");
+  officer.speed = 0;
+  officer.attack.range = 0;
+  officer.attack.damage = 0;
+  const attacker = definition(manifest, "panda-lazy");
+  attacker.pluginId = undefined;
+  attacker.speed = 0;
+  attacker.attack = {
+    range: 220,
+    damage: 1,
+    cooldown: 100,
+    windup: 0,
+    mode: "melee",
+    frontArcDegrees: 360,
+  };
+  manifest.setup.contestants = [
+    {
+      id: "rear-facing-fearless",
+      definitionId: "police-6",
+      displayName: "面朝右侧的无畏",
+      position: { x: 400, y: 250 },
+      direction: { x: 1, y: 0 },
+      color: "#b58aff",
+    },
+    {
+      id: "rear-attacker",
+      definitionId: "panda-lazy",
+      displayName: "背后攻击者",
+      position: { x: 330, y: 250 },
+      direction: { x: 1, y: 0 },
+      color: "#f6d85f",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 5);
+  const snapshot = simulation.getSnapshot();
+  const fearless = snapshot.units.find(
+    (unit) => unit.id === "rear-facing-fearless",
+  );
+  const rearAttacker = snapshot.units.find(
+    (unit) => unit.id === "rear-attacker",
+  );
+  assert.ok(fearless);
+  assert.ok(rearAttacker);
+  assert.ok(fearless.hp < fearless.maxHp, "the rear attack should still hit");
+  assert.equal(fearless.gatling?.nextKickAt, 0);
+  assert.equal(rearAttacker.action === "knockback", false);
+  assert.equal(
+    snapshot.events.some(
+      (event) => event.skillVoiceId === SKILL_VOICE_IDS.policeKick,
+    ),
+    false,
+  );
+});
+
+test("five-star sniper crouches for three seconds and fires one 60-damage fast shot", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.width = 1_200;
+  board.height = 700;
+  board.props = [];
+  const sniper = definition(manifest, "police-5");
+  sniper.speed = 0;
+  const parameters = sniper.skillParameters!.police!;
+  parameters.sniperAimDuration = 3;
+  parameters.sniperCooldown = 100;
+  parameters.sniperDamage = 60;
+  parameters.sniperProjectileSpeed = 1_600;
+  parameters.sniperMissChance = 0;
+  parameters.sniperRange = 2_000;
+  const target = definition(manifest, "mole");
+  target.pluginId = undefined;
+  target.speed = 0;
+  target.maxHp = 200;
+  target.attack.range = 0;
+  target.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "special-forces-sniper",
+      definitionId: "police-5",
+      displayName: "特种狙击手",
+      position: { x: 200, y: 350 },
+      direction: { x: 1, y: 0 },
+      color: "#72d8ff",
+    },
+    {
+      id: "sniper-target",
+      definitionId: "mole",
+      displayName: "狙击靶",
+      position: { x: 950, y: 350 },
+      direction: { x: -1, y: 0 },
+      color: "#ff8b62",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  simulation.start();
+  runSteps(simulation, 1);
+  let snapshot = simulation.getSnapshot();
+  let runtimeSniper = snapshot.units.find(
+    (unit) => unit.id === "special-forces-sniper",
+  );
+  assert.ok(runtimeSniper);
+  assert.equal(sniper.attack.mode, "none");
+  assert.equal(runtimeSniper.action, "sniperAim");
+  assert.equal(runtimeSniper.sniper?.targetId, "sniper-target");
+  assert.equal(actionClipName(runtimeSniper, snapshot.time), "skill");
+  const runtimeSniperId = runtimeSniper.id;
+  assert.ok(
+    snapshot.events.some(
+      (event) =>
+        event.unitId === runtimeSniperId &&
+        event.skillVoiceId === SKILL_VOICE_IDS.policeSniperAim,
+    ),
+  );
+
+  runSteps(simulation, 170);
+  snapshot = simulation.getSnapshot();
+  assert.equal(
+    snapshot.units.find((unit) => unit.id === "sniper-target")?.hp,
+    200,
+  );
+  runSteps(simulation, 50);
+  snapshot = simulation.getSnapshot();
+  runtimeSniper = snapshot.units.find(
+    (unit) => unit.id === "special-forces-sniper",
+  );
+  const runtimeTarget = snapshot.units.find(
+    (unit) => unit.id === "sniper-target",
+  );
+  assert.ok(runtimeSniper);
+  assert.ok(runtimeTarget);
+  assert.equal(runtimeTarget.hp, 140);
+  assert.ok(
+    snapshot.events.some(
+      (event) =>
+        event.unitId === runtimeSniper.id && event.sound === "sniper",
+    ),
+  );
+  assert.equal(
+    snapshot.events.filter(
+      (event) =>
+        event.unitId === runtimeSniper.id &&
+        event.type === "attack" &&
+        event.sound === "sniper",
+    ).length,
+    1,
+  );
 });
 
 test("burning and spring buffs settle exactly once per second", () => {
@@ -2139,13 +2297,13 @@ test("enemy police never merge even when their circles overlap", () => {
   assert.equal(snapshot.events.some((event) => event.type === "merge"), false);
 });
 
-test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars", () => {
+test("a police officer uses 1, 2, 2, 3, and 5 experience cells to reach six stars", () => {
   const manifest = createDefaultManifest();
   const board = selectedBoard(manifest);
   board.props = [];
   board.unitScale = 1;
 
-  for (let star = 1; star <= 5; star += 1) {
+  for (let star = 1; star <= 6; star += 1) {
     const police = definition(manifest, `police-${star}`);
     police.speed = 0;
     police.attack = {
@@ -2176,7 +2334,7 @@ test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars"
       color: "#ffd55e",
       teamId: "red",
     },
-    ...Array.from({ length: 8 }, (_, index) => ({
+    ...Array.from({ length: 13 }, (_, index) => ({
       id: `promotion-target-${index}`,
       definitionId: "mole",
       displayName: `训练目标${index + 1}`,
@@ -2192,23 +2350,23 @@ test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars"
 
   const simulation = new BattleSimulation(manifest);
   simulation.start();
-  runSteps(simulation, 900);
+  runSteps(simulation, 1_400);
   const snapshot = simulation.getSnapshot();
   const officer = snapshot.units.find((unit) => unit.id === "decorated-officer");
   assert.ok(officer);
-  assert.equal(officer.policeStar, 5);
-  assert.equal(officer.definitionId, "police-5");
+  assert.equal(officer.policeStar, 6);
+  assert.equal(officer.definitionId, "police-6");
   assert.equal(
     officer.appearanceDefinitionId,
-    "police-5",
+    "police-6",
     "personal kill promotions should switch to the promoted officer appearance",
   );
   assert.equal(officer.policeKillProgress, 0);
-  assert.equal(officer.maxHp, definition(manifest, "police-5").maxHp);
+  assert.equal(officer.maxHp, definition(manifest, "police-6").maxHp);
   assert.equal(officer.hp, officer.maxHp);
   assert.equal(
     Math.round(Math.hypot(officer.vx, officer.vy)),
-    definition(manifest, "police-5").speed,
+    definition(manifest, "police-6").speed,
   );
   assert.equal(officer.factionId, "team:red");
   assert.equal(officer.main, true);
@@ -2218,14 +2376,14 @@ test("a police officer uses 1, 2, 2, and 3 experience cells to reach five stars"
       event.unitId === officer.id &&
       event.message.includes("战功升为"),
   );
-  assert.equal(promotions.length, 4);
+  assert.equal(promotions.length, 5);
   assert.deepEqual(
     promotions.map((event) => event.unitDefinitionId),
-    ["police-2", "police-3", "police-4", "police-5"],
+    ["police-2", "police-3", "police-4", "police-5", "police-6"],
   );
   assert.deepEqual(
     promotions.map((event) => Number(event.message.match(/累计击杀(\d+)名/)?.[1])),
-    [1, 2, 2, 3],
+    [1, 2, 2, 3, 5],
   );
 });
 
@@ -2248,14 +2406,15 @@ test("default movement speeds match character weight while saved speeds remain u
     ["police-2", 115],
     ["police-3", 110],
     ["police-4", 95],
-    ["police-5", 65],
+    ["police-5", 80],
+    ["police-6", 65],
   ]);
 
   for (const [definitionId, speed] of expectedDefaults) {
     assert.equal(definition(manifest, definitionId).speed, speed);
   }
   assert.ok(definition(manifest, "mole").speed > definition(manifest, "police-1").speed);
-  assert.ok(definition(manifest, "police-4").speed > definition(manifest, "police-5").speed);
+  assert.ok(definition(manifest, "police-5").speed > definition(manifest, "police-6").speed);
 
   const savedSpeeds = new Map<string, number>();
   for (const [index, character] of manifest.characters.entries()) {
@@ -2295,10 +2454,68 @@ test("legacy per-character police experience migrates once into the shared promo
     experienceToStar3: 5,
     experienceToStar4: 6,
     experienceToStar5: 7,
+    experienceToStar6: 5,
   });
   assert.deepEqual(
     upgradeManifest(upgraded).policePromotion,
     upgraded.policePromotion,
+  );
+});
+
+test("legacy five-star fearless content migrates to six stars while a new sniper fills star five", () => {
+  const legacy = createDefaultManifest();
+  const legacyHeavy = structuredClone(definition(legacy, "police-6"));
+  legacyHeavy.id = "police-5";
+  legacyHeavy.policeStar = 5;
+  legacyHeavy.name = "5星自定义无畏";
+  legacyHeavy.maxHp = 777;
+  legacy.characters = legacy.characters.filter(
+    (character) => character.id !== "police-5" && character.id !== "police-6",
+  );
+  legacy.characters.push(legacyHeavy);
+  legacy.setup.contestants = legacy.setup.contestants.map((contestant) => ({
+    ...contestant,
+    definitionId:
+      contestant.definitionId === "police-6"
+        ? "police-5"
+        : contestant.definitionId,
+  }));
+  legacy.nameLibraries = legacy.nameLibraries
+    .filter((library) => library.definitionId !== "police-5")
+    .map((library) =>
+      library.definitionId === "police-6"
+        ? {
+            ...library,
+            definitionId: "police-5",
+            names: ["用户保留的无畏名称"],
+          }
+        : library,
+    );
+
+  const upgraded = upgradeManifest(legacy);
+  const sniper = definition(upgraded, "police-5");
+  const fearless = definition(upgraded, "police-6");
+  assert.equal(sniper.maxHp, 70);
+  assert.equal(sniper.attack.mode, "none");
+  assert.equal(sniper.portraitAssetId, "police-sniper-idle");
+  assert.equal(fearless.maxHp, 777);
+  assert.equal(fearless.name, "6星自定义无畏");
+  assert.equal(fearless.portraitAssetId, "police-5-idle");
+  assert.ok(
+    upgraded.setup.contestants.some(
+      (contestant) => contestant.definitionId === "police-6",
+    ),
+  );
+  assert.deepEqual(
+    upgraded.nameLibraries.find(
+      (library) => library.definitionId === "police-6",
+    )?.names,
+    ["用户保留的无畏名称"],
+  );
+  assert.ok(
+    upgraded.nameLibraries.find(
+      (library) => library.definitionId === "police-5",
+    )?.names.length,
   );
 });
 
@@ -2492,7 +2709,7 @@ test("manifest upgrades preserve all existing project, character, board, and set
     > & { stompsToFlatten?: number }
   ).stompsToFlatten = 9;
 
-  const gatling = definition(manifest, "police-5");
+  const gatling = definition(manifest, "police-6");
   gatling.role = "summon";
   gatling.maxHp = 200;
   gatling.attack.cooldown = 10;
@@ -2526,7 +2743,7 @@ test("manifest upgrades preserve all existing project, character, board, and set
   streamBoard.unitScale = 0.9;
 
   const policeNames = manifest.nameLibraries.find(
-    (library) => library.definitionId === "police-5",
+    (library) => library.definitionId === "police-6",
   );
   assert.ok(policeNames);
   policeNames.names = ["突突五秒钟", "我的五星警察"];
@@ -2692,7 +2909,7 @@ test("the default project opens on a simple portrait showcase with updated gatli
     new Set(["gold", "blue", "red", "purple"]),
   );
   assert.ok(
-    ["panda-lazy", "mole", "police-1", "police-3", "police-4", "police-5"].every(
+    ["panda-lazy", "mole", "police-1", "police-3", "police-4", "police-5", "police-6"].every(
       (definitionId) =>
         manifest.setup.contestants.some(
           (contestant) => contestant.definitionId === definitionId,
@@ -2700,7 +2917,10 @@ test("the default project opens on a simple portrait showcase with updated gatli
     ),
   );
 
-  const gatling = definition(manifest, "police-5");
+  const sniper = definition(manifest, "police-5");
+  assert.equal(sniper.maxHp, 70);
+  assert.equal(sniper.attack.mode, "none");
+  const gatling = definition(manifest, "police-6");
   assert.equal(gatling.maxHp, 1_000);
   assert.equal(gatling.attack.cooldown, 7);
   assert.equal(gatling.attack.burstCount, 18);
@@ -2714,7 +2934,7 @@ test("the default project opens on a simple portrait showcase with updated gatli
 
 test("new gatling defaults do not replace saved legacy health and firing cadence", () => {
   const manifest = createDefaultManifest();
-  const gatling = definition(manifest, "police-5");
+  const gatling = definition(manifest, "police-6");
   gatling.maxHp = 200;
   gatling.attack.cooldown = 10;
   gatling.attack.burstCount = 15;
@@ -2722,7 +2942,7 @@ test("new gatling defaults do not replace saved legacy health and firing cadence
   gatling.victoryStyle = "spotlight";
 
   const upgraded = upgradeManifest(manifest);
-  const upgradedGatling = definition(upgraded, "police-5");
+  const upgradedGatling = definition(upgraded, "police-6");
   assert.equal(upgradedGatling.maxHp, 200);
   assert.equal(upgradedGatling.attack.cooldown, 10);
   assert.equal(upgradedGatling.attack.burstCount, 15);
@@ -2835,7 +3055,14 @@ test("spoken voice is restricted to tagged skill events and every default skill 
   );
   assert.equal(isSkillVoiceEvent({ type: "skill" }), false);
   assert.equal(isSkillVoiceEvent({ type: "spawn" }), false);
-  for (const type of ["attack", "damage", "death", "merge", "victory"] as const) {
+  assert.equal(
+    isSkillVoiceEvent({
+      type: "victory",
+      skillVoiceId: SKILL_VOICE_IDS.policeSniperVictory,
+    }),
+    true,
+  );
+  for (const type of ["attack", "damage", "death", "merge"] as const) {
     assert.equal(
       isSkillVoiceEvent({
         type,
@@ -2884,43 +3111,43 @@ test("spoken voice is restricted to tagged skill events and every default skill 
   }
 });
 
-test("skill voice playback only hands off fresh lines and preempts stale active speech", () => {
+test("concise skill voice playback ignores triggers while one line is active", () => {
   const queue = new SkillVoiceQueue<{ id: string }>();
   const first = { id: "first" };
-  const replaced = { id: "replaced" };
   const latest = { id: "latest" };
-  const interrupting = { id: "interrupting" };
 
   assert.deepEqual(queue.enqueue(first, 0), {
     item: first,
     interruptActive: false,
   });
-  assert.equal(queue.enqueue(replaced, 60), undefined);
   assert.equal(queue.enqueue(latest, 120), undefined);
-  assert.equal(queue.size, 2);
-  assert.equal(queue.complete(250), latest);
   assert.equal(queue.size, 1);
-  assert.equal(queue.complete(500), undefined);
+  assert.equal(queue.complete(250), undefined);
   assert.equal(queue.size, 0);
-
-  queue.enqueue(first, 1_000);
-  queue.enqueue(latest, 1_100);
-  assert.equal(queue.complete(1_400), undefined);
-  assert.equal(queue.size, 0, "stale pending speech must not play after its skill");
-
-  queue.enqueue(first, 2_000);
-  assert.deepEqual(queue.enqueue(interrupting, 2_700), {
-    item: interrupting,
-    interruptActive: true,
+  assert.deepEqual(queue.enqueue(latest, 300), {
+    item: latest,
+    interruptActive: false,
   });
-  assert.equal(queue.size, 1);
-
-  queue.clear();
-  assert.equal(queue.size, 0);
-  assert.equal(queue.complete(3_000), undefined);
 });
 
-test("pausing or finishing a battle clears every queued skill voice", () => {
+test("full skill voice playback retains every trigger in FIFO order", () => {
+  const queue = new SkillVoiceQueue<{ id: string }>("full");
+  const first = { id: "first" };
+  const second = { id: "second" };
+  const third = { id: "third" };
+  assert.deepEqual(queue.enqueue(first, 0), {
+    item: first,
+    interruptActive: false,
+  });
+  queue.enqueue(second, 10);
+  queue.enqueue(third, 20);
+  assert.equal(queue.size, 3);
+  assert.equal(queue.complete(30), second);
+  assert.equal(queue.complete(40), third);
+  assert.equal(queue.complete(50), undefined);
+});
+
+test("accepted skill voices survive pause and victory but reset with the battle", () => {
   const audio = new ArenaAudio();
   const queue = (
     audio as unknown as {
@@ -2928,17 +3155,16 @@ test("pausing or finishing a battle clears every queued skill voice", () => {
     }
   ).skillVoiceQueue;
 
+  audio.setSkillVoiceMode("full");
   audio.setBattleStatus("running");
   queue.enqueue({ id: "active" }, 0);
   queue.enqueue({ id: "pending" }, 10);
   assert.equal(queue.size, 2);
   audio.setBattleStatus("paused");
-  assert.equal(queue.size, 0);
-
-  audio.setBattleStatus("running");
-  queue.enqueue({ id: "active-again" }, 20);
-  queue.enqueue({ id: "pending-again" }, 30);
+  assert.equal(queue.size, 2);
   audio.setBattleStatus("finished");
+  assert.equal(queue.size, 2);
+  audio.setBattleStatus("ready");
   assert.equal(queue.size, 0);
   audio.dispose();
 });
@@ -3036,6 +3262,44 @@ test("legacy candidate lines migrate once into stable per-skill voice profiles",
   );
 });
 
+test("untouched mole skill voices migrate to the new effect-matched wording", () => {
+  const manifest = createDefaultManifest();
+  const mole = definition(manifest, "mole");
+  const voices = mole.sounds.skill?.skillVoices;
+  assert.ok(voices);
+  voices[SKILL_VOICE_IDS.moleDig] = {
+    phrase: "开洞！",
+    speechRate: 1.18,
+    speechPitch: 1.18,
+  };
+  voices[SKILL_VOICE_IDS.moleAmbush] = {
+    phrase: "脚下见！",
+    speechRate: 1.22,
+    speechPitch: 1.26,
+  };
+  voices[SKILL_VOICE_IDS.moleTunnel] = {
+    phrase: "用户自己的换洞台词",
+    speechRate: 1.05,
+    speechPitch: 1.1,
+  };
+
+  const upgradedVoices =
+    definition(upgradeManifest(manifest), "mole").sounds.skill?.skillVoices;
+  assert.equal(
+    upgradedVoices?.[SKILL_VOICE_IDS.moleDig]?.phrase,
+    "挖条新路！",
+  );
+  assert.equal(
+    upgradedVoices?.[SKILL_VOICE_IDS.moleAmbush]?.phrase,
+    "我在你脚下！",
+  );
+  assert.deepEqual(upgradedVoices?.[SKILL_VOICE_IDS.moleTunnel], {
+    phrase: "用户自己的换洞台词",
+    speechRate: 1.05,
+    speechPitch: 1.1,
+  });
+});
+
 test("untouched shipped skill voices upgrade to concise wording without replacing edits", () => {
   const manifest = createDefaultManifest();
   const panda = definition(manifest, "panda-lazy");
@@ -3102,7 +3366,18 @@ test("every built-in character has role-specific entrance choreography", () => {
       durations: [190, 210, 220, 180],
     },
     "police-5": {
+      style: "sniper-infiltration",
+      assets: ["police-sniper-entrance", "police-sniper-idle"],
+      durations: [520, 280],
+    },
+    "police-6": {
       style: "heavy-drop",
+      assets: [
+        "police-5-entrance-v2-1",
+        "police-5-entrance-v2-2",
+        "police-5-entrance-v2-3",
+        "police-5-idle",
+      ],
       durations: [150, 210, 260, 180],
     },
   } as const;
@@ -3135,7 +3410,7 @@ test("every built-in character has role-specific entrance choreography", () => {
     styles.add(style);
     assert.equal(style, choreography.style);
   }
-  assert.equal(styles.size, 7);
+  assert.equal(styles.size, 8);
 
   const pandaStart = entrancePresentationFor(
     definition(manifest, "panda-lazy"),
@@ -3161,8 +3436,14 @@ test("every built-in character has role-specific entrance choreography", () => {
     40,
     false,
   );
-  const heavyStart = entrancePresentationFor(
+  const sniperStart = entrancePresentationFor(
     definition(manifest, "police-5"),
+    0,
+    40,
+    false,
+  );
+  const heavyStart = entrancePresentationFor(
+    definition(manifest, "police-6"),
     0,
     40,
     false,
@@ -3170,6 +3451,7 @@ test("every built-in character has role-specific entrance choreography", () => {
   assert.ok(pandaStart.scaleY < pandaStart.scaleX);
   assert.ok(moleStart.yOffset > 60);
   assert.ok(Math.abs(tacticalStart.xOffset) > Math.abs(swaggerStart.xOffset) * 2);
+  assert.ok(Math.abs(sniperStart.xOffset) > Math.abs(swaggerStart.xOffset));
   assert.ok(heavyStart.yOffset < -100);
 });
 
@@ -3180,15 +3462,19 @@ test("default settlement and rescue/reload actions use distinct animation frames
       (frame) => frame.assetId,
     );
     assert.ok(frames);
-    assert.equal(frames.length, 6);
-    assert.ok(frames.some((frame) => frame.includes("-victory-v2-")));
+    if (character.id === "police-5") {
+      assert.deepEqual(frames, ["police-sniper-victory"]);
+    } else {
+      assert.equal(frames.length, 6);
+      assert.ok(frames.some((frame) => frame.includes("-victory-v2-")));
+    }
   }
   const panda = definition(manifest, "panda-lazy");
   assert.deepEqual(
     panda.animations.callPolice.frames.map((frame) => frame.assetId),
     ["panda-lazy-sos", "panda-lazy-sos-2", "panda-lazy-idle"],
   );
-  const heavy = definition(manifest, "police-5");
+  const heavy = definition(manifest, "police-6");
   assert.deepEqual(
     heavy.animations.reload.frames.map((frame) => frame.assetId),
     [
@@ -3203,13 +3489,13 @@ test("default settlement and rescue/reload actions use distinct animation frames
   );
 });
 
-test("a five-star officer spends its magazine, performs a voiced reload skill, and refills", () => {
+test("a six-star officer spends its magazine, performs a voiced reload skill, and refills", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.props = [];
   board.width = 1_200;
   board.height = 700;
-  const officer = definition(manifest, "police-5");
+  const officer = definition(manifest, "police-6");
   officer.speed = 0;
   officer.attack.range = 1_200;
   officer.attack.cooldown = 100;
@@ -3228,7 +3514,7 @@ test("a five-star officer spends its magazine, performs a voiced reload skill, a
   manifest.setup.contestants = [
     {
       id: "reload-officer",
-      definitionId: "police-5",
+      definitionId: "police-6",
       displayName: "换弹测试员",
       position: { x: 180, y: 350 },
       direction: { x: 1, y: 0 },

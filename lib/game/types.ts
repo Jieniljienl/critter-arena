@@ -82,6 +82,7 @@ export type SynthPreset =
   | "baton"
   | "pistol"
   | "rifle"
+  | "sniper"
   | "rocket"
   | "explosion"
   | "gatling"
@@ -105,7 +106,7 @@ export type AttackDefinition = {
   damage: number;
   cooldown: number;
   windup: number;
-  mode: "melee" | "projectile" | "burst" | "gatling";
+  mode: "none" | "melee" | "projectile" | "burst" | "gatling";
   /** 近战仅能命中角色朝向前方的扇区；默认 120 度。 */
   frontArcDegrees?: number;
   projectileSpeed?: number;
@@ -171,6 +172,12 @@ export type MoleSkillParameters = {
 
 export type PoliceSkillParameters = {
   batonRushCooldown: number;
+  sniperAimDuration: number;
+  sniperCooldown: number;
+  sniperDamage: number;
+  sniperProjectileSpeed: number;
+  sniperMissChance: number;
+  sniperRange: number;
   gatlingMagazineSize: number;
   gatlingReloadDuration: number;
   kickRange: number;
@@ -202,6 +209,7 @@ export type PolicePromotionConfig = {
   experienceToStar3: number;
   experienceToStar4: number;
   experienceToStar5: number;
+  experienceToStar6: number;
 };
 
 export type CharacterDefinition = {
@@ -211,7 +219,7 @@ export type CharacterDefinition = {
   subtitle: string;
   role: "contestant" | "summon";
   pluginId?: "panda" | "mole" | "police";
-  policeStar?: 1 | 2 | 3 | 4 | 5;
+  policeStar?: 1 | 2 | 3 | 4 | 5 | 6;
   maxHp: number;
   speed: number;
   radius: number;
@@ -280,7 +288,7 @@ export type ProjectManifest = {
   assets: AssetRef[];
   characters: CharacterDefinition[];
   nameLibraries: CharacterNameLibrary[];
-  /** 一至五星警员共用的升星经验表。 */
+  /** 一至六星警员共用的升星经验表。 */
   policePromotion: PolicePromotionConfig;
   boards: BoardDefinition[];
   setup: MatchSetup;
@@ -301,6 +309,9 @@ export type UnitAction =
   | "digging"
   | "tunneling"
   | "entering"
+  | "sniperAim"
+  | "sniperFire"
+  | "loadoutShowcase"
   | "reloading"
   | "kick"
   | "knockback"
@@ -319,7 +330,7 @@ export type RuntimeUnit = {
   ownerId: string;
   factionId: string;
   main: boolean;
-  policeStar?: 1 | 2 | 3 | 4 | 5;
+  policeStar?: 1 | 2 | 3 | 4 | 5 | 6;
   policeKillProgress: number;
   hp: number;
   maxHp: number;
@@ -380,6 +391,11 @@ export type RuntimeUnit = {
     returnHoleId?: string;
   };
   digPosition?: Vec2;
+  sniper?: {
+    nextAimAt: number;
+    targetId?: string;
+    fireAt?: number;
+  };
   gatling?: {
     nextRoundIn: number;
     shotsRemaining: number;
@@ -420,6 +436,9 @@ export type RuntimeProjectile = {
   damage: number;
   splashDamage?: number;
   splashRadius?: number;
+  /** A deliberately missed sniper shot may not collide with its locked target. */
+  ignoredTargetId?: string;
+  sniper?: boolean;
 };
 
 export type CombatEvent = {

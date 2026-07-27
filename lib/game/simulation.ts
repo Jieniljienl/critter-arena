@@ -425,6 +425,14 @@ export class BattleSimulation {
       ),
       ...(definition.policeStar === 5
         ? {
+            sniper: {
+              nextAimAt:
+                this.time + (entering ? UNIT_ENTRANCE_DURATION : 0.35),
+            },
+          }
+        : {}),
+      ...(definition.policeStar === 6
+        ? {
             gatling: {
               nextRoundIn: 0.08,
               shotsRemaining: 0,
@@ -471,6 +479,9 @@ export class BattleSimulation {
         "tunneling",
         "batonRush",
         "batonStrike",
+        "sniperAim",
+        "sniperFire",
+        "loadoutShowcase",
         "reloading",
         "kick",
         "knockback",
@@ -495,6 +506,7 @@ export class BattleSimulation {
 
       if (
         definition.attack.mode !== "gatling" &&
+        definition.attack.mode !== "none" &&
         !(definition.attack.mode === "melee" && unit.action === "attack") &&
         this.canBeginAttack(unit)
       ) {
@@ -591,6 +603,9 @@ export class BattleSimulation {
       this.updatePoliceBatonRush(unit, definition, dt);
     }
     if (definition.pluginId === "police" && definition.policeStar === 5) {
+      this.updateSniper(unit, definition);
+    }
+    if (definition.pluginId === "police" && definition.policeStar === 6) {
       this.updateGatling(unit, definition, dt);
     }
   }
@@ -981,6 +996,112 @@ export class BattleSimulation {
     });
   }
 
+  private updateSniper(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+  ): void {
+    const sniper = unit.sniper;
+    const parameters = definition.skillParameters?.police;
+    if (!sniper || unit.action === "dead") return;
+
+    if (unit.action === "sniperAim") {
+      const target = sniper.targetId
+        ? this.units.get(sniper.targetId)
+        : undefined;
+      if (!this.isChaseableMeleeTarget(unit, target)) {
+        sniper.targetId = undefined;
+        sniper.fireAt = undefined;
+        sniper.nextAimAt = this.time + 0.35;
+        this.resetAction(unit);
+        return;
+      }
+      const lockedDirection = normalize({
+        x: target.x - unit.x,
+        y: target.y - unit.y,
+      });
+      unit.vx = lockedDirection.x * definition.speed;
+      unit.vy = lockedDirection.y * definition.speed;
+      if (this.time + EPSILON < (sniper.fireAt ?? Number.POSITIVE_INFINITY)) {
+        return;
+      }
+
+      const missChance = Math.max(
+        0,
+        Math.min(1, parameters?.sniperMissChance ?? 0.12),
+      );
+      const missed = this.random.next() < missChance;
+      let shotDirection = lockedDirection;
+      if (missed) {
+        const angle =
+          ((4.5 + this.random.next() * 4.5) * Math.PI) / 180 *
+          (this.random.next() < 0.5 ? -1 : 1);
+        const cosine = Math.cos(angle);
+        const sine = Math.sin(angle);
+        shotDirection = {
+          x: lockedDirection.x * cosine - lockedDirection.y * sine,
+          y: lockedDirection.x * sine + lockedDirection.y * cosine,
+        };
+      }
+      this.launchProjectileInDirection(
+        unit,
+        shotDirection,
+        definition,
+        target,
+        {
+          speed: Math.max(1, parameters?.sniperProjectileSpeed ?? 1600),
+          damage: Math.max(0, parameters?.sniperDamage ?? 60),
+          spreadDegrees: 0,
+          ignoredTargetId: missed ? target.id : undefined,
+          sniper: true,
+        },
+      );
+      this.runModules(unit, "onAttack");
+      sniper.targetId = undefined;
+      sniper.fireAt = undefined;
+      sniper.nextAimAt =
+        this.time + Math.max(0, parameters?.sniperCooldown ?? 8);
+      unit.action = "sniperFire";
+      unit.actionStartedAt = this.time;
+      unit.actionUntil = this.time + 0.42;
+      return;
+    }
+
+    if (unit.action !== "move" || this.time + EPSILON < sniper.nextAimAt) {
+      return;
+    }
+    const range = Math.max(1, parameters?.sniperRange ?? 2200);
+    const target = this.validTargets(unit, range)
+      .sort(
+        (left, right) =>
+          distance(unit, right) - distance(unit, left) ||
+          left.id.localeCompare(right.id),
+      )[0];
+    if (!target) {
+      sniper.nextAimAt = this.time + 0.25;
+      return;
+    }
+    const direction = normalize({
+      x: target.x - unit.x,
+      y: target.y - unit.y,
+    });
+    unit.vx = direction.x * definition.speed;
+    unit.vy = direction.y * definition.speed;
+    unit.meleeTargetId = undefined;
+    unit.action = "sniperAim";
+    unit.actionStartedAt = this.time;
+    unit.actionUntil = 0;
+    sniper.targetId = target.id;
+    sniper.fireAt =
+      this.time + Math.max(0.1, parameters?.sniperAimDuration ?? 3);
+    this.emitSkill(
+      `${unit.name} 蹲伏瞄准 ${target.name}，红色引导线开始锁定`,
+      unit,
+      target,
+      "sniper",
+      SKILL_VOICE_IDS.policeSniperAim,
+    );
+  }
+
   private updateGatling(
     unit: RuntimeUnit,
     definition: CharacterDefinition,
@@ -991,6 +1112,10 @@ export class BattleSimulation {
       !gatling ||
       unit.action === "kick" ||
       unit.action === "reloading" ||
+      unit.action === "loadoutShowcase" ||
+      unit.action === "merge" ||
+      unit.action === "knockback" ||
+      unit.action === "stunned" ||
       unit.action === "dead"
     ) {
       return;
@@ -1110,6 +1235,19 @@ export class BattleSimulation {
         unit.action = "move";
         unit.actionStartedAt = this.time;
         unit.actionUntil = 0;
+        const definition = this.definitions.get(unit.definitionId);
+        if (
+          definition?.pluginId === "police" &&
+          definition.policeStar === 5
+        ) {
+          this.emitSkill(
+            `${unit.name} 完成低姿战术入场，狙击手就位`,
+            unit,
+            undefined,
+            "sniper",
+            SKILL_VOICE_IDS.policeSniperEntrance,
+          );
+        }
       } else if (unit.action === "eating") {
         const definition = this.definitions.get(unit.definitionId);
         const parameters = definition?.skillParameters?.panda;
@@ -1245,6 +1383,8 @@ export class BattleSimulation {
       } else if (
         unit.action === "kick" ||
         unit.action === "batonStrike" ||
+        unit.action === "sniperFire" ||
+        unit.action === "loadoutShowcase" ||
         unit.action === "attack" ||
         unit.action === "hurt" ||
         unit.action === "satisfied" ||
@@ -1502,6 +1642,9 @@ export class BattleSimulation {
       unit.action !== "meleeApproach" &&
       unit.action !== "batonRush" &&
       unit.action !== "batonStrike" &&
+      unit.action !== "sniperAim" &&
+      unit.action !== "sniperFire" &&
+      unit.action !== "loadoutShowcase" &&
       unit.action !== "digging" &&
       unit.action !== "tunneling" &&
       unit.action !== "reloading" &&
@@ -1513,6 +1656,12 @@ export class BattleSimulation {
   }
 
   private beginAttack(unit: RuntimeUnit, definition: CharacterDefinition): void {
+    if (
+      definition.attack.mode === "none" ||
+      definition.attack.mode === "gatling"
+    ) {
+      return;
+    }
     const target = this.random.pick(this.validAttackTargets(unit, definition));
     if (!target) return;
     if (definition.attack.mode === "melee") {
@@ -1767,6 +1916,13 @@ export class BattleSimulation {
     direction: Vec2,
     definition: CharacterDefinition,
     target?: RuntimeUnit,
+    overrides?: {
+      speed?: number;
+      damage?: number;
+      spreadDegrees?: number;
+      ignoredTargetId?: string;
+      sniper?: boolean;
+    },
   ): void {
     if (
       this.projectiles.size >= MAX_ACTIVE_PROJECTILES ||
@@ -1776,10 +1932,11 @@ export class BattleSimulation {
       return;
     }
     const attack = definition.attack;
-    const speed = attack.projectileSpeed ?? 650;
+    const speed = overrides?.speed ?? attack.projectileSpeed ?? 650;
     const kind = attack.projectileKind ?? "bullet";
     const spreadRadians =
-      Math.max(0, attack.spreadDegrees ?? 0) * (Math.PI / 180);
+      Math.max(0, overrides?.spreadDegrees ?? attack.spreadDegrees ?? 0) *
+      (Math.PI / 180);
     const spreadOffset =
       spreadRadians > 0 ? (this.random.next() * 2 - 1) * spreadRadians : 0;
     const directionAngle = Math.atan2(direction.y, direction.x) + spreadOffset;
@@ -1810,9 +1967,11 @@ export class BattleSimulation {
       vx: shotDirection.x * speed,
       vy: shotDirection.y * speed,
       radius: kind === "rocket" ? 14 : 7,
-      damage: attack.damage,
+      damage: overrides?.damage ?? attack.damage,
       splashDamage: attack.splashDamage,
       splashRadius: attack.splashRadius,
+      ignoredTargetId: overrides?.ignoredTargetId,
+      sniper: overrides?.sniper,
     };
     this.projectiles.set(projectile.id, projectile);
     this.projectilesCreatedThisStep += 1;
@@ -1824,6 +1983,8 @@ export class BattleSimulation {
           : definition.policeStar === 4
             ? "rocket"
             : definition.policeStar === 5
+              ? "sniper"
+              : definition.policeStar === 6
               ? "gatling"
               : definition.sounds.attack?.preset ?? "swipe";
     this.emit(
@@ -1875,6 +2036,7 @@ export class BattleSimulation {
         (unit) =>
           unit.targetable &&
           unit.factionId !== projectile.factionId &&
+          unit.id !== projectile.ignoredTargetId &&
           distance(unit, projectile) <= unit.radius + projectile.radius,
       );
       if (!hit) continue;
@@ -1965,7 +2127,7 @@ export class BattleSimulation {
           this.time + (definition.skillParameters?.panda?.policeCallDuration ?? 0.7);
       }
     }
-    if (definition.pluginId === "police" && definition.policeStar === 5) {
+    if (definition.pluginId === "police" && definition.policeStar === 6) {
       const attacker = sourceUnitId ? this.units.get(sourceUnitId) : undefined;
       const gatling = target.gatling;
       const parameters = definition.skillParameters?.police;
@@ -1976,7 +2138,9 @@ export class BattleSimulation {
         target.action !== "stunned" &&
         gatling &&
         this.time >= gatling.nextKickAt &&
-        distance(target, attacker) <= (parameters?.kickRange ?? 160) + attacker.radius
+        distance(target, attacker) <=
+          (parameters?.kickRange ?? 160) + attacker.radius &&
+        this.isInMeleeFrontArc(target, attacker, definition)
       ) {
         gatling.nextKickAt = this.time + (parameters?.kickCooldown ?? 0.5);
         const direction = normalize({ x: attacker.x - target.x, y: attacker.y - target.y });
@@ -2305,14 +2469,14 @@ export class BattleSimulation {
     const currentStar = source.policeStar;
     if (
       !currentStar ||
-      currentStar >= 5 ||
+      currentStar >= 6 ||
       source.hp <= 0 ||
       source.action === "dead"
     ) {
       return;
     }
     const killsRequired = this.policePromotionRequirement(
-      currentStar as 1 | 2 | 3 | 4,
+      currentStar as 1 | 2 | 3 | 4 | 5,
     );
     source.policeKillProgress += 1;
     if (source.policeKillProgress < killsRequired) return;
@@ -2320,7 +2484,7 @@ export class BattleSimulation {
   }
 
   private policePromotionRequirement(
-    currentStar: 1 | 2 | 3 | 4,
+    currentStar: 1 | 2 | 3 | 4 | 5,
   ): number {
     const configured =
       currentStar === 1
@@ -2329,14 +2493,16 @@ export class BattleSimulation {
           ? this.policePromotion.experienceToStar3
           : currentStar === 3
             ? this.policePromotion.experienceToStar4
-            : this.policePromotion.experienceToStar5;
+            : currentStar === 4
+              ? this.policePromotion.experienceToStar5
+              : this.policePromotion.experienceToStar6;
     return Math.max(1, Math.round(configured));
   }
 
   private promotePoliceAfterKills(source: RuntimeUnit, killsRequired: number): void {
     const currentStar = source.policeStar;
-    if (!currentStar || currentStar >= 5) return;
-    const nextStar = (currentStar + 1) as 2 | 3 | 4 | 5;
+    if (!currentStar || currentStar >= 6) return;
+    const nextStar = (currentStar + 1) as 2 | 3 | 4 | 5 | 6;
     const definition = this.definitions.get(`police-${nextStar}`);
     if (!definition) return;
 
@@ -2358,11 +2524,13 @@ export class BattleSimulation {
     source.meleeTargetId = undefined;
     source.batonRushTargetId = undefined;
     source.nextBatonRushAt = Number.POSITIVE_INFINITY;
-    source.action = "merge";
+    const isFearlessPromotion = nextStar === 6;
+    source.action = isFearlessPromotion ? "loadoutShowcase" : "merge";
     source.actionStartedAt = this.time;
-    source.actionUntil = this.time + 0.62;
+    source.actionUntil = this.time + (isFearlessPromotion ? 3.6 : 0.62);
     source.promotionStartedAt = this.time;
-    source.promotionUntil = this.time + 1.1;
+    source.promotionUntil =
+      this.time + (isFearlessPromotion ? 3.6 : 1.1);
     source.burnUntil = 0;
     source.burnDamagePerSecond = 0;
     source.springUntil = 0;
@@ -2373,8 +2541,14 @@ export class BattleSimulation {
         this.time + (ability.trigger === "interval" ? ability.interval ?? ability.cooldown : 0),
       ]),
     );
-    source.gatling =
+    source.sniper =
       nextStar === 5
+        ? {
+            nextAimAt: this.time + 0.35,
+          }
+        : undefined;
+    source.gatling =
+      nextStar === 6
         ? {
             nextRoundIn: 0.08,
             shotsRemaining: 0,
@@ -2518,6 +2692,9 @@ export class BattleSimulation {
         "merge",
         undefined,
         `${this.winnerName} 获得胜利`,
+        featuredWinner.policeStar === 5
+          ? SKILL_VOICE_IDS.policeSniperVictory
+          : undefined,
       );
     } else {
       this.draw = true;

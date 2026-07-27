@@ -131,19 +131,29 @@ export const defaultAssets: AssetRef[] = [
 for (let star = 1; star <= 5; star += 1) {
   const version =
     star === 3 ? "?v=20260726c" : star === 4 ? "?v=20260726b" : "";
+  const displayStar = star === 5 ? 6 : star;
   defaultAssets.push(
-    asset(`police-${star}-idle`, `/assets/police-${star}-idle.png${version}`, `${star}星警察待机`),
-    asset(`police-${star}-attack-1`, `/assets/police-${star}-attack-1.png${version}`, `${star}星警察攻击一`),
-    asset(`police-${star}-attack-2`, `/assets/police-${star}-attack-2.png${version}`, `${star}星警察攻击二`),
-    asset(`police-${star}-attack-3`, `/assets/police-${star}-attack-3.png${version}`, `${star}星警察攻击三`),
+    asset(`police-${star}-idle`, `/assets/police-${star}-idle.png${version}`, `${displayStar}星警察待机`),
+    asset(`police-${star}-attack-1`, `/assets/police-${star}-attack-1.png${version}`, `${displayStar}星警察攻击一`),
+    asset(`police-${star}-attack-2`, `/assets/police-${star}-attack-2.png${version}`, `${displayStar}星警察攻击二`),
+    asset(`police-${star}-attack-3`, `/assets/police-${star}-attack-3.png${version}`, `${displayStar}星警察攻击三`),
   );
 }
 defaultAssets.push(
-  asset("police-5-skill-1", "/assets/police-5-skill-1.png", "五星警察踹击一"),
-  asset("police-5-skill-2", "/assets/police-5-skill-2.png", "五星警察踹击二"),
-  asset("police-5-skill-3", "/assets/police-5-skill-3.png", "五星警察踹击三"),
-  asset("police-5-reload", "/assets/police-5-reload.png?v=20260726", "五星警察更换弹链"),
-  asset("police-5-reload-2", "/assets/police-5-reload-2.png?v=20260726", "五星警察扣合供弹盖"),
+  asset("police-sniper-idle", "/assets/police-sniper-idle.png?v=20260727", "五星狙击手待机"),
+  asset("police-sniper-entrance", "/assets/police-sniper-entrance.png?v=20260727", "五星狙击手战术入场"),
+  asset("police-sniper-aim", "/assets/police-sniper-aim.png?v=20260727", "五星狙击手蹲伏瞄准"),
+  asset("police-sniper-victory", "/assets/police-sniper-victory.png?v=20260727", "五星狙击手获胜动作"),
+  asset("police-5-skill-1", "/assets/police-5-skill-1.png", "六星无畏战士踹击一"),
+  asset("police-5-skill-2", "/assets/police-5-skill-2.png", "六星无畏战士踹击二"),
+  asset("police-5-skill-3", "/assets/police-5-skill-3.png", "六星无畏战士踹击三"),
+  asset("police-5-reload", "/assets/police-5-reload.png?v=20260726", "六星无畏战士更换弹链"),
+  asset("police-5-reload-2", "/assets/police-5-reload-2.png?v=20260726", "六星无畏战士扣合供弹盖"),
+  asset(
+    "police-6-loadout-showcase",
+    "/assets/police-6-loadout-showcase.png?v=20260727",
+    "六星无畏套装投送展示",
+  ),
 );
 
 const animatedCharacterIds = [
@@ -178,7 +188,7 @@ for (let frame = 1; frame <= 6; frame += 1) {
     asset(
       `police-5-reload-v2-${frame}`,
       `/assets/police-5-reload-v2-${frame}.png?v=20260727`,
-      `五星无畏战士换弹动作 ${frame}`,
+      `六星无畏战士换弹动作 ${frame}`,
     ),
   );
 }
@@ -296,6 +306,12 @@ const moleSkillParameters = {
 
 const policeSkillParameters = {
   batonRushCooldown: 10,
+  sniperAimDuration: 3,
+  sniperCooldown: 8,
+  sniperDamage: 60,
+  sniperProjectileSpeed: 1600,
+  sniperMissChance: 0.12,
+  sniperRange: 2200,
   gatlingMagazineSize: 150,
   gatlingReloadDuration: 3,
   kickRange: 160,
@@ -311,29 +327,48 @@ export const defaultPolicePromotion: ProjectManifest["policePromotion"] = {
   experienceToStar3: 2,
   experienceToStar4: 2,
   experienceToStar5: 3,
+  experienceToStar6: 5,
 };
 
 const policeDefinition = (
-  star: 1 | 2 | 3 | 4 | 5,
+  star: 1 | 2 | 3 | 4 | 5 | 6,
   data: Pick<CharacterDefinition, "maxHp" | "speed" | "radius" | "attack">,
 ): CharacterDefinition => {
-  const names = ["", "巡逻警员", "手枪警员", "步枪警员", "火箭警员", "重装无畏战士"];
+  const names = ["", "巡逻警员", "手枪警员", "步枪警员", "火箭警员", "狙击手", "重装无畏战士"];
   const subtitles = [
     "",
     "人类警员 · 警棍近身压制",
     "人类警员 · 手枪全图弹道",
     "人类警员 · 步枪三连发",
     "人类警员 · RPG范围爆破",
+    "人类狙击手 · 蹲伏锁定后发射高速弹",
     "人类重装警察 · 定向周期连发与踹击",
   ];
-  const attackSounds: SynthPreset[] = ["baton", "baton", "pistol", "rifle", "rocket", "gatling"];
-  const skillLines: Record<1 | 2 | 3 | 4 | 5, string[]> = {
+  const attackSounds: SynthPreset[] = ["baton", "baton", "pistol", "rifle", "rocket", "sniper", "gatling"];
+  const skillLines: Record<1 | 2 | 3 | 4 | 5 | 6, string[]> = {
     1: ["警棍一抬，节目效果就来。", "一格经验到手，我马上升职。"],
     2: ["这一枪先备案，命中看缘分。", "两格经验不多，功劳簿先记上。"],
     3: ["三连发已寄出，签收看走位。", "点射讲节奏，升星靠战绩。"],
     4: ["火箭到付，拒收也得爆。", "再攒两格，我就申请重装。"],
-    5: ["无畏模式上线，先把音量调低。", "这一轮弹链很长，站直线的先走。"],
+    5: ["狙击手就位。", "锁定目标。", "目标肃清。"],
+    6: ["无畏模式上线，先把音量调低。", "这一轮弹链很长，站直线的先走。"],
   };
+  const visualPrefix = star === 5 ? "police-sniper" : star === 6 ? "police-5" : `police-${star}`;
+  const basePoliceAnimations =
+    star === 5
+      ? {
+          idle: clip("idle", ["police-sniper-idle"], true, 500),
+          move: clip("move", ["police-sniper-idle"], true, 500),
+          entrance: timedClip("entrance", [
+            ["police-sniper-entrance", 520],
+            ["police-sniper-idle", 280],
+          ]),
+          attack: timedClip("attack", [
+            ["police-sniper-aim", 260],
+            ["police-sniper-idle", 180],
+          ]),
+        }
+      : baseAnimations(visualPrefix);
 
   return {
     schemaVersion: SCHEMA_VERSION,
@@ -345,16 +380,24 @@ const policeDefinition = (
     policeStar: star,
     ...data,
     skillParameters:
-      star === 1 || star === 5
+      star === 1 || star === 5 || star === 6
         ? { police: structuredClone(policeSkillParameters) }
         : undefined,
-    accent: ["", "#83c96f", "#5eb8ff", "#a58aff", "#ff9f58", "#ffd55e"][star],
-    portraitAssetId: `police-${star}-idle`,
+    accent: ["", "#83c96f", "#5eb8ff", "#a58aff", "#ff9f58", "#72d8ff", "#ffd55e"][star],
+    portraitAssetId: star === 5 ? "police-sniper-idle" : star === 6 ? "police-5-idle" : `police-${star}-idle`,
     victoryStyle: "cool",
     animations: {
-      ...baseAnimations(`police-${star}`),
-      victory: victoryClip(`police-${star}`),
+      ...basePoliceAnimations,
+      victory:
+        star === 5
+          ? clip("victory", ["police-sniper-victory"], true, 620)
+          : victoryClip(visualPrefix),
       ...(star === 5
+        ? {
+            skill: clip("skill", ["police-sniper-aim"], true, 500),
+          }
+        : {}),
+      ...(star === 6
         ? {
             skill: clip("skill", [
               "police-5-skill-1",
@@ -375,6 +418,12 @@ const policeDefinition = (
               false,
               430,
             ),
+            promotion: clip(
+              "promotion",
+              ["police-6-loadout-showcase"],
+              true,
+              700,
+            ),
           }
         : {}),
     },
@@ -384,15 +433,15 @@ const policeDefinition = (
       hurt: synth(`police-${star}-hurt`, "hurt", 0.45),
       skill: {
         ...speech(`police-${star}-skill`, skillLines[star], 0.76),
-        speechPitch: [1, 1.08, 1, 0.94, 0.86, 0.72][star],
-        speechRate: star === 5 ? 0.92 : 1.04,
+        speechPitch: [1, 1.08, 1, 0.94, 0.86, 0.82, 0.72][star],
+        speechRate: star >= 5 ? 0.92 : 1.04,
         skillVoices: defaultSkillVoiceProfilesFor({
           pluginId: "police",
           policeStar: star,
           abilities: [],
         }),
         phrasesBySound:
-          star === 5
+          star === 6
             ? {
                 gatling: [
                   "这一轮弹链很长，站直线的先走。",
@@ -628,6 +677,18 @@ export const defaultCharacters: CharacterDefinition[] = [
     },
   }),
   policeDefinition(5, {
+    maxHp: 70,
+    speed: 80,
+    radius: 28,
+    attack: {
+      range: 0,
+      damage: 0,
+      cooldown: 0,
+      windup: 0,
+      mode: "none",
+    },
+  }),
+  policeDefinition(6, {
     maxHp: 1000,
     speed: 65,
     radius: 40,
@@ -691,7 +752,11 @@ export const defaultNameLibraries: ProjectManifest["nameLibraries"] = [
   },
   {
     definitionId: "police-5",
-    names: ["加特林菩萨", "五星麦克阿瑟", "火力不足恐惧症", "重装门神", "一轮十五响"],
+    names: ["鹰眼老陈", "三秒之后见", "屋顶观察员", "红线审判官", "一枪再升职"],
+  },
+  {
+    definitionId: "police-6",
+    names: ["加特林菩萨", "六星麦克阿瑟", "火力不足恐惧症", "重装门神", "一轮十五响"],
   },
 ];
 
@@ -1101,9 +1166,9 @@ export const createShowcaseContestants = (
       "#55a7ff",
     ),
     contestant(
-      "showcase-mole-blue",
-      "mole",
-      "地底包工头",
+      "showcase-sniper",
+      "police-5",
+      "鹰眼老陈",
       0.85,
       0.32,
       202,
@@ -1132,7 +1197,7 @@ export const createShowcaseContestants = (
     ),
     contestant(
       "showcase-gatling",
-      "police-5",
+      "police-6",
       "加特林菩萨",
       0.78,
       0.78,
@@ -1188,6 +1253,60 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
   // also stay deleted; fresh default content is only for new projects.
   upgraded.nameLibraries ??= [];
   upgraded.backgroundMusic ??= structuredClone(defaults.backgroundMusic);
+  const legacyFiveStarIndex = upgraded.characters.findIndex(
+    (character) =>
+      character.id === "police-5" &&
+      character.policeStar === 5 &&
+      (character.portraitAssetId === "police-5-idle" ||
+        character.attack.mode === "gatling" ||
+        Boolean(character.animations.reload)),
+  );
+  const alreadyHasSixStar = upgraded.characters.some(
+    (character) => character.id === "police-6" || character.policeStar === 6,
+  );
+  if (legacyFiveStarIndex >= 0 && !alreadyHasSixStar) {
+    const legacyHeavy = structuredClone(
+      upgraded.characters[legacyFiveStarIndex],
+    );
+    legacyHeavy.id = "police-6";
+    legacyHeavy.policeStar = 6;
+    legacyHeavy.name = legacyHeavy.name.replace(/^5星/, "6星");
+    const sniperDefault = defaults.characters.find(
+      (character) => character.id === "police-5",
+    );
+    if (sniperDefault) {
+      upgraded.characters[legacyFiveStarIndex] =
+        structuredClone(sniperDefault);
+      upgraded.characters.push(legacyHeavy);
+      for (const contestant of upgraded.setup.contestants) {
+        if (contestant.definitionId === "police-5") {
+          contestant.definitionId = "police-6";
+        }
+      }
+      for (const character of upgraded.characters) {
+        for (const ability of character.abilities) {
+          for (const action of ability.actions) {
+            if (
+              action.kind === "spawnUnit" &&
+              action.definitionId === "police-5"
+            ) {
+              action.definitionId = "police-6";
+            }
+          }
+        }
+      }
+      const legacyLibrary = upgraded.nameLibraries.find(
+        (library) => library.definitionId === "police-5",
+      );
+      if (legacyLibrary) legacyLibrary.definitionId = "police-6";
+      const sniperLibrary = defaults.nameLibraries.find(
+        (library) => library.definitionId === "police-5",
+      );
+      if (sniperLibrary) {
+        upgraded.nameLibraries.push(structuredClone(sniperLibrary));
+      }
+    }
+  }
   if (!upgraded.policePromotion) {
     const legacyExperience = (
       definitionId: string,
@@ -1227,14 +1346,19 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         "killsToStar5",
         defaultPolicePromotion.experienceToStar5,
       ),
+      experienceToStar6: defaultPolicePromotion.experienceToStar6,
     };
   }
+  upgraded.policePromotion.experienceToStar6 ??=
+    defaultPolicePromotion.experienceToStar6;
   const animationAssetIds = new Set(
     upgraded.assets.map((existingAsset) => existingAsset.id),
   );
   for (const defaultAsset of defaults.assets) {
     if (
-      (defaultAsset.id.includes("-entrance-v2-") ||
+      (defaultAsset.id.startsWith("police-sniper-") ||
+        defaultAsset.id === "police-6-loadout-showcase" ||
+        defaultAsset.id.includes("-entrance-v2-") ||
         defaultAsset.id.includes("-victory-v2-") ||
         defaultAsset.id.includes("-reload-v2-")) &&
       !animationAssetIds.has(defaultAsset.id)
@@ -1296,7 +1420,7 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       );
     }
     if (
-      defaultCharacter.id === "police-5" &&
+      defaultCharacter.id === "police-6" &&
       matchesLegacyClip(
         character.animations.reload,
         clip(
@@ -1340,6 +1464,18 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       const policeParameters = character.skillParameters.police;
       policeParameters.batonRushCooldown ??=
         defaultCharacter.skillParameters.police.batonRushCooldown;
+      policeParameters.sniperAimDuration ??=
+        defaultCharacter.skillParameters.police.sniperAimDuration;
+      policeParameters.sniperCooldown ??=
+        defaultCharacter.skillParameters.police.sniperCooldown;
+      policeParameters.sniperDamage ??=
+        defaultCharacter.skillParameters.police.sniperDamage;
+      policeParameters.sniperProjectileSpeed ??=
+        defaultCharacter.skillParameters.police.sniperProjectileSpeed;
+      policeParameters.sniperMissChance ??=
+        defaultCharacter.skillParameters.police.sniperMissChance;
+      policeParameters.sniperRange ??=
+        defaultCharacter.skillParameters.police.sniperRange;
       policeParameters.gatlingMagazineSize ??=
         defaultCharacter.skillParameters.police.gatlingMagazineSize;
       policeParameters.gatlingReloadDuration ??=
@@ -1365,7 +1501,7 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       defaultCharacter.attack.projectileBoostMultiplier;
     character.attack.frontArcDegrees ??=
       defaultCharacter.attack.frontArcDegrees;
-    if (defaultCharacter.id === "police-5") {
+    if (defaultCharacter.id === "police-6") {
       const legacyPolice = character.skillParameters?.police;
       const legacyShots = Math.max(
         1,
@@ -1415,6 +1551,22 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         policeSkillParameters.batonRushCooldown;
     }
     if (character.pluginId === "police" && character.policeStar === 5) {
+      character.skillParameters ??= {};
+      character.skillParameters.police ??= structuredClone(
+        policeSkillParameters,
+      );
+      const parameters = character.skillParameters.police;
+      parameters.sniperAimDuration ??=
+        policeSkillParameters.sniperAimDuration;
+      parameters.sniperCooldown ??= policeSkillParameters.sniperCooldown;
+      parameters.sniperDamage ??= policeSkillParameters.sniperDamage;
+      parameters.sniperProjectileSpeed ??=
+        policeSkillParameters.sniperProjectileSpeed;
+      parameters.sniperMissChance ??=
+        policeSkillParameters.sniperMissChance;
+      parameters.sniperRange ??= policeSkillParameters.sniperRange;
+    }
+    if (character.pluginId === "police" && character.policeStar === 6) {
       character.skillParameters ??= {};
       character.skillParameters.police ??= structuredClone(
         policeSkillParameters,

@@ -8,7 +8,10 @@ import {
   useRef,
 } from "react";
 import type PhaserType from "phaser";
-import { ArenaAudio } from "@/lib/game/audio";
+import {
+  ArenaAudio,
+  type SkillVoiceMode,
+} from "@/lib/game/audio";
 import {
   entrancePresentationFor,
   type EntrancePresentation,
@@ -39,6 +42,7 @@ export type ArenaHandle = {
   setVolume: (volume: number) => void;
   setSkillVoicesEnabled: (enabled: boolean) => void;
   setSkillVoiceVolume: (volume: number) => void;
+  setSkillVoiceMode: (mode: SkillVoiceMode) => void;
   setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => void;
   setMusicVolume: (volume: number) => void;
   syncReadySetup: (setup: ProjectManifest["setup"]) => boolean;
@@ -92,6 +96,7 @@ const collectBattleImageAssets = (
         "police-3",
         "police-4",
         "police-5",
+        "police-6",
       );
     }
     for (const linkedId of linkedDefinitionIds) {
@@ -252,6 +257,9 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           setSkillVoiceVolume: (nextVolume: number) => {
             audioRef.current.setSkillVoiceVolume(nextVolume);
           },
+          setSkillVoiceMode: (mode: SkillVoiceMode) => {
+            audioRef.current.setSkillVoiceMode(mode);
+          },
           setMusic: (config: BackgroundMusicConfig, assets: AssetRef[]) => {
             void audioRef.current.setMusic(config, assets);
           },
@@ -307,6 +315,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
           private arenaGraphics!: PhaserType.GameObjects.Graphics;
           private overlayGraphics!: PhaserType.GameObjects.Graphics;
           private unitImages = new Map<string, PhaserType.GameObjects.Image>();
+          private showcaseImages = new Map<string, PhaserType.GameObjects.Image>();
           private projectileImages = new Map<string, PhaserType.GameObjects.Image>();
           private holeImages = new Map<string, PhaserType.GameObjects.Image>();
           private effectImages = new Map<string, PhaserType.GameObjects.Image>();
@@ -466,6 +475,10 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
             this.drawProjectiles(snapshot);
             this.drawAnnouncementBanner(snapshot, finishedVisualTime);
             this.drawEventEffects(snapshot, finishedVisualTime);
+            this.drawSniperGuides(
+              snapshot,
+              snapshot.time + finishedVisualTime,
+            );
 
             const activeIds = new Set(snapshot.units.map((unit) => unit.id));
             const activePropIds = new Set(
@@ -488,6 +501,17 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
               if (!activeIds.has(id)) {
                 fallback.destroy();
                 this.unitFallbacks.delete(id);
+              }
+            }
+            const activeShowcaseIds = new Set(
+              snapshot.units
+                .filter((unit) => unit.action === "loadoutShowcase")
+                .map((unit) => unit.id),
+            );
+            for (const [id, image] of this.showcaseImages) {
+              if (!activeShowcaseIds.has(id)) {
+                image.destroy();
+                this.showcaseImages.delete(id);
               }
             }
             const activeProjectileIds = new Set(
@@ -577,7 +601,116 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
 
             for (const unit of snapshot.units) {
               this.drawUnit(unit, snapshot.time + finishedVisualTime);
+              this.drawLoadoutShowcase(
+                unit,
+                snapshot.time + finishedVisualTime,
+              );
             }
+          }
+
+          private drawSniperGuides(
+            snapshot: BattleSnapshot,
+            time: number,
+          ): void {
+            const units = new Map(
+              snapshot.units.map((unit) => [unit.id, unit]),
+            );
+            for (const sniper of snapshot.units) {
+              if (
+                sniper.action !== "sniperAim" ||
+                !sniper.sniper?.targetId
+              ) {
+                continue;
+              }
+              const target = units.get(sniper.sniper.targetId);
+              if (!target || target.action === "dead") continue;
+              const aimDuration = Math.max(
+                0.001,
+                (sniper.sniper.fireAt ?? time) - sniper.actionStartedAt,
+              );
+              const progress = Math.max(
+                0,
+                Math.min(
+                  1,
+                  (time - sniper.actionStartedAt) / aimDuration,
+                ),
+              );
+              const pulse = 0.56 + Math.sin(time * 18) * 0.12;
+              const alpha = (0.32 + progress * 0.58) * pulse;
+              this.arenaGraphics.lineStyle(
+                2 + progress * 2,
+                0xff334f,
+                alpha,
+              );
+              this.arenaGraphics.lineBetween(
+                sniper.x,
+                sniper.y,
+                target.x,
+                target.y,
+              );
+              this.arenaGraphics.lineStyle(
+                3,
+                0xff5b68,
+                0.45 + progress * 0.45,
+              );
+              this.arenaGraphics.strokeCircle(
+                target.x,
+                target.y,
+                target.radius * (1.28 - progress * 0.18),
+              );
+              const tick = target.radius * 0.48;
+              this.arenaGraphics.lineBetween(
+                target.x - tick,
+                target.y,
+                target.x + tick,
+                target.y,
+              );
+              this.arenaGraphics.lineBetween(
+                target.x,
+                target.y - tick,
+                target.x,
+                target.y + tick,
+              );
+            }
+          }
+
+          private drawLoadoutShowcase(
+            unit: RuntimeUnit,
+            time: number,
+          ): void {
+            if (unit.action !== "loadoutShowcase") return;
+            const textureKey = "asset:police-6-loadout-showcase";
+            if (
+              !this.textures.exists(textureKey) ||
+              this.failedTextures.has(textureKey)
+            ) {
+              return;
+            }
+            let image = this.showcaseImages.get(unit.id);
+            if (!image) {
+              image = this.add.image(unit.x, unit.y, textureKey).setDepth(19);
+              this.showcaseImages.set(unit.id, image);
+            }
+            const duration = Math.max(
+              0.001,
+              unit.actionUntil - unit.actionStartedAt,
+            );
+            const progress = Math.max(
+              0,
+              Math.min(1, (time - unit.actionStartedAt) / duration),
+            );
+            const reveal = Math.min(1, progress / 0.16);
+            const fade = Math.min(1, (1 - progress) / 0.18);
+            const pulse = 1 + Math.sin(progress * Math.PI * 7) * 0.035;
+            const width = Math.max(330, unit.radius * 8.4);
+            image
+              .setVisible(true)
+              .setPosition(
+                unit.x,
+                unit.y - unit.radius * (1.15 + (1 - reveal) * 0.5),
+              )
+              .setDisplaySize(width * pulse, width * (2 / 3) * pulse)
+              .setAlpha(Math.min(reveal, fade) * 0.96);
           }
 
           private drawProps(props: BoardProp[], time: number) {
@@ -1747,7 +1880,7 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                 resourceHeight,
                 4,
               );
-              if (unit.policeStar === 5 && unit.gatling) {
+              if (unit.policeStar === 6 && unit.gatling) {
                 const magazineSize = Math.max(1, unit.gatling.magazineSize);
                 const ammoRatio = Math.max(
                   0,
@@ -1771,9 +1904,11 @@ export const ArenaCanvas = forwardRef<ArenaHandle, ArenaCanvasProps>(
                     ? manifest.policePromotion.experienceToStar2
                     : unit.policeStar === 2
                       ? manifest.policePromotion.experienceToStar3
-                      : unit.policeStar === 3
-                        ? manifest.policePromotion.experienceToStar4
-                        : manifest.policePromotion.experienceToStar5;
+                    : unit.policeStar === 3
+                      ? manifest.policePromotion.experienceToStar4
+                      : unit.policeStar === 4
+                        ? manifest.policePromotion.experienceToStar5
+                        : manifest.policePromotion.experienceToStar6;
                 const segmentCount = Math.max(1, Math.round(required));
                 const segmentGap = 2;
                 const innerWidth = healthWidth - 4;

@@ -7,6 +7,7 @@ export type EntranceStyle =
   | "swagger"
   | "tactical-rush"
   | "heavy-march"
+  | "sniper-infiltration"
   | "heavy-drop"
   | "standard";
 
@@ -47,7 +48,8 @@ export const entranceStyleFor = (
   if (definition.policeStar === 2) return "swagger";
   if (definition.policeStar === 3) return "tactical-rush";
   if (definition.policeStar === 4) return "heavy-march";
-  if (definition.policeStar === 5) return "heavy-drop";
+  if (definition.policeStar === 5) return "sniper-infiltration";
+  if (definition.policeStar === 6) return "heavy-drop";
   return "standard";
 };
 
@@ -159,6 +161,26 @@ export const entrancePresentationFor = (
       angle: facing * (5.5 * (1 - arrival) + step * 1.8),
       alpha: fadeIn,
       effectStrength: Math.max(stomp, (1 - progress) * 0.18),
+    };
+  }
+
+  if (style === "sniper-infiltration") {
+    const arrival = easeOutQuart(progress);
+    const lowStep = Math.abs(Math.sin(progress * Math.PI * 2.8));
+    const settle = smoothstep(
+      Math.max(0, (progress - 0.62) / 0.38),
+    );
+    return {
+      style,
+      xOffset: -facing * radius * 2.7 * (1 - arrival),
+      yOffset:
+        radius * (0.2 + lowStep * 0.07) * (1 - settle) -
+        radius * settle * 0.04,
+      scaleX: 0.9 + arrival * 0.1 + lowStep * 0.035,
+      scaleY: 0.82 + arrival * 0.18 - lowStep * 0.035,
+      angle: facing * (7 * (1 - arrival) - lowStep * 1.5),
+      alpha: fadeIn,
+      effectStrength: (1 - progress) * 0.52,
     };
   }
 

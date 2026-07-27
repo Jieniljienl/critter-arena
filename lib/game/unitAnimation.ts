@@ -35,6 +35,9 @@ export const actionClipName = (
     return "tunnelEmerge";
   }
   if (unit.action === "reloading") return "reload";
+  if (unit.action === "sniperAim") return "skill";
+  if (unit.action === "sniperFire") return "attack";
+  if (unit.action === "loadoutShowcase") return "idle";
   if (unit.action === "victory") return "victory";
   if (unit.action === "eating") return "eat";
   if (unit.action === "satisfied") return "eatComplete";

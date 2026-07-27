@@ -264,6 +264,243 @@ test("vertical-dominant movement remains uncommon across seeded headings", () =>
   assert.ok(units.some((unit) => unit.vx > 0));
 });
 
+test("mobile units periodically turn toward nearby hostiles without changing speed", () => {
+  const manifest = twoFighterManifest();
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 800;
+  board.height = 600;
+  board.unitScale = 1;
+  const sourceDefinition = definition(manifest, "panda-lazy");
+  const targetDefinition = definition(manifest, "mole");
+  sourceDefinition.pluginId = undefined;
+  sourceDefinition.speed = 100;
+  sourceDefinition.attack.range = -100;
+  sourceDefinition.attack.damage = 0;
+  targetDefinition.pluginId = undefined;
+  targetDefinition.speed = 0;
+  targetDefinition.attack.range = -100;
+  targetDefinition.attack.damage = 0;
+  manifest.setup.contestants = [
+    {
+      id: "contact-steering-source",
+      definitionId: sourceDefinition.id,
+      displayName: "接触引导测试者",
+      position: { x: 300, y: 180 },
+      direction: { x: 1, y: 0 },
+      color: "#f6d85f",
+      teamId: "red",
+    },
+    {
+      id: "contact-steering-target",
+      definitionId: targetDefinition.id,
+      displayName: "接触引导目标",
+      position: { x: 300, y: 500 },
+      direction: { x: -1, y: 0 },
+      color: "#ff8b62",
+      teamId: "blue",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  const initial = simulation.getSnapshot();
+  const initialSource = initial.units.find(
+    (unit) => unit.id === "contact-steering-source",
+  );
+  const initialTarget = initial.units.find(
+    (unit) => unit.id === "contact-steering-target",
+  );
+  assert.ok(initialSource);
+  assert.ok(initialTarget);
+  const initialDistance = Math.hypot(
+    initialTarget.x - initialSource.x,
+    initialTarget.y - initialSource.y,
+  );
+  const initialTargetDirection = {
+    x: (initialTarget.x - initialSource.x) / initialDistance,
+    y: (initialTarget.y - initialSource.y) / initialDistance,
+  };
+  const initialSpeed = Math.hypot(initialSource.vx, initialSource.vy);
+  const initialAlignment =
+    (initialSource.vx * initialTargetDirection.x +
+      initialSource.vy * initialTargetDirection.y) /
+    initialSpeed;
+
+  simulation.start();
+  runSteps(simulation, 60);
+  const steered = simulation.getSnapshot();
+  const steeredSource = steered.units.find(
+    (unit) => unit.id === "contact-steering-source",
+  );
+  const steeredTarget = steered.units.find(
+    (unit) => unit.id === "contact-steering-target",
+  );
+  assert.ok(steeredSource);
+  assert.ok(steeredTarget);
+  const steeredDistance = Math.hypot(
+    steeredTarget.x - steeredSource.x,
+    steeredTarget.y - steeredSource.y,
+  );
+  const steeredTargetDirection = {
+    x: (steeredTarget.x - steeredSource.x) / steeredDistance,
+    y: (steeredTarget.y - steeredSource.y) / steeredDistance,
+  };
+  const steeredSpeed = Math.hypot(steeredSource.vx, steeredSource.vy);
+  const steeredAlignment =
+    (steeredSource.vx * steeredTargetDirection.x +
+      steeredSource.vy * steeredTargetDirection.y) /
+    steeredSpeed;
+
+  assert.ok(steeredAlignment > initialAlignment + 0.08);
+  assert.ok(steeredDistance < initialDistance);
+  assert.ok(Math.abs(steeredSpeed - sourceDefinition.speed) < 1e-9);
+});
+
+test("contact steering ignores closer allies and unavailable hostile units", () => {
+  const manifest = createDefaultManifest();
+  manifest.setup.boardId = "stream-landscape";
+  const board = selectedBoard(manifest);
+  board.props = [];
+  board.width = 800;
+  board.height = 600;
+  board.unitScale = 1;
+  const sourceDefinition = definition(manifest, "panda-lazy");
+  const allyDefinition = definition(manifest, "mole");
+  const unavailableDefinition = definition(manifest, "police-1");
+  const targetDefinition = definition(manifest, "police-2");
+  for (const character of [
+    sourceDefinition,
+    allyDefinition,
+    unavailableDefinition,
+    targetDefinition,
+  ]) {
+    character.pluginId = undefined;
+    character.speed = 0;
+    character.attack.range = -100;
+    character.attack.damage = 0;
+  }
+  sourceDefinition.speed = 90;
+  manifest.setup.contestants = [
+    {
+      id: "filter-steering-source",
+      definitionId: sourceDefinition.id,
+      displayName: "过滤测试者",
+      position: { x: 300, y: 240 },
+      direction: { x: 1, y: 0 },
+      color: "#f6d85f",
+      teamId: "red",
+    },
+    {
+      id: "closer-steering-ally",
+      definitionId: allyDefinition.id,
+      displayName: "近处友军",
+      position: { x: 220, y: 240 },
+      direction: { x: 1, y: 0 },
+      color: "#ff8b62",
+      teamId: "red",
+    },
+    {
+      id: "unavailable-steering-hostile",
+      definitionId: unavailableDefinition.id,
+      displayName: "不可选中敌军",
+      position: { x: 450, y: 240 },
+      direction: { x: -1, y: 0 },
+      color: "#ff5f72",
+      teamId: "blue",
+    },
+    {
+      id: "valid-steering-hostile",
+      definitionId: targetDefinition.id,
+      displayName: "有效敌军",
+      position: { x: 300, y: 500 },
+      direction: { x: -1, y: 0 },
+      color: "#5aa7ff",
+      teamId: "green",
+    },
+  ];
+
+  const simulation = new BattleSimulation(manifest);
+  const unitHarness = simulation as unknown as {
+    units: Map<string, RuntimeUnit>;
+  };
+  const unavailable = unitHarness.units.get(
+    "unavailable-steering-hostile",
+  );
+  assert.ok(unavailable);
+  unavailable.targetable = false;
+  unavailable.action = "tunneling";
+  unavailable.actionUntil = 100;
+  const initialSource = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "filter-steering-source");
+  assert.ok(initialSource);
+  const initialVerticalShare =
+    initialSource.vy / Math.hypot(initialSource.vx, initialSource.vy);
+
+  simulation.start();
+  runSteps(simulation, 60);
+  const steeredSource = simulation
+    .getSnapshot()
+    .units.find((unit) => unit.id === "filter-steering-source");
+  assert.ok(steeredSource);
+  const steeredVerticalShare =
+    steeredSource.vy / Math.hypot(steeredSource.vx, steeredSource.vy);
+  assert.ok(
+    steeredVerticalShare > initialVerticalShare + 0.08,
+    "the source should turn toward the valid hostile below instead of the closer ally or unavailable hostile",
+  );
+});
+
+test("default formations meet the hostile contact timing target across 50 seeds", () => {
+  const firstContactTimes: number[] = [];
+  for (let seed = 1; seed <= 50; seed += 1) {
+    const manifest = createDefaultManifest();
+    manifest.setup.seed = seed;
+    const simulation = new BattleSimulation(manifest);
+    simulation.start();
+    let firstContactAt = Number.POSITIVE_INFINITY;
+    for (let frame = 0; frame < 600; frame += 1) {
+      simulation.step(1 / 60);
+      const units = simulation
+        .getSnapshot()
+        .units.filter((unit) => unit.hp > 0 && unit.targetable);
+      let contacted = false;
+      for (let leftIndex = 0; leftIndex < units.length; leftIndex += 1) {
+        for (
+          let rightIndex = leftIndex + 1;
+          rightIndex < units.length;
+          rightIndex += 1
+        ) {
+          const left = units[leftIndex];
+          const right = units[rightIndex];
+          if (
+            left.factionId !== right.factionId &&
+            Math.hypot(left.x - right.x, left.y - right.y) <=
+              left.radius + right.radius + 4
+          ) {
+            firstContactAt = (frame + 1) / 60;
+            contacted = true;
+            break;
+          }
+        }
+        if (contacted) break;
+      }
+      if (contacted) break;
+    }
+    firstContactTimes.push(firstContactAt);
+  }
+
+  const sorted = [...firstContactTimes].sort((left, right) => left - right);
+  const median = (sorted[24] + sorted[25]) / 2;
+  const percentile90 = sorted[Math.ceil(sorted.length * 0.9) - 1];
+  assert.ok(firstContactTimes.every((time) => time <= 10));
+  assert.ok(median <= 3 + 1e-9, `median contact time was ${median.toFixed(3)}s`);
+  assert.ok(
+    percentile90 <= 5.5 + 1e-9,
+    `P90 contact time was ${percentile90.toFixed(3)}s`,
+  );
+});
+
 test("mole tunneling uses travel art underground and attack art only after a successful ambush", () => {
   const unit: Pick<RuntimeUnit, "action" | "tunnelData"> = {
     action: "tunneling" as const,
@@ -642,7 +879,7 @@ test("an RPG that misses its moving target explodes on the board edge", () => {
       id: "moving-target",
       definitionId: "panda-lazy",
       displayName: "移动靶",
-      position: { x: 800, y: 300 },
+      position: { x: 800, y: 720 },
       direction: { x: 1, y: 0 },
       color: "#f6d85f",
     },

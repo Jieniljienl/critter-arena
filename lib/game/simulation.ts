@@ -58,6 +58,13 @@ const MAX_HORIZONTAL_DEVIATION_RADIANS = (65 * Math.PI) / 180;
 const HORIZONTAL_DEVIATION_BIAS_POWER = 3;
 const MELEE_CONTACT_TOLERANCE = 4;
 const MIN_MELEE_PURSUIT_BUFFER = 24;
+const HOSTILE_CONTACT_AWARENESS_RATIO = 0.6;
+const MIN_HOSTILE_CONTACT_AWARENESS = 360;
+const MAX_HOSTILE_CONTACT_AWARENESS = 560;
+const MIN_HOSTILE_STEER_INTERVAL = 0.55;
+const MAX_HOSTILE_STEER_INTERVAL = 0.9;
+const MIN_HOSTILE_STEER_BLEND = 0.22;
+const MAX_HOSTILE_STEER_BLEND = 0.38;
 export const UNIT_ENTRANCE_DURATION = 0.8;
 
 export type SimulationDiagnostics = {
@@ -89,6 +96,15 @@ const normalize = (value: Vec2): Vec2 => {
   const length = Math.hypot(value.x, value.y);
   if (length < EPSILON) return { x: 1, y: 0 };
   return { x: value.x / length, y: value.y / length };
+};
+
+const stableUnitFraction = (unitId: string, salt: number): number => {
+  let hash = (2_166_136_261 ^ salt) >>> 0;
+  for (let index = 0; index < unitId.length; index += 1) {
+    hash ^= unitId.charCodeAt(index);
+    hash = Math.imul(hash, 16_777_619) >>> 0;
+  }
+  return hash / 0x1_0000_0000;
 };
 
 const pointInPolygon = (point: Vec2, points: Vec2[]): boolean => {
@@ -161,6 +177,7 @@ export class BattleSimulation {
   private readonly eventLog: CombatEvent[] = [];
   private readonly killChains = new Map<string, { count: number; lastKillAt: number }>();
   private readonly spatialCells = new Map<string, RuntimeUnit[]>();
+  private readonly nextHostileSteerAt = new Map<string, number>();
   private orderedUnitsCache: RuntimeUnit[] = [];
   private orderedUnitsDirty = true;
   private maxUnitRadius = 0;
@@ -225,6 +242,7 @@ export class BattleSimulation {
     this.projectiles.clear();
     this.reservedBambooIds.clear();
     this.spatialCells.clear();
+    this.nextHostileSteerAt.clear();
     this.scheduledShots.length = 0;
     this.eventLog.length = 0;
     this.killChains.clear();
@@ -470,6 +488,13 @@ export class BattleSimulation {
       ) {
         this.updateMeleeStrikeContact(unit, definition, dt);
       } else if (!immobilized) {
+        if (
+          unit.action === "move" ||
+          unit.action === "hurt" ||
+          (unit.action === "attack" && definition.attack.mode !== "melee")
+        ) {
+          this.steerTowardNearbyHostile(unit, definition);
+        }
         this.moveUnit(unit, dt, definition.speed);
       }
 
@@ -1179,6 +1204,76 @@ export class BattleSimulation {
     const direction = this.createHorizontalBiasedDirection(unit.vx);
     unit.vx = direction.x * definition.speed;
     unit.vy = direction.y * definition.speed;
+  }
+
+  private steerTowardNearbyHostile(
+    unit: RuntimeUnit,
+    definition: CharacterDefinition,
+  ): void {
+    if (definition.speed <= EPSILON) return;
+
+    const cadence =
+      MIN_HOSTILE_STEER_INTERVAL +
+      stableUnitFraction(unit.id, 17) *
+        (MAX_HOSTILE_STEER_INTERVAL - MIN_HOSTILE_STEER_INTERVAL);
+    const scheduledAt = this.nextHostileSteerAt.get(unit.id);
+    if (scheduledAt === undefined) {
+      const initialAt =
+        unit.bornAt + stableUnitFraction(unit.id, 29) * cadence;
+      this.nextHostileSteerAt.set(unit.id, initialAt);
+      if (this.time + EPSILON < initialAt) return;
+    } else if (this.time + EPSILON < scheduledAt) {
+      return;
+    }
+    this.nextHostileSteerAt.set(unit.id, this.time + cadence);
+
+    const awareness = Math.max(
+      MIN_HOSTILE_CONTACT_AWARENESS,
+      Math.min(
+        MAX_HOSTILE_CONTACT_AWARENESS,
+        Math.min(this.board.width, this.board.height) *
+          HOSTILE_CONTACT_AWARENESS_RATIO,
+      ),
+    );
+    let nearest: RuntimeUnit | undefined;
+    let nearestGap = Number.POSITIVE_INFINITY;
+    for (const candidate of this.validTargets(unit, awareness)) {
+      const gap = this.meleeSurfaceGap(unit, candidate);
+      if (
+        gap < nearestGap - EPSILON ||
+        (Math.abs(gap - nearestGap) <= EPSILON &&
+          (!nearest || candidate.id.localeCompare(nearest.id) < 0))
+      ) {
+        nearest = candidate;
+        nearestGap = gap;
+      }
+    }
+    if (!nearest) return;
+
+    const currentDirection = normalize({ x: unit.vx, y: unit.vy });
+    const hostileDirection = normalize({
+      x: nearest.x - unit.x,
+      y: nearest.y - unit.y,
+    });
+    const proximity = 1 - Math.min(1, nearestGap / awareness);
+    const blend =
+      MIN_HOSTILE_STEER_BLEND +
+      proximity * (MAX_HOSTILE_STEER_BLEND - MIN_HOSTILE_STEER_BLEND);
+    const currentAngle = Math.atan2(
+      currentDirection.y,
+      currentDirection.x,
+    );
+    const hostileAngle = Math.atan2(
+      hostileDirection.y,
+      hostileDirection.x,
+    );
+    const angleDifference = Math.atan2(
+      Math.sin(hostileAngle - currentAngle),
+      Math.cos(hostileAngle - currentAngle),
+    );
+    const steeredAngle = currentAngle + angleDifference * blend;
+    unit.vx = Math.cos(steeredAngle) * definition.speed;
+    unit.vy = Math.sin(steeredAngle) * definition.speed;
   }
 
   private moveUnit(unit: RuntimeUnit, dt: number, speed: number): void {
@@ -2323,7 +2418,10 @@ export class BattleSimulation {
 
   private deleteUnit(id: string): boolean {
     const deleted = this.units.delete(id);
-    if (deleted) this.orderedUnitsDirty = true;
+    if (deleted) {
+      this.nextHostileSteerAt.delete(id);
+      this.orderedUnitsDirty = true;
+    }
     return deleted;
   }
 

@@ -1,5 +1,9 @@
 import { SeededRandom } from "./rng";
 import {
+  abilitySkillVoiceId,
+  SKILL_VOICE_IDS,
+} from "./skillVoice";
+import {
   type AbilityAction,
   type AbilityModule,
   type BattleSnapshot,
@@ -623,7 +627,13 @@ export class BattleSimulation {
     unit.actionUntil = this.time + (parameters?.eatDuration ?? 5);
     unit.reservedBambooId = bamboo.id;
     this.reservedBambooIds.add(bamboo.id);
-    this.emit("skill", `${unit.name} 抱住竹子，开始猛吃`, unit, undefined, "chew");
+    this.emitSkill(
+      `${unit.name} 抱住竹子，开始猛吃`,
+      unit,
+      undefined,
+      "chew",
+      SKILL_VOICE_IDS.pandaEat,
+    );
   }
 
   private updatePandaBambooRespawn(): void {
@@ -707,12 +717,12 @@ export class BattleSimulation {
       this.props.push(bamboo);
       this.bambooProps.push(bamboo);
     }
-    this.emit(
-      "skill",
+    this.emitSkill(
       `${pandas[0].name} 在场，地图补充了一份竹子`,
       pandas[0],
       undefined,
       "heal",
+      SKILL_VOICE_IDS.pandaBamboo,
     );
   }
 
@@ -785,14 +795,14 @@ export class BattleSimulation {
             range: parameters?.ambushRange ?? definition.attack.range,
             ambush: true,
           });
-          this.emit(
-            "skill",
+          this.emitSkill(
             selection.hole.id === currentHole.id
               ? `${unit.name} 钻入脚下洞口，准备从同一洞口突袭`
               : `${unit.name} 潜入地道，准备从另一处洞口偷袭`,
             unit,
             selection.target,
             "tunnel",
+            SKILL_VOICE_IDS.moleAmbush,
           );
           return;
         }
@@ -833,7 +843,13 @@ export class BattleSimulation {
             arrivalAt,
             destinationHoleId: destination.id,
           };
-          this.emit("skill", `${unit.name} 随机钻向另一处洞口`, unit, undefined, "tunnel");
+          this.emitSkill(
+            `${unit.name} 随机钻向另一处洞口`,
+            unit,
+            undefined,
+            "tunnel",
+            SKILL_VOICE_IDS.moleTunnel,
+          );
           return;
         }
       }
@@ -849,7 +865,13 @@ export class BattleSimulation {
     unit.actionStartedAt = this.time;
     unit.actionUntil = this.time + (parameters?.digDuration ?? 0.6);
     unit.digPosition = { x: unit.x, y: unit.y };
-    this.emit("skill", `${unit.name} 开始挖洞`, unit, undefined, "dig");
+    this.emitSkill(
+      `${unit.name} 开始挖洞`,
+      unit,
+      undefined,
+      "dig",
+      SKILL_VOICE_IDS.moleDig,
+    );
   }
 
   private updateMoleTunnelPosition(unit: RuntimeUnit): void {
@@ -938,12 +960,12 @@ export class BattleSimulation {
       gatling.shotsRemaining = Math.min(shotCount, gatling.ammoRemaining);
       gatling.nextShotIn = Math.max(0, attack.windup);
       gatling.nextRoundIn = Math.max(0.1, attack.cooldown);
-      this.emit(
-        "skill",
+      this.emitSkill(
         `${unit.name} 锁定 ${target.name} 的方向，开始一轮 ${gatling.shotsRemaining} 发连射`,
         unit,
         target,
         "gatling",
+        SKILL_VOICE_IDS.policeGatling,
       );
     }
 
@@ -1009,12 +1031,12 @@ export class BattleSimulation {
         0.05,
         definition.skillParameters?.police?.gatlingReloadDuration ?? 3,
       );
-    this.emit(
-      "skill",
+    this.emitSkill(
       `${unit.name} 弹仓打空，开始更换加特林弹链`,
       unit,
       undefined,
       "reload",
+      SKILL_VOICE_IDS.policeReload,
     );
   }
 
@@ -1935,7 +1957,13 @@ export class BattleSimulation {
         target.action = "kick";
         target.actionStartedAt = this.time;
         target.actionUntil = this.time + kickDuration;
-        this.emit("skill", `${target.name} 一脚踹开 ${attacker.name}`, target, attacker, "kick");
+        this.emitSkill(
+          `${target.name} 一脚踹开 ${attacker.name}`,
+          target,
+          attacker,
+          "kick",
+          SKILL_VOICE_IDS.policeKick,
+        );
       }
     }
   }
@@ -1974,6 +2002,10 @@ export class BattleSimulation {
       `${owner.name} 是保护动物：遭到攻击后，一名人类警察赶来保护`,
       owner,
       unit,
+      undefined,
+      undefined,
+      undefined,
+      SKILL_VOICE_IDS.pandaGuard,
     );
     return unit;
   }
@@ -2087,12 +2119,12 @@ export class BattleSimulation {
         undefined,
         `升星成功！${nextStar}星警察登场`,
       );
-      this.emit(
-        "skill",
+      this.emitSkill(
         `${merged.name} 触发碰撞升星`,
         merged,
         undefined,
         "merge",
+        SKILL_VOICE_IDS.policePromotion,
       );
       merges += 1;
       this.rebuildSpatialIndex();
@@ -2285,12 +2317,12 @@ export class BattleSimulation {
       undefined,
       `${source.name}完成战功升星，晋升为${nextStar}星警察`,
     );
-    this.emit(
-      "skill",
+    this.emitSkill(
       `${source.name} 触发战功升星`,
       source,
       undefined,
       "merge",
+      SKILL_VOICE_IDS.policePromotion,
     );
   }
 
@@ -2594,7 +2626,13 @@ export class BattleSimulation {
     unit.moduleCooldowns[ability.id] =
       this.time +
       (ability.trigger === "interval" ? ability.interval ?? ability.cooldown : ability.cooldown);
-    this.emit("skill", `${unit.name} 触发技能「${ability.name}」`, unit);
+    this.emitSkill(
+      `${unit.name} 触发技能「${ability.name}」`,
+      unit,
+      undefined,
+      undefined,
+      abilitySkillVoiceId(ability.id),
+    );
   }
 
   private executeModuleAction(unit: RuntimeUnit, action: AbilityAction): void {
@@ -2658,6 +2696,25 @@ export class BattleSimulation {
     }
   }
 
+  private emitSkill(
+    message: string,
+    unit: RuntimeUnit,
+    target: RuntimeUnit | undefined,
+    sound: SynthPreset | undefined,
+    skillVoiceId: string,
+  ): void {
+    this.emit(
+      "skill",
+      message,
+      unit,
+      target,
+      sound,
+      undefined,
+      undefined,
+      skillVoiceId,
+    );
+  }
+
   private emit(
     type: CombatEvent["type"],
     message: string,
@@ -2666,6 +2723,7 @@ export class BattleSimulation {
     sound?: SynthPreset,
     amount?: number,
     announcement?: string,
+    skillVoiceId?: string,
   ): void {
     const essential =
       type === "death" || type === "victory" || type === "merge" || Boolean(announcement);
@@ -2688,6 +2746,7 @@ export class BattleSimulation {
       unitDefinitionId: unit?.definitionId,
       targetDefinitionId: target?.definitionId,
       sound,
+      skillVoiceId,
       amount,
       announcement,
     });

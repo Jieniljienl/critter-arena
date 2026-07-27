@@ -18,6 +18,11 @@ import {
   type BuiltInSkillParameterGroup,
   type BuiltInSkillParameterSource,
 } from "@/lib/game/skillPresentation";
+import {
+  abilitySkillVoiceId,
+  skillVoiceDescriptorsFor,
+  upgradeSkillVoiceProfiles,
+} from "@/lib/game/skillVoice";
 import { fileToDataUrl } from "@/lib/game/storage";
 import {
   type AbilityAction,
@@ -26,6 +31,7 @@ import {
   type AssetRef,
   type CharacterDefinition,
   type ProjectManifest,
+  type SkillVoiceProfile,
   type SoundCue,
   type SynthPreset,
 } from "@/lib/game/types";
@@ -126,6 +132,7 @@ export function CharacterEditor({
     [manifest.assets],
   );
   const builtInSkillModules = builtInSkillModulesFor(selected);
+  const skillVoiceDescriptors = skillVoiceDescriptorsFor(selected);
 
   const updateCharacter = (update: (character: CharacterDefinition) => void) => {
     const next = structuredClone(manifest);
@@ -331,7 +338,13 @@ export function CharacterEditor({
               cooldown: 4,
               actions: [{ kind: "spawnUnit", definitionId: "police-1", count: 1 }],
             };
-    updateCharacter((character) => character.abilities.push(abilityModule));
+    updateCharacter((character) => {
+      character.abilities.push(abilityModule);
+      const skillCue = character.sounds.skill;
+      if (skillCue?.source === "speech") {
+        skillCue.skillVoices = upgradeSkillVoiceProfiles(character, skillCue);
+      }
+    });
   };
 
   const updateSkillParameter = (
@@ -410,6 +423,15 @@ export function CharacterEditor({
                 : skillPhrases(character),
               speechRate: existing?.speechRate ?? 1.08,
               speechPitch: existing?.speechPitch ?? (character.pluginId === "mole" ? 1.35 : 1),
+              skillVoices: upgradeSkillVoiceProfiles(
+                character,
+                existing ?? {
+                  id: `${character.id}-${slot}-speech`,
+                  source: "speech",
+                  phrases: skillPhrases(character),
+                  volume: 0.78,
+                },
+              ),
               volume: existing?.volume ?? 0.78,
               maxVoices: 2,
             }
@@ -428,6 +450,19 @@ export function CharacterEditor({
     updateCharacter((character) => {
       const cue = character.sounds[slot];
       if (cue) update(cue);
+    });
+  };
+
+  const updateSkillVoice = (
+    skillVoiceId: string,
+    update: (profile: SkillVoiceProfile) => void,
+  ) => {
+    updateCharacter((character) => {
+      const cue = character.sounds.skill;
+      if (cue?.source !== "speech") return;
+      cue.skillVoices = upgradeSkillVoiceProfiles(character, cue);
+      const profile = cue.skillVoices[skillVoiceId];
+      if (profile) update(profile);
     });
   };
 
@@ -1004,7 +1039,7 @@ export function CharacterEditor({
               <span>动作音效</span>
             </div>
             <p className="editor-card-note">
-              只有技能会播放角色台词；普攻、命中、受伤和死亡使用合成音或上传音频，避免播报干扰战况。
+              每个技能按自己的特效固定播放一条专属台词，不再随机抽取；普攻、命中、受伤和死亡仍使用合成音或上传音频。
             </p>
             <div className="sound-list">
               {soundSlots.map(([slot, label]) => {
@@ -1051,54 +1086,84 @@ export function CharacterEditor({
                       </label>
                     </div>
                     {cue?.source === "speech" && (
-                      <div className="sound-detail-grid speech-grid">
-                        <label>
-                          候选台词（每行一句，播放时随机）
-                          <textarea
-                            value={(cue.phrases ?? []).join("\n")}
-                            onChange={(event) =>
-                              updateSound(slot, (sound) => {
-                                sound.phrases = event.target.value
-                                  .split("\n")
-                                  .map((phrase) => phrase.trim())
-                                  .filter(Boolean);
-                                sound.phrasesBySound = undefined;
-                              })
-                            }
-                          />
-                        </label>
-                        <label>
-                          语速
-                          <input
-                            type="number"
-                            min={0.5}
-                            max={2}
-                            step={0.05}
-                            value={cue.speechRate ?? 1}
-                            onChange={(event) =>
-                              updateSound(
-                                slot,
-                                (sound) => (sound.speechRate = Number(event.target.value)),
-                              )
-                            }
-                          />
-                        </label>
-                        <label>
-                          音调
-                          <input
-                            type="number"
-                            min={0.5}
-                            max={2}
-                            step={0.05}
-                            value={cue.speechPitch ?? 1}
-                            onChange={(event) =>
-                              updateSound(
-                                slot,
-                                (sound) => (sound.speechPitch = Number(event.target.value)),
-                              )
-                            }
-                          />
-                        </label>
+                      <div className="skill-voice-editor">
+                        <div className="skill-voice-editor-heading">
+                          <strong>专属技能语音</strong>
+                          <span>每个技能固定一句；留空可关闭该技能语音</span>
+                        </div>
+                        {skillVoiceDescriptors.length === 0 ? (
+                          <div className="empty-inline">
+                            当前角色还没有可触发的技能，添加扩展技能后即可配置专属语音。
+                          </div>
+                        ) : (
+                          <div className="skill-voice-list">
+                            {skillVoiceDescriptors.map((descriptor) => {
+                              const voice =
+                                cue.skillVoices?.[descriptor.id] ??
+                                descriptor.defaultProfile;
+                              return (
+                                <div className="skill-voice-row" key={descriptor.id}>
+                                  <div className="skill-voice-title">
+                                    <strong>{descriptor.label}</strong>
+                                    <small>{descriptor.effect}</small>
+                                  </div>
+                                  <label className="skill-voice-phrase">
+                                    专属台词
+                                    <input
+                                      value={voice.phrase}
+                                      placeholder="留空则不播放"
+                                      onChange={(event) =>
+                                        updateSkillVoice(
+                                          descriptor.id,
+                                          (profile) =>
+                                            (profile.phrase = event.target.value),
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    语速
+                                    <input
+                                      type="number"
+                                      min={0.5}
+                                      max={2}
+                                      step={0.05}
+                                      value={voice.speechRate ?? cue.speechRate ?? 1}
+                                      onChange={(event) =>
+                                        updateSkillVoice(
+                                          descriptor.id,
+                                          (profile) =>
+                                            (profile.speechRate = Number(
+                                              event.target.value,
+                                            )),
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                  <label>
+                                    音调
+                                    <input
+                                      type="number"
+                                      min={0.5}
+                                      max={2}
+                                      step={0.05}
+                                      value={voice.speechPitch ?? cue.speechPitch ?? 1}
+                                      onChange={(event) =>
+                                        updateSkillVoice(
+                                          descriptor.id,
+                                          (profile) =>
+                                            (profile.speechPitch = Number(
+                                              event.target.value,
+                                            )),
+                                        )
+                                      }
+                                    />
+                                  </label>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        )}
                       </div>
                     )}
                     {cue?.source === "synth" && (
@@ -1276,12 +1341,16 @@ export function CharacterEditor({
                         className="icon-button danger"
                         title="删除技能"
                         onClick={() =>
-                          updateCharacter(
-                            (character) =>
-                              (character.abilities = character.abilities.filter(
-                                (candidate) => candidate.id !== ability.id,
-                              )),
-                          )
+                          updateCharacter((character) => {
+                            character.abilities = character.abilities.filter(
+                              (candidate) => candidate.id !== ability.id,
+                            );
+                            const skillVoices =
+                              character.sounds.skill?.skillVoices;
+                            if (skillVoices) {
+                              delete skillVoices[abilitySkillVoiceId(ability.id)];
+                            }
+                          })
                         }
                       >
                         <Trash2 size={15} />

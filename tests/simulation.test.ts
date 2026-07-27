@@ -12,7 +12,14 @@ import {
   circleOverlapsRegion,
 } from "../lib/game/simulation";
 import { actionClipName } from "../lib/game/unitAnimation";
-import { isSkillVoiceEvent } from "../lib/game/audio";
+import {
+  isSkillVoiceEvent,
+  resolveSkillVoice,
+} from "../lib/game/audio";
+import {
+  SKILL_VOICE_IDS,
+  skillVoiceDescriptorsFor,
+} from "../lib/game/skillVoice";
 import type {
   BoardDefinition,
   CharacterDefinition,
@@ -702,7 +709,10 @@ test("police only merge on collision and can chain to five stars", () => {
   assert.equal(fiveStarProtectionPolice.sustainsFaction, true);
   assert.ok(
     chainSnapshot.events.some(
-      (event) => event.type === "spawn" && event.message.includes("人类警察赶来保护"),
+      (event) =>
+        event.type === "spawn" &&
+        event.message.includes("人类警察赶来保护") &&
+        event.skillVoiceId === SKILL_VOICE_IDS.pandaGuard,
     ),
   );
 });
@@ -2648,11 +2658,31 @@ test("extreme interval spawn skills cannot grow the unit pool without bounds", (
   assert.equal(simulation.getSnapshot().status, "running");
 });
 
-test("spoken voice is restricted to skill events and every default role has skill lines", () => {
-  assert.equal(isSkillVoiceEvent({ type: "skill" }), true);
-  assert.equal(isSkillVoiceEvent({ type: "spawn" }), true);
+test("spoken voice is restricted to tagged skill events and every default skill has one line", () => {
+  assert.equal(
+    isSkillVoiceEvent({
+      type: "skill",
+      skillVoiceId: SKILL_VOICE_IDS.moleDig,
+    }),
+    true,
+  );
+  assert.equal(
+    isSkillVoiceEvent({
+      type: "spawn",
+      skillVoiceId: SKILL_VOICE_IDS.pandaGuard,
+    }),
+    true,
+  );
+  assert.equal(isSkillVoiceEvent({ type: "skill" }), false);
+  assert.equal(isSkillVoiceEvent({ type: "spawn" }), false);
   for (const type of ["attack", "damage", "death", "merge", "victory"] as const) {
-    assert.equal(isSkillVoiceEvent({ type }), false);
+    assert.equal(
+      isSkillVoiceEvent({
+        type,
+        skillVoiceId: SKILL_VOICE_IDS.moleDig,
+      }),
+      false,
+    );
   }
 
   const manifest = createDefaultManifest();
@@ -2662,6 +2692,24 @@ test("spoken voice is restricted to skill events and every default role has skil
       "speech",
       `${character.name} should have spoken skill lines`,
     );
+    const cue = character.sounds.skill!;
+    const descriptors = skillVoiceDescriptorsFor(character);
+    assert.ok(descriptors.length > 0, `${character.name} should expose skill voices`);
+    for (const descriptor of descriptors) {
+      const configured = cue.skillVoices?.[descriptor.id];
+      assert.ok(
+        configured?.phrase.trim(),
+        `${character.name} ${descriptor.label} should have one dedicated line`,
+      );
+      assert.equal(
+        resolveSkillVoice(cue, {
+          type: "skill",
+          skillVoiceId: descriptor.id,
+          sound: descriptor.legacySound,
+        })?.phrase,
+        configured?.phrase.trim(),
+      );
+    }
     for (const slot of ["attack", "hit", "hurt", "death"] as const) {
       assert.notEqual(
         character.sounds[slot]?.source,
@@ -2670,6 +2718,99 @@ test("spoken voice is restricted to skill events and every default role has skil
       );
     }
   }
+});
+
+test("skill voice resolution is deterministic and never samples candidate arrays", () => {
+  const cue = {
+    id: "voice-test",
+    source: "speech" as const,
+    phrases: ["默认第一句", "默认第二句"],
+    phrasesBySound: {
+      dig: ["旧版挖洞第一句", "旧版挖洞第二句"],
+    },
+    skillVoices: {
+      [SKILL_VOICE_IDS.moleDig]: {
+        phrase: "挖洞专属台词",
+        speechRate: 1.15,
+        speechPitch: 1.22,
+      },
+    },
+    speechRate: 0.9,
+    speechPitch: 0.8,
+    volume: 0.75,
+  };
+  const event = {
+    type: "skill" as const,
+    skillVoiceId: SKILL_VOICE_IDS.moleDig,
+    sound: "dig" as const,
+  };
+  const expected = {
+    phrase: "挖洞专属台词",
+    speechRate: 1.15,
+    speechPitch: 1.22,
+  };
+  for (let index = 0; index < 20; index += 1) {
+    assert.deepEqual(resolveSkillVoice(cue, event), expected);
+  }
+
+  const legacyCue = {
+    ...cue,
+    skillVoices: undefined,
+  };
+  assert.equal(
+    resolveSkillVoice(legacyCue, event)?.phrase,
+    "旧版挖洞第一句",
+  );
+  assert.equal(
+    resolveSkillVoice(
+      {
+        ...legacyCue,
+        phrasesBySound: undefined,
+      },
+      event,
+    )?.phrase,
+    "默认第一句",
+  );
+  assert.equal(
+    resolveSkillVoice(cue, {
+      type: "skill",
+      sound: "dig",
+    }),
+    undefined,
+  );
+});
+
+test("legacy candidate lines migrate once into stable per-skill voice profiles", () => {
+  const manifest = createDefaultManifest();
+  const mole = definition(manifest, "mole");
+  const cue = mole.sounds.skill!;
+  cue.skillVoices = undefined;
+  cue.phrases = ["旧版通用第一句", "旧版通用第二句"];
+  cue.phrasesBySound = {
+    dig: ["旧版挖洞专属", "不应随机抽到"],
+    tunnel: ["旧版偷袭专属", "旧版穿行专属"],
+  };
+
+  const upgraded = upgradeManifest(manifest);
+  const profiles = definition(upgraded, "mole").sounds.skill?.skillVoices;
+  assert.equal(profiles?.[SKILL_VOICE_IDS.moleDig]?.phrase, "旧版挖洞专属");
+  assert.equal(
+    profiles?.[SKILL_VOICE_IDS.moleAmbush]?.phrase,
+    "旧版偷袭专属",
+  );
+  assert.equal(
+    profiles?.[SKILL_VOICE_IDS.moleTunnel]?.phrase,
+    "旧版穿行专属",
+  );
+
+  profiles![SKILL_VOICE_IDS.moleDig].phrase = "用户修改后的挖洞语音";
+  const upgradedAgain = upgradeManifest(upgraded);
+  assert.equal(
+    definition(upgradedAgain, "mole").sounds.skill?.skillVoices?.[
+      SKILL_VOICE_IDS.moleDig
+    ]?.phrase,
+    "用户修改后的挖洞语音",
+  );
 });
 
 test("default settlement and rescue/reload actions use distinct animation frames", () => {
@@ -2764,7 +2905,8 @@ test("a five-star officer spends its magazine, performs a voiced reload skill, a
       (event) =>
         event.type === "skill" &&
         event.unitId === reloading.id &&
-        event.sound === "reload",
+        event.sound === "reload" &&
+        event.skillVoiceId === SKILL_VOICE_IDS.policeReload,
     ),
   );
 

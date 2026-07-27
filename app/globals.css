@@ -2570,6 +2570,84 @@ textarea:focus-visible {
   grid-template-columns: minmax(0, 1fr) 78px 78px;
 }
 
+.skill-voice-editor {
+  display: grid;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.skill-voice-editor-heading {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.skill-voice-editor-heading strong {
+  font-size: 10px;
+}
+
+.skill-voice-editor-heading span {
+  color: var(--quiet);
+  font-size: 8px;
+}
+
+.skill-voice-list {
+  display: grid;
+  gap: 7px;
+}
+
+.skill-voice-row {
+  display: grid;
+  grid-template-columns: minmax(120px, 0.7fr) minmax(210px, 1.6fr) 72px 72px;
+  align-items: end;
+  gap: 7px;
+  padding: 8px;
+  border: 1px solid rgba(210, 255, 87, 0.12);
+  border-radius: 9px;
+  background: rgba(210, 255, 87, 0.025);
+}
+
+.skill-voice-title {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  align-self: center;
+  gap: 3px;
+}
+
+.skill-voice-title strong {
+  font-size: 10px;
+}
+
+.skill-voice-title small {
+  overflow: hidden;
+  color: var(--quiet);
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.skill-voice-row label {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+  color: var(--quiet);
+  font-size: 8px;
+  font-weight: 700;
+}
+
+.skill-voice-row input {
+  width: 100%;
+  min-width: 0;
+  height: 32px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #121117;
+  color: var(--text);
+}
+
 .sound-detail-grid label,
 .ability-editor-fields label {
   display: grid;
@@ -3617,8 +3695,15 @@ textarea:focus-visible {
   }
 
   .sound-detail-grid.speech-grid,
-  .ability-editor-fields {
+  .ability-editor-fields,
+  .skill-voice-row {
     grid-template-columns: 1fr;
+  }
+
+  .skill-voice-editor-heading {
+    align-items: flex-start;
+    flex-direction: column;
+    gap: 3px;
   }
 
   .skill-module-grid,

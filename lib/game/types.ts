@@ -52,13 +52,21 @@ export type SoundCue = {
   preset?: SynthPreset;
   assetId?: string;
   phrases?: string[];
-  /** 技能语音可按本次技能音效选择更贴合的台词。 */
+  /** 旧版按音效区分的候选台词；读取时仅使用第一句，不再随机播放。 */
   phrasesBySound?: Partial<Record<SynthPreset, string[]>>;
+  /** 每个技能唯一对应的台词和演绎参数。 */
+  skillVoices?: Record<string, SkillVoiceProfile>;
   speechRate?: number;
   speechPitch?: number;
   volume: number;
   pitchVariance?: number;
   maxVoices?: number;
+};
+
+export type SkillVoiceProfile = {
+  phrase: string;
+  speechRate?: number;
+  speechPitch?: number;
 };
 
 export type BackgroundMusicConfig = {
@@ -433,6 +441,8 @@ export type CombatEvent = {
   unitDefinitionId?: string;
   targetDefinitionId?: string;
   sound?: SynthPreset;
+  /** 仅真实技能施放事件携带，用于精确选择专属技能语音。 */
+  skillVoiceId?: string;
   amount?: number;
   announcement?: string;
 };

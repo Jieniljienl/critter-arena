@@ -10,8 +10,52 @@ import type {
 type OscillatorShape = OscillatorType;
 
 export const isSkillVoiceEvent = (
-  event: Pick<CombatEvent, "type">,
-): boolean => event.type === "skill" || event.type === "spawn";
+  event: Pick<CombatEvent, "type" | "skillVoiceId">,
+): boolean =>
+  Boolean(event.skillVoiceId) &&
+  (event.type === "skill" || event.type === "spawn");
+
+export type ResolvedSkillVoice = {
+  phrase: string;
+  speechRate: number;
+  speechPitch: number;
+};
+
+export const resolveSkillVoice = (
+  cue: SoundCue,
+  event: Pick<CombatEvent, "type" | "skillVoiceId" | "sound">,
+): ResolvedSkillVoice | undefined => {
+  if (cue.source !== "speech" || !isSkillVoiceEvent(event)) return undefined;
+  const skillVoiceId = event.skillVoiceId!;
+  const hasDedicatedProfile = Boolean(
+    cue.skillVoices &&
+      Object.prototype.hasOwnProperty.call(cue.skillVoices, skillVoiceId),
+  );
+  const dedicated = cue.skillVoices?.[skillVoiceId];
+  if (hasDedicatedProfile) {
+    const phrase = dedicated?.phrase.trim();
+    if (!phrase) return undefined;
+    return {
+      phrase,
+      speechRate: dedicated.speechRate ?? cue.speechRate ?? 1,
+      speechPitch: dedicated.speechPitch ?? cue.speechPitch ?? 1,
+    };
+  }
+
+  const legacyPhrase = (
+    (event.sound ? cue.phrasesBySound?.[event.sound] : undefined) ??
+    cue.phrases ??
+    []
+  )
+    .map((phrase) => phrase.trim())
+    .find(Boolean);
+  if (!legacyPhrase) return undefined;
+  return {
+    phrase: legacyPhrase,
+    speechRate: cue.speechRate ?? 1,
+    speechPitch: cue.speechPitch ?? 1,
+  };
+};
 
 export class ArenaAudio {
   private context?: AudioContext;
@@ -132,7 +176,7 @@ export class ArenaAudio {
         : undefined;
     if ((!event.sound && !skillSpeechCue) || this.muted) return;
     await this.unlock();
-    if (skillSpeechCue) this.playSpeech(skillSpeechCue, event.sound);
+    if (skillSpeechCue) this.playSpeech(skillSpeechCue, event);
     if (!event.sound) return;
 
     const now = performance.now();
@@ -223,7 +267,7 @@ export class ArenaAudio {
     void audio.play().catch(() => undefined);
   }
 
-  private playSpeech(cue: SoundCue, sound?: SoundCue["preset"]): void {
+  private playSpeech(cue: SoundCue, event: CombatEvent): void {
     if (
       this.muted ||
       !this.skillVoicesEnabled ||
@@ -233,19 +277,13 @@ export class ArenaAudio {
     ) {
       return;
     }
-    const phrases = (
-      (sound ? cue.phrasesBySound?.[sound] : undefined) ??
-      cue.phrases ??
-      []
-    ).filter(Boolean);
-    if (!phrases.length) return;
+    const resolvedVoice = resolveSkillVoice(cue, event);
+    if (!resolvedVoice) return;
     this.lastSpeechAt = performance.now();
-    const utterance = new SpeechSynthesisUtterance(
-      phrases[Math.floor(Math.random() * phrases.length)],
-    );
+    const utterance = new SpeechSynthesisUtterance(resolvedVoice.phrase);
     utterance.lang = "zh-CN";
-    utterance.rate = cue.speechRate ?? 1;
-    utterance.pitch = cue.speechPitch ?? 1;
+    utterance.rate = resolvedVoice.speechRate;
+    utterance.pitch = resolvedVoice.speechPitch;
     utterance.volume = Math.min(
       1,
       this.volume * this.skillVoiceVolume * cue.volume,

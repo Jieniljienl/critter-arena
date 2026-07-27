@@ -12,6 +12,10 @@ import {
   type SoundCue,
   type SynthPreset,
 } from "./types";
+import {
+  defaultSkillVoiceProfilesFor,
+  upgradeSkillVoiceProfiles,
+} from "./skillVoice";
 
 const synth = (id: string, preset: SynthPreset, volume = 0.75): SoundCue => ({
   id,
@@ -327,6 +331,11 @@ const policeDefinition = (
         ...speech(`police-${star}-skill`, skillLines[star], 0.76),
         speechPitch: [1, 1.08, 1, 0.94, 0.86, 0.72][star],
         speechRate: star === 5 ? 0.92 : 1.04,
+        skillVoices: defaultSkillVoiceProfilesFor({
+          pluginId: "police",
+          policeStar: star,
+          abilities: [],
+        }),
         phrasesBySound:
           star === 5
             ? {
@@ -419,6 +428,11 @@ export const defaultCharacters: CharacterDefinition[] = [
         ),
         speechPitch: 0.86,
         speechRate: 0.94,
+        skillVoices: defaultSkillVoiceProfilesFor({
+          pluginId: "panda",
+          policeStar: undefined,
+          abilities: [],
+        }),
         phrasesBySound: {
           chew: [
             "竹子管够，我这把先躺赢。",
@@ -480,6 +494,11 @@ export const defaultCharacters: CharacterDefinition[] = [
         ),
         speechPitch: 1.24,
         speechRate: 1.12,
+        skillVoices: defaultSkillVoiceProfilesFor({
+          pluginId: "mole",
+          policeStar: undefined,
+          abilities: [],
+        }),
         phrasesBySound: {
           dig: ["地图没有路，我自己打个洞。", "开工挖地道，路过别催进度。"],
           tunnel: ["你在地上秀，我从地下溜。", "先下线一秒，换个洞口登录。"],
@@ -1297,6 +1316,10 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         character.sounds[slot] ??= structuredClone(defaultCue);
       }
     }
+    const skillCue = character.sounds.skill;
+    if (skillCue?.source === "speech") {
+      skillCue.skillVoices = upgradeSkillVoiceProfiles(character, skillCue);
+    }
     for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {
       character.animations[clipId] ??= structuredClone(animation);
     }
@@ -1340,6 +1363,10 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     if (character.attack.projectileKind === "rocket") {
       character.attack.projectileBoostAfter ??= 1.5;
       character.attack.projectileBoostMultiplier ??= 1.5;
+    }
+    const skillCue = character.sounds.skill;
+    if (skillCue?.source === "speech") {
+      skillCue.skillVoices = upgradeSkillVoiceProfiles(character, skillCue);
     }
   }
   for (const defaultBoardDefinition of defaults.boards) {

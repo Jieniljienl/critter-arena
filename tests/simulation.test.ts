@@ -1621,6 +1621,32 @@ test("legacy and custom mole definitions gain the default tunnel speed multiplie
   );
 });
 
+test("default melee attacks use a slightly wider contact range and recent defaults migrate", () => {
+  const manifest = createDefaultManifest();
+  assert.equal(definition(manifest, "panda-lazy").attack.range, 68);
+  assert.equal(definition(manifest, "mole").attack.range, 55);
+  assert.equal(definition(manifest, "police-1").attack.range, 56);
+
+  definition(manifest, "panda-lazy").attack.range = 58;
+  definition(manifest, "mole").attack.range = 45;
+  definition(manifest, "police-1").attack.range = 46;
+
+  const upgraded = upgradeManifest(manifest);
+  assert.equal(definition(upgraded, "panda-lazy").attack.range, 68);
+  assert.equal(definition(upgraded, "mole").attack.range, 55);
+  assert.equal(definition(upgraded, "police-1").attack.range, 56);
+});
+
+test("custom basic attack ranges survive manifest upgrades", () => {
+  const manifest = createDefaultManifest();
+  definition(manifest, "panda-lazy").attack.range = 83;
+  definition(manifest, "police-3").attack.range = 1_337;
+
+  const upgraded = upgradeManifest(manifest);
+  assert.equal(definition(upgraded, "panda-lazy").attack.range, 83);
+  assert.equal(definition(upgraded, "police-3").attack.range, 1_337);
+});
+
 test("legacy team HUD colors gain clear defaults and obsolete name positions are removed", () => {
   const manifest = createDefaultManifest();
   manifest.setup.contestants[0].teamId = "red";

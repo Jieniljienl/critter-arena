@@ -288,7 +288,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     portraitAssetId: "panda-lazy-idle",
     victoryStyle: "taunt",
     attack: {
-      range: 58,
+      range: 68,
       damage: 30,
       cooldown: 1.25,
       windup: 0.32,
@@ -376,7 +376,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     portraitAssetId: "mole-idle",
     victoryStyle: "dance",
     attack: {
-      range: 45,
+      range: 55,
       damage: 15,
       cooldown: 1,
       windup: 0.25,
@@ -424,7 +424,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     speed: 120,
     radius: 24,
     attack: {
-      range: 46,
+      range: 56,
       damage: 20,
       cooldown: 1.2,
       windup: 0.28,
@@ -1204,16 +1204,18 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       defaultCharacter.attack.projectileBoostMultiplier;
     character.attack.frontArcDegrees ??=
       defaultCharacter.attack.frontArcDegrees;
-    const legacyDefaultRanges: Partial<Record<string, number>> = {
-      "panda-lazy": 150,
-      mole: 150,
-      "police-1": 210,
-      "police-2": 9999,
-      "police-3": 9999,
-      "police-4": 9999,
-      "police-5": 9999,
+    const legacyDefaultRanges: Partial<Record<string, number[]>> = {
+      "panda-lazy": [58, 150],
+      mole: [45, 150],
+      "police-1": [46, 210],
+      "police-2": [9999],
+      "police-3": [9999],
+      "police-4": [9999],
+      "police-5": [9999],
     };
-    if (character.attack.range === legacyDefaultRanges[defaultCharacter.id]) {
+    if (
+      legacyDefaultRanges[defaultCharacter.id]?.includes(character.attack.range)
+    ) {
       character.attack.range = defaultCharacter.attack.range;
     }
     if (defaultCharacter.id === "mole" && character.radius === 32) {

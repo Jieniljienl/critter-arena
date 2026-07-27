@@ -592,10 +592,13 @@ export function CharacterEditor({
                 />
               </label>
               <label>
-                {selected.attack.mode === "melee" ? "近战触发距离" : "攻击距离"}
+                {selected.attack.mode === "melee"
+                  ? "近战普攻范围（可自定义）"
+                  : "普攻范围（可自定义）"}
                 <input
                   type="number"
                   min={1}
+                  step={1}
                   value={selected.attack.range}
                   onChange={(event) =>
                     updateCharacter(

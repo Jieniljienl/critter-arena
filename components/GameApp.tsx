@@ -50,6 +50,7 @@ import {
   createDefaultManifest,
   createShowcaseContestants,
 } from "@/lib/game/defaultContent";
+import { removeBoardFromManifest } from "@/lib/game/project";
 import {
   exportBundle,
   exportJson,
@@ -534,6 +535,22 @@ export function GameApp() {
     setBattleKey((key) => key + 1);
     setSelectedBoardId(boardId);
     setNotice(`已切换为${nextBoard.name}`);
+  };
+
+  const deleteBoard = (boardId: string) => {
+    const removedBoard = manifest.boards.find((board) => board.id === boardId);
+    const result = removeBoardFromManifest(manifest, boardId);
+    if (!removedBoard || !result) {
+      setNotice("棋盘删除失败，棋盘库至少需要保留一张棋盘");
+      return;
+    }
+    setManifest(result.manifest);
+    setBattleManifest(structuredClone(result.manifest));
+    setSelectedBoardId(result.selectedBoardId);
+    setSnapshot(undefined);
+    setPendingAutoStart(false);
+    setBattleKey((key) => key + 1);
+    setNotice(`已删除棋盘“${removedBoard.name}”并切换到下一张棋盘`);
   };
 
   const addContestant = (definitionId: string) => {
@@ -1532,6 +1549,7 @@ export function GameApp() {
               }
             }}
             onChange={setManifest}
+            onDelete={deleteBoard}
             onNotice={showNotice}
           />
         </Suspense>

@@ -1039,27 +1039,17 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
 
   // Saved manifests belong to the user. Upgrades may fill fields that did not
   // exist in an older release, but must never infer that an existing value is
-  // an old default and replace it with a newer default.
+  // an old default and replace it with a newer default. Deleted library entries
+  // also stay deleted; fresh default content is only for new projects.
   upgraded.nameLibraries ??= [];
   upgraded.backgroundMusic ??= structuredClone(defaults.backgroundMusic);
   for (const contestant of upgraded.setup.contestants) {
     contestant.nameColor ??= contestant.color;
   }
 
-  for (const assetDefinition of defaults.assets) {
-    const existingAsset = upgraded.assets.find(
-      (assetItem) => assetItem.id === assetDefinition.id,
-    );
-    if (!existingAsset) {
-      upgraded.assets.push(structuredClone(assetDefinition));
-    }
-  }
   for (const defaultCharacter of defaults.characters) {
     const character = upgraded.characters.find((item) => item.id === defaultCharacter.id);
-    if (!character) {
-      upgraded.characters.push(structuredClone(defaultCharacter));
-      continue;
-    }
+    if (!character) continue;
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
     if (defaultCharacter.skillParameters?.panda) {
       character.skillParameters ??= {};
@@ -1140,14 +1130,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.animations[clipId] ??= structuredClone(animation);
     }
   }
-  for (const library of defaults.nameLibraries) {
-    const existingLibrary = upgraded.nameLibraries.find(
-      (item) => item.definitionId === library.definitionId,
-    );
-    if (!existingLibrary) {
-      upgraded.nameLibraries.push(structuredClone(library));
-    }
-  }
   for (const character of upgraded.characters) {
     if (character.pluginId === "panda") {
       character.skillParameters ??= {};
@@ -1192,19 +1174,10 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.attack.projectileBoostAfter ??= 1.5;
       character.attack.projectileBoostMultiplier ??= 1.5;
     }
-    if (!upgraded.nameLibraries.some((item) => item.definitionId === character.id)) {
-      upgraded.nameLibraries.push({
-        definitionId: character.id,
-        names: [`${character.name}一号`, `${character.name}二号`, `${character.name}三号`],
-      });
-    }
   }
   for (const defaultBoardDefinition of defaults.boards) {
     const board = upgraded.boards.find((item) => item.id === defaultBoardDefinition.id);
-    if (!board) {
-      upgraded.boards.push(structuredClone(defaultBoardDefinition));
-      continue;
-    }
+    if (!board) continue;
     board.unitScale ??= defaultBoardDefinition.unitScale ?? 1;
   }
   for (const board of upgraded.boards) {

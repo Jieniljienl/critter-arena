@@ -5,6 +5,7 @@ import {
   createDefaultManifest,
   upgradeManifest,
 } from "../lib/game/defaultContent";
+import { removeBoardFromManifest } from "../lib/game/project";
 import { BattleSimulation, circleOverlapsRegion } from "../lib/game/simulation";
 import { actionClipName } from "../lib/game/unitAnimation";
 import { isSkillVoiceEvent } from "../lib/game/audio";
@@ -109,7 +110,7 @@ test("fixed-step simulation is deterministic for a repeated seed", () => {
   assert.deepEqual(first.getSnapshot(), second.getSnapshot());
 });
 
-test("cardinal starting directions are nudged and movement resumes with seeded angular variation", () => {
+test("movement headings reroll with seeded horizontal-biased angular variation", () => {
   const manifest = twoFighterManifest();
   const board = selectedBoard(manifest);
   board.props = [];
@@ -139,7 +140,12 @@ test("cardinal starting directions are nudged and movement resumes with seeded a
   const initialSecond = second.getSnapshot().units.find((unit) => unit.definitionId === "panda-lazy");
   assert.ok(initialFirst);
   assert.ok(initialSecond);
-  assert.ok(Math.abs(initialFirst.vy) > 10, "an exact horizontal heading should be nudged off-axis");
+  const initialHorizontalDeviation = Math.atan2(
+    Math.abs(initialFirst.vy),
+    Math.abs(initialFirst.vx),
+  );
+  assert.ok(initialHorizontalDeviation >= (8 * Math.PI) / 180);
+  assert.ok(initialHorizontalDeviation <= (65 * Math.PI) / 180);
   assert.equal(initialFirst.vx, initialSecond.vx);
   assert.equal(initialFirst.vy, initialSecond.vy);
 
@@ -154,7 +160,48 @@ test("cardinal starting directions are nudged and movement resumes with seeded a
     Math.cos(resumedAngle - initialAngle),
   );
   assert.ok(Math.abs(difference) > 0.0001);
-  assert.ok(Math.abs(difference) <= (9 * Math.PI) / 180);
+  const resumedHorizontalDeviation = Math.atan2(
+    Math.abs(resumed.vy),
+    Math.abs(resumed.vx),
+  );
+  assert.ok(resumedHorizontalDeviation >= (8 * Math.PI) / 180);
+  assert.ok(resumedHorizontalDeviation <= (65 * Math.PI) / 180);
+  assert.equal(Math.sign(resumed.vx), Math.sign(initialFirst.vx));
+});
+
+test("vertical-dominant movement remains uncommon across seeded headings", () => {
+  const manifest = createDefaultManifest();
+  const panda = definition(manifest, "panda-lazy");
+  panda.pluginId = undefined;
+  panda.speed = 100;
+  manifest.setup.contestants = Array.from({ length: 320 }, (_, index) => ({
+    id: `heading-sample-${index}`,
+    definitionId: panda.id,
+    displayName: `方向样本 ${index}`,
+    position: { x: 450, y: 800 },
+    direction: { x: 0, y: 1 },
+    color: "#ffffff",
+  }));
+
+  const simulation = new BattleSimulation(manifest);
+  const units = simulation.getSnapshot().units;
+  assert.equal(units.length, 320);
+  const deviations = units.map((unit) =>
+    Math.atan2(Math.abs(unit.vy), Math.abs(unit.vx)),
+  );
+  assert.ok(
+    deviations.every(
+      (deviation) =>
+        deviation >= (8 * Math.PI) / 180 &&
+        deviation <= (65 * Math.PI) / 180,
+    ),
+  );
+  const verticalDominant = deviations.filter(
+    (deviation) => deviation > Math.PI / 4,
+  ).length;
+  assert.ok(verticalDominant / deviations.length < 0.2);
+  assert.ok(units.some((unit) => unit.vx < 0));
+  assert.ok(units.some((unit) => unit.vx > 0));
 });
 
 test("mole tunneling uses travel art underground and attack art only after a successful ambush", () => {
@@ -481,23 +528,23 @@ test("an RPG that misses its moving target explodes on the board edge", () => {
       id: "rocket-officer",
       definitionId: "police-4",
       displayName: "火箭警员",
-      position: { x: 1400, y: 120 },
-      direction: { x: 0, y: 1 },
+      position: { x: 800, y: 120 },
+      direction: { x: 1, y: 0 },
       color: "#ff9f58",
     },
     {
       id: "moving-target",
       definitionId: "panda-lazy",
       displayName: "移动靶",
-      position: { x: 1550, y: 120 },
-      direction: { x: 0, y: 1 },
+      position: { x: 800, y: 300 },
+      direction: { x: 1, y: 0 },
       color: "#f6d85f",
     },
   ];
 
   const simulation = new BattleSimulation(manifest);
   simulation.start();
-  runSteps(simulation, 150);
+  runSteps(simulation, 300);
   assert.ok(
     simulation
       .getSnapshot()
@@ -1780,6 +1827,72 @@ test("manifest upgrades preserve all existing project, character, board, and set
 
   assert.deepEqual(upgraded, beforeUpgrade);
   assert.notEqual(upgraded, manifest);
+});
+
+test("deleting the active board selects a valid fallback and survives future upgrades", () => {
+  const manifest = createDefaultManifest();
+  manifest.setup.boardId = "stream-landscape";
+  manifest.setup.contestants[0].position = { x: 800, y: 450 };
+  const original = structuredClone(manifest);
+
+  const result = removeBoardFromManifest(
+    manifest,
+    "stream-landscape",
+  );
+  assert.ok(result);
+  assert.equal(
+    result.manifest.boards.some((board) => board.id === "stream-landscape"),
+    false,
+  );
+  assert.equal(result.selectedBoardId, "stream-portrait");
+  assert.equal(result.manifest.setup.boardId, "stream-portrait");
+  assert.deepEqual(result.manifest.setup.contestants[0].position, {
+    x: 450,
+    y: 800,
+  });
+  assert.equal(
+    upgradeManifest(result.manifest).boards.some(
+      (board) => board.id === "stream-landscape",
+    ),
+    false,
+  );
+  assert.equal(
+    original.boards.some((board) => board.id === "stream-landscape"),
+    true,
+  );
+
+  const oneBoard = structuredClone(result.manifest);
+  oneBoard.boards = [oneBoard.boards[0]];
+  oneBoard.setup.boardId = oneBoard.boards[0].id;
+  assert.equal(
+    removeBoardFromManifest(oneBoard, oneBoard.boards[0].id),
+    undefined,
+  );
+});
+
+test("deleted built-in characters stay deleted across future upgrades", () => {
+  const manifest = createDefaultManifest();
+  manifest.characters = manifest.characters.filter(
+    (character) => character.id !== "police-2",
+  );
+  manifest.nameLibraries = manifest.nameLibraries.filter(
+    (library) => library.definitionId !== "police-2",
+  );
+  manifest.setup.contestants = manifest.setup.contestants.filter(
+    (contestant) => contestant.definitionId !== "police-2",
+  );
+
+  const upgraded = upgradeManifest(manifest);
+  assert.equal(
+    upgraded.characters.some((character) => character.id === "police-2"),
+    false,
+  );
+  assert.equal(
+    upgraded.nameLibraries.some(
+      (library) => library.definitionId === "police-2",
+    ),
+    false,
+  );
 });
 
 test("legacy team HUD settings gain missing name colors without replacing saved values", () => {

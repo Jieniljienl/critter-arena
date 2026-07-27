@@ -30,6 +30,7 @@ type BoardEditorProps = {
   selectedId: string;
   onSelect: (id: string) => void;
   onChange: (manifest: ProjectManifest) => void;
+  onDelete: (id: string) => void;
   onNotice: (message: string) => void;
 };
 
@@ -231,6 +232,7 @@ export function BoardEditor({
   selectedId,
   onSelect,
   onChange,
+  onDelete,
   onNotice,
 }: BoardEditorProps) {
   const selected = manifest.boards.find((board) => board.id === selectedId) ?? manifest.boards[0];
@@ -311,6 +313,25 @@ export function BoardEditor({
     onChange(next);
     onSelect(id);
     onNotice("已复制棋盘，可继续修改画面比例、背景和区域布局");
+  };
+
+  const deleteBoard = () => {
+    if (manifest.boards.length <= 1) {
+      onNotice("棋盘库至少需要保留一张棋盘");
+      return;
+    }
+    const password = window.prompt(`删除“${selected.name}”需要输入密码`);
+    if (password === null) return;
+    if (password !== "123") {
+      onNotice("密码错误，棋盘未删除");
+      return;
+    }
+    setTool("select");
+    setSelectedPropId(undefined);
+    setDraggingPropId(undefined);
+    setDraggingHandle(undefined);
+    setDrawingPoints([]);
+    onDelete(selected.id);
   };
 
   const uploadBackground = async (file?: File) => {
@@ -573,10 +594,20 @@ export function BoardEditor({
             <h1>{selected.name}</h1>
             <p>圆形和矩形可快速添加；点绘区域可逐点勾勒，选中后直接拖动圆心、边角或任意顶点。</p>
           </div>
-          <div className="board-stats">
-            <span><Trees size={15} /> {propCounts.bamboo}</span>
-            <span><Flame size={15} /> {propCounts.lava}</span>
-            <span><Waves size={15} /> {propCounts.spring}</span>
+          <div className="editor-title-actions">
+            <div className="board-stats">
+              <span><Trees size={15} /> {propCounts.bamboo}</span>
+              <span><Flame size={15} /> {propCounts.lava}</span>
+              <span><Waves size={15} /> {propCounts.spring}</span>
+            </div>
+            <button
+              className="secondary-button danger"
+              type="button"
+              onClick={deleteBoard}
+              title="输入密码 123 后删除"
+            >
+              <Trash2 size={16} /> 删除棋盘
+            </button>
           </div>
         </div>
 

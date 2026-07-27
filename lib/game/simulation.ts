@@ -52,8 +52,9 @@ const MOLE_TUNNEL_ATTACK_WINDUP = 0.08;
 const MOLE_TUNNEL_RETURN_DELAY = 0.12;
 const MOLE_TUNNEL_EXIT_DURATION = 0.18;
 const MIN_MOLE_TUNNEL_TRAVEL_DURATION = 1 / 60;
-const INITIAL_AXIS_CLEARANCE_RADIANS = (8 * Math.PI) / 180;
-const RESUME_DIRECTION_JITTER_RADIANS = (7 * Math.PI) / 180;
+const MIN_HORIZONTAL_DEVIATION_RADIANS = (8 * Math.PI) / 180;
+const MAX_HORIZONTAL_DEVIATION_RADIANS = (65 * Math.PI) / 180;
+const HORIZONTAL_DEVIATION_BIAS_POWER = 3;
 
 export type SimulationDiagnostics = {
   activeUnits: number;
@@ -346,11 +347,8 @@ export class BattleSimulation {
     y: number;
     direction?: Vec2;
   }): RuntimeUnit {
-    const direction = this.avoidAxisLockedDirection(
-      options.direction ?? {
-        x: Math.cos(this.random.angle()),
-        y: Math.sin(this.random.angle()),
-      },
+    const direction = this.createHorizontalBiasedDirection(
+      options.direction?.x,
     );
     const definition = options.definition;
     const radius = definition.radius * (this.board.unitScale ?? 1);
@@ -1105,44 +1103,35 @@ export class BattleSimulation {
   }
 
   private resetAction(unit: RuntimeUnit): void {
-    this.perturbMovementDirection(unit);
+    this.rerollMovementDirection(unit);
     unit.action = "move";
     unit.actionStartedAt = this.time;
     unit.actionUntil = 0;
   }
 
-  private avoidAxisLockedDirection(value: Vec2): Vec2 {
-    const direction = normalize(value);
-    const angle = Math.atan2(direction.y, direction.x);
-    const nearestAxis = Math.round(angle / (Math.PI / 2)) * (Math.PI / 2);
-    const delta = angle - nearestAxis;
-    if (Math.abs(delta) >= INITIAL_AXIS_CLEARANCE_RADIANS) return direction;
-
-    const sign =
-      Math.abs(delta) > EPSILON
-        ? Math.sign(delta)
+  private createHorizontalBiasedDirection(preferredHorizontal?: number): Vec2 {
+    const horizontalSign =
+      preferredHorizontal !== undefined && Math.abs(preferredHorizontal) > EPSILON
+        ? Math.sign(preferredHorizontal)
         : this.random.next() < 0.5
           ? -1
           : 1;
-    const safeAngle =
-      nearestAxis +
-      sign *
-        (INITIAL_AXIS_CLEARANCE_RADIANS +
-          this.random.next() * ((2 * Math.PI) / 180));
-    return { x: Math.cos(safeAngle), y: Math.sin(safeAngle) };
+    const verticalSign = this.random.next() < 0.5 ? -1 : 1;
+    const deviationProgress =
+      this.random.next() ** HORIZONTAL_DEVIATION_BIAS_POWER;
+    const deviation =
+      MIN_HORIZONTAL_DEVIATION_RADIANS +
+      deviationProgress *
+        (MAX_HORIZONTAL_DEVIATION_RADIANS - MIN_HORIZONTAL_DEVIATION_RADIANS);
+    const horizontalAngle = horizontalSign < 0 ? Math.PI : 0;
+    const angle = horizontalAngle + verticalSign * deviation;
+    return { x: Math.cos(angle), y: Math.sin(angle) };
   }
 
-  private perturbMovementDirection(unit: RuntimeUnit): void {
+  private rerollMovementDirection(unit: RuntimeUnit): void {
     const definition = this.definitions.get(unit.definitionId);
     if (!definition || definition.speed <= EPSILON) return;
-    const current = normalize({ x: unit.vx, y: unit.vy });
-    const offset =
-      (this.random.next() * 2 - 1) * RESUME_DIRECTION_JITTER_RADIANS;
-    const angle = Math.atan2(current.y, current.x) + offset;
-    const direction = this.avoidAxisLockedDirection({
-      x: Math.cos(angle),
-      y: Math.sin(angle),
-    });
+    const direction = this.createHorizontalBiasedDirection(unit.vx);
     unit.vx = direction.x * definition.speed;
     unit.vy = direction.y * definition.speed;
   }

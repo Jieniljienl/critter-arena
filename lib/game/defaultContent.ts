@@ -282,7 +282,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     role: "contestant",
     pluginId: "panda",
     maxHp: 350,
-    speed: 100,
+    speed: 110,
     radius: 42,
     accent: "#f4d35e",
     portraitAssetId: "panda-lazy-idle",
@@ -370,7 +370,7 @@ export const defaultCharacters: CharacterDefinition[] = [
     role: "contestant",
     pluginId: "mole",
     maxHp: 180,
-    speed: 135,
+    speed: 150,
     radius: 26,
     accent: "#ed8f63",
     portraitAssetId: "mole-idle",
@@ -421,7 +421,7 @@ export const defaultCharacters: CharacterDefinition[] = [
   },
   policeDefinition(1, {
     maxHp: 30,
-    speed: 120,
+    speed: 130,
     radius: 24,
     attack: {
       range: 56,
@@ -434,7 +434,7 @@ export const defaultCharacters: CharacterDefinition[] = [
   }),
   policeDefinition(2, {
     maxHp: 30,
-    speed: 105,
+    speed: 115,
     radius: 24,
     attack: {
       range: 1100,
@@ -449,7 +449,7 @@ export const defaultCharacters: CharacterDefinition[] = [
   }),
   policeDefinition(3, {
     maxHp: 30,
-    speed: 100,
+    speed: 110,
     radius: 24,
     attack: {
       range: 1200,
@@ -466,7 +466,7 @@ export const defaultCharacters: CharacterDefinition[] = [
   }),
   policeDefinition(4, {
     maxHp: 30,
-    speed: 85,
+    speed: 95,
     radius: 27,
     attack: {
       range: 1250,
@@ -485,7 +485,7 @@ export const defaultCharacters: CharacterDefinition[] = [
   }),
   policeDefinition(5, {
     maxHp: 1000,
-    speed: 60,
+    speed: 65,
     radius: 40,
     attack: {
       range: 1050,

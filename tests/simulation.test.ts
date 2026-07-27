@@ -1571,6 +1571,37 @@ test("default character name libraries provide ordered, playful names for every 
   assert.match(manifest.nameLibraries.find((item) => item.definitionId === "mole")!.names[0], /鼠鼠/);
 });
 
+test("default movement speeds match character weight while saved speeds remain unchanged", () => {
+  const manifest = createDefaultManifest();
+  const expectedDefaults = new Map([
+    ["panda-lazy", 110],
+    ["mole", 150],
+    ["police-1", 130],
+    ["police-2", 115],
+    ["police-3", 110],
+    ["police-4", 95],
+    ["police-5", 65],
+  ]);
+
+  for (const [definitionId, speed] of expectedDefaults) {
+    assert.equal(definition(manifest, definitionId).speed, speed);
+  }
+  assert.ok(definition(manifest, "mole").speed > definition(manifest, "police-1").speed);
+  assert.ok(definition(manifest, "police-4").speed > definition(manifest, "police-5").speed);
+
+  const savedSpeeds = new Map<string, number>();
+  for (const [index, character] of manifest.characters.entries()) {
+    const savedSpeed = 41 + index * 7;
+    character.speed = savedSpeed;
+    savedSpeeds.set(character.id, savedSpeed);
+  }
+
+  const upgraded = upgradeManifest(manifest);
+  for (const [definitionId, speed] of savedSpeeds) {
+    assert.equal(definition(upgraded, definitionId).speed, speed);
+  }
+});
+
 test("ready formation positions can sync without advancing or rebuilding the battle clock", () => {
   const manifest = twoFighterManifest();
   const simulation = new BattleSimulation(manifest);

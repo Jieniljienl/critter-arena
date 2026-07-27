@@ -1037,68 +1037,21 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
   const upgraded = structuredClone(manifest);
   const defaults = createDefaultManifest();
 
+  // Saved manifests belong to the user. Upgrades may fill fields that did not
+  // exist in an older release, but must never infer that an existing value is
+  // an old default and replace it with a newer default.
   upgraded.nameLibraries ??= [];
   upgraded.backgroundMusic ??= structuredClone(defaults.backgroundMusic);
-  const teamColors: Record<string, string> = {
-    red: "#ff5968",
-    blue: "#55a7ff",
-    green: "#55d68a",
-    purple: "#b58aff",
-    gold: "#f6d85f",
-  };
   for (const contestant of upgraded.setup.contestants) {
-    if (contestant.definitionId === "panda") contestant.definitionId = "panda-lazy";
-    const needsHudMigration = !contestant.nameColor;
-    if (needsHudMigration && contestant.teamId && teamColors[contestant.teamId]) {
-      contestant.color = teamColors[contestant.teamId];
-    }
     contestant.nameColor ??= contestant.color;
-    delete (contestant as typeof contestant & { namePlacement?: unknown }).namePlacement;
   }
-  upgraded.characters = upgraded.characters.filter((character) => character.id !== "panda");
-  upgraded.nameLibraries = upgraded.nameLibraries.filter(
-    (library) => library.definitionId !== "panda",
-  );
 
-  const refreshedBuiltInAssets = new Set([
-    "mole-idle",
-    "mole-attack-1",
-    "mole-attack-2",
-    "mole-attack-3",
-    "mole-skill-1",
-    "mole-skill-2",
-    "mole-skill-3",
-    "mole-skill-4",
-    "mole-tunnel-1",
-    "mole-tunnel-2",
-    "mole-tunnel-3",
-    "mole-tunnel-4",
-    "mole-victory",
-    "hole",
-    "rocket",
-    "panda-lazy-sos",
-    "panda-lazy-sos-2",
-    "police-3-attack-1",
-    "police-4-idle",
-    "police-4-attack-1",
-    "police-4-attack-2",
-    "police-4-attack-3",
-    "police-5-reload",
-    "police-5-reload-2",
-  ]);
   for (const assetDefinition of defaults.assets) {
     const existingAsset = upgraded.assets.find(
       (assetItem) => assetItem.id === assetDefinition.id,
     );
     if (!existingAsset) {
       upgraded.assets.push(structuredClone(assetDefinition));
-    } else if (
-      refreshedBuiltInAssets.has(assetDefinition.id) &&
-      existingAsset.url.startsWith("/assets/")
-    ) {
-      existingAsset.url = assetDefinition.url;
-      existingAsset.name = assetDefinition.name;
-      existingAsset.mime = assetDefinition.mime;
     }
   }
   for (const defaultCharacter of defaults.characters) {
@@ -1106,21 +1059,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     if (!character) {
       upgraded.characters.push(structuredClone(defaultCharacter));
       continue;
-    }
-    if (defaultCharacter.policeStar && character.role === "summon") {
-      character.role = "contestant";
-    }
-    if (defaultCharacter.id === "panda-lazy") {
-      character.name = defaultCharacter.name;
-      character.subtitle = defaultCharacter.subtitle;
-    }
-    if (
-      defaultCharacter.id === "police-5" &&
-      (character.name === "5星加特林警长" ||
-        character.subtitle === "人类警长 · 加特林与踹击")
-    ) {
-      character.name = defaultCharacter.name;
-      character.subtitle = defaultCharacter.subtitle;
     }
     character.skillParameters ??= structuredClone(defaultCharacter.skillParameters);
     if (defaultCharacter.skillParameters?.panda) {
@@ -1151,22 +1089,10 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         1,
         Math.round(legacyPoliceParameters.killsPerPromotion ?? 2),
       );
-      policeParameters.killsToStar2 ??=
-        defaultCharacter.policeStar !== undefined
-          ? defaultCharacter.skillParameters.police.killsToStar2
-          : legacyKills;
-      policeParameters.killsToStar3 ??=
-        defaultCharacter.policeStar !== undefined
-          ? defaultCharacter.skillParameters.police.killsToStar3
-          : legacyKills;
-      policeParameters.killsToStar4 ??=
-        defaultCharacter.policeStar !== undefined
-          ? defaultCharacter.skillParameters.police.killsToStar4
-          : legacyKills;
-      policeParameters.killsToStar5 ??=
-        defaultCharacter.policeStar !== undefined
-          ? defaultCharacter.skillParameters.police.killsToStar5
-          : legacyKills;
+      policeParameters.killsToStar2 ??= legacyKills;
+      policeParameters.killsToStar3 ??= legacyKills;
+      policeParameters.killsToStar4 ??= legacyKills;
+      policeParameters.killsToStar5 ??= legacyKills;
       policeParameters.gatlingMagazineSize ??=
         defaultCharacter.skillParameters.police.gatlingMagazineSize;
       policeParameters.gatlingReloadDuration ??=
@@ -1175,7 +1101,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         defaultCharacter.skillParameters.police.kickDamage;
       policeParameters.kickWallStunDuration ??=
         defaultCharacter.skillParameters.police.kickWallStunDuration;
-      delete legacyPoliceParameters.killsPerPromotion;
     }
     if (defaultCharacter.skillParameters?.mole) {
       character.skillParameters ??= {};
@@ -1184,17 +1109,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       );
       character.skillParameters.mole.tunnelSpeedMultiplier ??=
         defaultCharacter.skillParameters.mole.tunnelSpeedMultiplier;
-      delete (
-        character.skillParameters.mole as typeof character.skillParameters.mole & {
-          stompsToFlatten?: number;
-        }
-      ).stompsToFlatten;
-    }
-    if (
-      defaultCharacter.id === "police-5" &&
-      character.victoryStyle === "spotlight"
-    ) {
-      character.victoryStyle = defaultCharacter.victoryStyle;
     }
     character.victoryStyle ??= defaultCharacter.victoryStyle ?? "cool";
     character.attack.spreadDegrees ??= defaultCharacter.attack.spreadDegrees ?? 0;
@@ -1204,67 +1118,8 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       defaultCharacter.attack.projectileBoostMultiplier;
     character.attack.frontArcDegrees ??=
       defaultCharacter.attack.frontArcDegrees;
-    const legacyDefaultRanges: Partial<Record<string, number[]>> = {
-      "panda-lazy": [58, 150],
-      mole: [45, 150],
-      "police-1": [46, 210],
-      "police-2": [9999],
-      "police-3": [9999],
-      "police-4": [9999],
-      "police-5": [9999],
-    };
-    if (
-      legacyDefaultRanges[defaultCharacter.id]?.includes(character.attack.range)
-    ) {
-      character.attack.range = defaultCharacter.attack.range;
-    }
-    if (defaultCharacter.id === "mole" && character.radius === 32) {
-      character.radius = defaultCharacter.radius;
-    }
-    if (
-      defaultCharacter.id === "panda-lazy" &&
-      character.animations.attack?.frames.some(
-        (frame) => frame.assetId === "panda-lazy-attack-3",
-      )
-    ) {
-      character.animations.attack = structuredClone(defaultCharacter.animations.attack);
-    }
-    if (defaultCharacter.id === "panda-lazy") {
-      const callPoliceFrameIds =
-        character.animations.callPolice?.frames.map((frame) => frame.assetId) ??
-        [];
-      const usesLegacyCallFrames =
-        callPoliceFrameIds.length === 0 ||
-        callPoliceFrameIds.every((assetId) =>
-          [
-            "panda-lazy-attack-1",
-            "panda-lazy-attack-3",
-            "panda-lazy-sos",
-            "panda-lazy-idle",
-          ].includes(assetId),
-        );
-      if (usesLegacyCallFrames && !callPoliceFrameIds.includes("panda-lazy-sos-2")) {
-        character.animations.callPolice = structuredClone(
-          defaultCharacter.animations.callPolice,
-        );
-      }
-    }
-    if ((character.animations.victory?.frames.length ?? 0) < 2) {
-      character.animations.victory = structuredClone(
-        defaultCharacter.animations.victory,
-      );
-    }
     if (defaultCharacter.id === "police-5") {
       const legacyPolice = character.skillParameters?.police;
-      if (character.maxHp === 200) {
-        character.maxHp = defaultCharacter.maxHp;
-      }
-      const usesLegacyGatlingDefaults =
-        character.attack.cooldown === 10 &&
-        (character.attack.burstCount === undefined ||
-          character.attack.burstCount === 15) &&
-        (character.attack.burstGap === undefined ||
-          Math.abs(character.attack.burstGap - 0.33) < 0.0001);
       const legacyShots = Math.max(
         1,
         Math.round(legacyPolice?.gatlingShots ?? defaultCharacter.attack.burstCount ?? 18),
@@ -1274,43 +1129,12 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.attack.burstGap ??= Number(
         (legacyFireDuration / legacyShots).toFixed(2),
       );
-      if (Math.abs(character.attack.burstGap - 1 / 3) < 0.0001) {
-        character.attack.burstGap = 0.33;
-      }
-      if (legacyPolice) {
-        delete legacyPolice.gatlingFireDuration;
-        delete legacyPolice.gatlingRestDuration;
-        delete legacyPolice.gatlingShots;
-      }
-      if (usesLegacyGatlingDefaults) {
-        character.attack.cooldown = defaultCharacter.attack.cooldown;
-        character.attack.burstCount = defaultCharacter.attack.burstCount;
-        character.attack.burstGap = defaultCharacter.attack.burstGap;
-      }
     }
-    for (const slot of ["attack", "hit", "hurt", "death"] as const) {
-      const cue = character.sounds[slot];
-      if (
-        cue?.source === "speech" &&
-        cue.id.startsWith(`${defaultCharacter.id}-`) &&
-        defaultCharacter.sounds[slot]
-      ) {
-        character.sounds[slot] = structuredClone(defaultCharacter.sounds[slot]);
+    for (const slot of ["attack", "hit", "hurt", "skill", "death"] as const) {
+      const defaultCue = defaultCharacter.sounds[slot];
+      if (defaultCue) {
+        character.sounds[slot] ??= structuredClone(defaultCue);
       }
-    }
-    const existingSkillCue = character.sounds.skill;
-    const usesLegacySkillCue =
-      !existingSkillCue ||
-      (defaultCharacter.id === "panda-lazy" &&
-        existingSkillCue.id === "panda-lazy-chew") ||
-      (defaultCharacter.id === "mole" && existingSkillCue.id === "mole-dig") ||
-      (defaultCharacter.pluginId === "police" &&
-        existingSkillCue.source === "synth");
-    if (
-      defaultCharacter.sounds.skill &&
-      usesLegacySkillCue
-    ) {
-      character.sounds.skill = structuredClone(defaultCharacter.sounds.skill);
     }
     for (const [clipId, animation] of Object.entries(defaultCharacter.animations)) {
       character.animations[clipId] ??= structuredClone(animation);
@@ -1322,11 +1146,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
     );
     if (!existingLibrary) {
       upgraded.nameLibraries.push(structuredClone(library));
-    } else if (
-      library.definitionId === "police-5" &&
-      existingLibrary.names.includes("突突五秒钟")
-    ) {
-      existingLibrary.names = structuredClone(library.names);
     }
   }
   for (const character of upgraded.characters) {
@@ -1343,11 +1162,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       character.skillParameters.mole ??= structuredClone(moleSkillParameters);
       character.skillParameters.mole.tunnelSpeedMultiplier ??=
         moleSkillParameters.tunnelSpeedMultiplier;
-      delete (
-        character.skillParameters.mole as typeof character.skillParameters.mole & {
-          stompsToFlatten?: number;
-        }
-      ).stompsToFlatten;
     }
     if (character.pluginId === "police") {
       character.skillParameters ??= {};
@@ -1370,7 +1184,6 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
         policeSkillParameters.gatlingMagazineSize;
       parameters.gatlingReloadDuration ??=
         policeSkillParameters.gatlingReloadDuration;
-      delete legacy.killsPerPromotion;
     }
     if (character.attack.mode === "melee") {
       character.attack.frontArcDegrees ??= 120;
@@ -1393,22 +1206,8 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       continue;
     }
     board.unitScale ??= defaultBoardDefinition.unitScale ?? 1;
-    for (const defaultProp of defaultBoardDefinition.props) {
-      if (!board.props.some((prop) => prop.id === defaultProp.id)) {
-        board.props.push(structuredClone(defaultProp));
-      }
-    }
   }
   for (const board of upgraded.boards) {
-    if (board.id === defaultBoard.id && (board.unitScale ?? 0) <= 1.35) {
-      board.unitScale = defaultBoard.unitScale;
-    }
-    if (board.id === streamLandscapeBoard.id && (board.unitScale ?? 0) <= 1.45) {
-      board.unitScale = streamLandscapeBoard.unitScale;
-    }
-    if (board.id === streamPortraitBoard.id && (board.unitScale ?? 0) <= 1.42) {
-      board.unitScale = streamPortraitBoard.unitScale;
-    }
     board.unitScale ??= 1.35;
     for (const prop of board.props) {
       if (prop.type !== "lava" && prop.type !== "hotSpring") continue;
@@ -1416,6 +1215,5 @@ export const upgradeManifest = (manifest: ProjectManifest): ProjectManifest => {
       prop.effectPerSecond ??= 5;
     }
   }
-  upgraded.updatedAt = new Date().toISOString();
   return upgraded;
 };

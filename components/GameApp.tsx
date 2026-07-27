@@ -193,6 +193,7 @@ export function GameApp() {
   const [skillVoicesEnabled, setSkillVoicesEnabled] = useState(true);
   const [skillVoiceVolume, setSkillVoiceVolume] = useState(0.78);
   const [hydrated, setHydrated] = useState(false);
+  const [autoSaveEnabled, setAutoSaveEnabled] = useState(false);
   const [savedAt, setSavedAt] = useState<string>();
   const [notice, setNotice] = useState<string>();
   const [selectedCharacterId, setSelectedCharacterId] = useState("panda-lazy");
@@ -255,17 +256,24 @@ export function GameApp() {
     let alive = true;
     void loadManifest()
       .then((saved) => {
-        if (!alive || !saved) return;
-        setManifest(saved);
-        setBattleManifest(structuredClone(saved));
-        setSelectedCharacterId(
-          saved.characters.some((character) => character.id === "panda-lazy")
-            ? "panda-lazy"
-            : saved.characters[0]?.id ?? "panda",
-        );
-        setSelectedBoardId(saved.setup.boardId);
+        if (!alive) return;
+        if (saved) {
+          setManifest(saved);
+          setBattleManifest(structuredClone(saved));
+          setSelectedCharacterId(
+            saved.characters.some((character) => character.id === "panda-lazy")
+              ? "panda-lazy"
+              : saved.characters[0]?.id ?? "panda",
+          );
+          setSelectedBoardId(saved.setup.boardId);
+        }
+        setAutoSaveEnabled(true);
       })
-      .catch(() => setNotice("本地存档读取失败，已载入默认内容"))
+      .catch(() => {
+        if (!alive) return;
+        setAutoSaveEnabled(false);
+        setNotice("本地存档读取失败，为保护原设置已暂停自动保存");
+      })
       .finally(() => alive && setHydrated(true));
     return () => {
       alive = false;
@@ -273,14 +281,14 @@ export function GameApp() {
   }, []);
 
   useEffect(() => {
-    if (!hydrated) return;
+    if (!hydrated || !autoSaveEnabled) return;
     const timer = window.setTimeout(() => {
       void saveManifest(manifest)
         .then(() => setSavedAt(new Date().toLocaleTimeString("zh-CN", { hour: "2-digit", minute: "2-digit" })))
         .catch(() => setNotice("自动保存失败，可先导出资源包备份"));
     }, 450);
     return () => window.clearTimeout(timer);
-  }, [hydrated, manifest]);
+  }, [autoSaveEnabled, hydrated, manifest]);
 
   useEffect(() => {
     if (!notice) return;
@@ -786,6 +794,7 @@ export function GameApp() {
     if (!file) return;
     try {
       const imported = await importProjectFile(file);
+      setAutoSaveEnabled(true);
       setManifest(imported);
       setBattleManifest(structuredClone(imported));
       setSelectedCharacterId(
@@ -841,7 +850,13 @@ export function GameApp() {
         <div className="top-actions">
           <span className="save-state">
             <Save size={14} />
-            {savedAt ? `${savedAt} 已保存` : hydrated ? "自动保存" : "载入中"}
+            {savedAt
+              ? `${savedAt} 已保存`
+              : !hydrated
+                ? "载入中"
+                : autoSaveEnabled
+                  ? "自动保存"
+                  : "自动保存已暂停"}
           </span>
           <button className="header-button" type="button" onClick={() => importRef.current?.click()}>
             <Upload size={15} /> 导入

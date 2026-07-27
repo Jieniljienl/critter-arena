@@ -1565,7 +1565,7 @@ test("every character definition can be explicitly added as a main contestant", 
   assert.equal(runtimeOfficer.main, true);
 });
 
-test("legacy panda entries migrate to the single lazy panda definition", () => {
+test("legacy panda entries and references remain unchanged during upgrades", () => {
   const manifest = createDefaultManifest();
   const canonical = definition(manifest, "panda-lazy");
   delete canonical.animations.callPolice;
@@ -1577,11 +1577,18 @@ test("legacy panda entries migrate to the single lazy panda definition", () => {
   manifest.characters.push({ ...structuredClone(canonical), id: "panda", name: "活力熊猫（旧版）" });
   manifest.nameLibraries.push({ definitionId: "panda", names: ["旧熊猫名字"] });
   manifest.setup.contestants[0].definitionId = "panda";
+  const legacyPanda = structuredClone(definition(manifest, "panda"));
+  const legacyLibrary = structuredClone(
+    manifest.nameLibraries.find((library) => library.definitionId === "panda"),
+  );
 
   const upgraded = upgradeManifest(manifest);
-  assert.equal(upgraded.characters.some((character) => character.id === "panda"), false);
-  assert.equal(upgraded.nameLibraries.some((library) => library.definitionId === "panda"), false);
-  assert.equal(upgraded.setup.contestants[0].definitionId, "panda-lazy");
+  assert.deepEqual(definition(upgraded, "panda"), legacyPanda);
+  assert.deepEqual(
+    upgraded.nameLibraries.find((library) => library.definitionId === "panda"),
+    legacyLibrary,
+  );
+  assert.equal(upgraded.setup.contestants[0].definitionId, "panda");
   const upgradedPanda = definition(upgraded, "panda-lazy");
   assert.equal(upgradedPanda.name, "熊猫");
   assert.equal(upgradedPanda.skillParameters?.panda?.policeCallDuration, 0.7);
@@ -1621,7 +1628,7 @@ test("legacy and custom mole definitions gain the default tunnel speed multiplie
   );
 });
 
-test("default melee attacks use a slightly wider contact range and recent defaults migrate", () => {
+test("default melee attacks use wider contact ranges without changing saved legacy values", () => {
   const manifest = createDefaultManifest();
   assert.equal(definition(manifest, "panda-lazy").attack.range, 68);
   assert.equal(definition(manifest, "mole").attack.range, 55);
@@ -1632,9 +1639,9 @@ test("default melee attacks use a slightly wider contact range and recent defaul
   definition(manifest, "police-1").attack.range = 46;
 
   const upgraded = upgradeManifest(manifest);
-  assert.equal(definition(upgraded, "panda-lazy").attack.range, 68);
-  assert.equal(definition(upgraded, "mole").attack.range, 55);
-  assert.equal(definition(upgraded, "police-1").attack.range, 56);
+  assert.equal(definition(upgraded, "panda-lazy").attack.range, 58);
+  assert.equal(definition(upgraded, "mole").attack.range, 45);
+  assert.equal(definition(upgraded, "police-1").attack.range, 46);
 });
 
 test("custom basic attack ranges survive manifest upgrades", () => {
@@ -1647,7 +1654,135 @@ test("custom basic attack ranges survive manifest upgrades", () => {
   assert.equal(definition(upgraded, "police-3").attack.range, 1_337);
 });
 
-test("legacy team HUD colors gain clear defaults and obsolete name positions are removed", () => {
+test("manifest upgrades preserve all existing project, character, board, and setup settings", () => {
+  const manifest = upgradeManifest(createDefaultManifest());
+  manifest.name = "我的长期存档";
+  manifest.updatedAt = "2026-01-02T03:04:05.000Z";
+  manifest.backgroundMusic = {
+    enabled: false,
+    source: "synth",
+    title: "我的静音配置",
+    volume: 0.17,
+  };
+
+  const panda = definition(manifest, "panda-lazy");
+  panda.name = "自定义熊猫";
+  panda.subtitle = "不要用新版默认文案覆盖";
+  panda.role = "summon";
+  panda.maxHp = 777;
+  panda.speed = 23;
+  panda.radius = 32;
+  panda.victoryStyle = "spotlight";
+  panda.attack.range = 58;
+  panda.attack.damage = 41;
+  panda.attack.cooldown = 6.2;
+  panda.attack.windup = 0.91;
+  panda.attack.frontArcDegrees = 87;
+  panda.skillParameters!.panda!.eatDuration = 8.5;
+  panda.animations.attack = {
+    id: "attack",
+    loop: false,
+    frames: [{ assetId: "panda-lazy-attack-3", durationMs: 1_234 }],
+  };
+  panda.animations.callPolice = {
+    id: "callPolice",
+    loop: false,
+    frames: [{ assetId: "panda-lazy-sos", durationMs: 2_345 }],
+  };
+  panda.animations.victory = {
+    id: "victory",
+    loop: true,
+    frames: [{ assetId: "panda-lazy-idle", durationMs: 3_456 }],
+  };
+  panda.sounds.attack = {
+    id: "panda-lazy-user-attack",
+    source: "speech",
+    phrases: ["保留我的攻击台词"],
+    volume: 0.42,
+  };
+  panda.sounds.skill = {
+    id: "panda-lazy-chew",
+    source: "synth",
+    preset: "chew",
+    volume: 0.31,
+  };
+
+  const mole = definition(manifest, "mole");
+  (
+    mole.skillParameters!.mole as NonNullable<
+      NonNullable<CharacterDefinition["skillParameters"]>["mole"]
+    > & { stompsToFlatten?: number }
+  ).stompsToFlatten = 9;
+
+  const gatling = definition(manifest, "police-5");
+  gatling.role = "summon";
+  gatling.maxHp = 200;
+  gatling.attack.cooldown = 10;
+  gatling.attack.burstCount = 15;
+  gatling.attack.burstGap = 0.33;
+  gatling.victoryStyle = "spotlight";
+  const gatlingParameters = gatling.skillParameters!.police as NonNullable<
+    NonNullable<CharacterDefinition["skillParameters"]>["police"]
+  > & { killsPerPromotion?: number };
+  gatlingParameters.killsPerPromotion = 9;
+  gatlingParameters.gatlingFireDuration = 6;
+  gatlingParameters.gatlingRestDuration = 4;
+  gatlingParameters.gatlingShots = 21;
+
+  const builtInAsset = manifest.assets.find((asset) => asset.id === "mole-idle");
+  assert.ok(builtInAsset);
+  builtInAsset.url = "/assets/my-mole-idle.png";
+  builtInAsset.name = "我的地鼠图片";
+  builtInAsset.mime = "image/png";
+
+  const board = manifest.boards.find((candidate) => candidate.id === "bamboo-lava-arena");
+  assert.ok(board);
+  board.name = "我的自定义地图";
+  board.description = "尺寸、缩放和道具都必须保留";
+  board.width = 1_234;
+  board.height = 987;
+  board.unitScale = 1.2;
+  board.props = [];
+  const streamBoard = manifest.boards.find((candidate) => candidate.id === "stream-landscape");
+  assert.ok(streamBoard);
+  streamBoard.unitScale = 0.9;
+
+  const policeNames = manifest.nameLibraries.find(
+    (library) => library.definitionId === "police-5",
+  );
+  assert.ok(policeNames);
+  policeNames.names = ["突突五秒钟", "我的五星警察"];
+
+  const firstContestant = manifest.setup.contestants[0];
+  firstContestant.color = "#123456";
+  firstContestant.nameColor = "#abcdef";
+  firstContestant.displayName = "我的场上角色";
+  firstContestant.position = { x: 321, y: 654 };
+  firstContestant.direction = { x: 0.25, y: -0.75 };
+  (
+    firstContestant as typeof firstContestant & {
+      namePlacement?: string;
+    }
+  ).namePlacement = "inside";
+
+  const legacyPanda = structuredClone(panda);
+  legacyPanda.id = "panda";
+  legacyPanda.name = "旧版自定义熊猫";
+  manifest.characters.push(legacyPanda);
+  manifest.nameLibraries.push({
+    definitionId: "panda",
+    names: ["旧熊猫名字"],
+  });
+  firstContestant.definitionId = "panda";
+
+  const beforeUpgrade = structuredClone(manifest);
+  const upgraded = upgradeManifest(manifest);
+
+  assert.deepEqual(upgraded, beforeUpgrade);
+  assert.notEqual(upgraded, manifest);
+});
+
+test("legacy team HUD settings gain missing name colors without replacing saved values", () => {
   const manifest = createDefaultManifest();
   manifest.setup.contestants[0].teamId = "red";
   manifest.setup.contestants[0].color = "#111111";
@@ -1657,9 +1792,9 @@ test("legacy team HUD colors gain clear defaults and obsolete name positions are
   delete manifest.setup.contestants[1].nameColor;
 
   const upgraded = upgradeManifest(manifest);
-  assert.equal(upgraded.setup.contestants[0].color, "#ff5968");
-  assert.equal(upgraded.setup.contestants[0].nameColor, "#ff5968");
-  assert.equal(upgraded.setup.contestants[1].color, "#55a7ff");
+  assert.equal(upgraded.setup.contestants[0].color, "#111111");
+  assert.equal(upgraded.setup.contestants[0].nameColor, "#111111");
+  assert.equal(upgraded.setup.contestants[1].color, "#222222");
 
   upgraded.setup.contestants[0].color = "#123456";
   upgraded.setup.contestants[0].nameColor = "#abcdef";
@@ -1672,8 +1807,12 @@ test("legacy team HUD colors gain clear defaults and obsolete name positions are
   assert.equal(reloaded.setup.contestants[0].color, "#123456");
   assert.equal(reloaded.setup.contestants[0].nameColor, "#abcdef");
   assert.equal(
-    "namePlacement" in reloaded.setup.contestants[0],
-    false,
+    (
+      reloaded.setup.contestants[0] as typeof reloaded.setup.contestants[number] & {
+        namePlacement?: string;
+      }
+    ).namePlacement,
+    "inside",
   );
 });
 
@@ -1729,7 +1868,7 @@ test("the default project opens on a simple portrait showcase with updated gatli
   );
 });
 
-test("legacy built-in gatling defaults migrate to the new health and firing cadence", () => {
+test("new gatling defaults do not replace saved legacy health and firing cadence", () => {
   const manifest = createDefaultManifest();
   const gatling = definition(manifest, "police-5");
   gatling.maxHp = 200;
@@ -1740,11 +1879,11 @@ test("legacy built-in gatling defaults migrate to the new health and firing cade
 
   const upgraded = upgradeManifest(manifest);
   const upgradedGatling = definition(upgraded, "police-5");
-  assert.equal(upgradedGatling.maxHp, 1_000);
-  assert.equal(upgradedGatling.attack.cooldown, 7);
-  assert.equal(upgradedGatling.attack.burstCount, 18);
-  assert.equal(upgradedGatling.attack.burstGap, 0.2);
-  assert.equal(upgradedGatling.victoryStyle, "cool");
+  assert.equal(upgradedGatling.maxHp, 200);
+  assert.equal(upgradedGatling.attack.cooldown, 10);
+  assert.equal(upgradedGatling.attack.burstCount, 15);
+  assert.equal(upgradedGatling.attack.burstGap, 0.33);
+  assert.equal(upgradedGatling.victoryStyle, "spotlight");
   assert.equal(
     upgradedGatling.skillParameters?.police?.kickWallStunDuration,
     0.5,
